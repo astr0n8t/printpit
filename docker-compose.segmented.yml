@@ -1,0 +1,83 @@
+# Segmented deployment: the web UI and printer traffic live on different networks.
+#
+#   browser ──TLS──▶ caddy ──(frontend bridge)──▶ printpit ──(printers macvlan)──▶ Moonraker
+#
+# * printpit publishes no ports. Caddy is the only way in, and it terminates TLS.
+# * printpit's web listener binds only to its frontend address (PRINTPIT_BIND), so it is
+#   not reachable from the printer network.
+# * Printer traffic leaves from printpit's address on the printer VLAN
+#   (PRINTPIT_EGRESS_BIND), and only to addresses in PRINTPIT_PRINTER_CIDRS.
+#
+# Adjust before use:
+#   - the printers network: parent interface (a VLAN sub-interface like eth0.50, or eth0),
+#     subnet, gateway, and a free ip_range that your DHCP server doesn't hand out
+#   - printpit's printers ipv4_address, PRINTPIT_EGRESS_BIND and PRINTPIT_PRINTER_CIDRS to match
+#   - deploy/Caddyfile: your hostname
+#
+#   echo "PRINTPIT_SECRET_KEY=$(openssl rand -base64 32)" > .env
+#   docker compose -f docker-compose.segmented.yml up -d
+#
+# Note: with macvlan, the Docker host itself can't reach printpit's printer-side address.
+# That doesn't matter here (nothing on the host needs to), but it surprises people.
+
+services:
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      frontend:
+        ipv4_address: 172.30.0.2
+
+  printpit:
+    image: printpit:latest
+    build: .
+    restart: unless-stopped
+    environment:
+      PRINTPIT_SECRET_KEY: ${PRINTPIT_SECRET_KEY:?set PRINTPIT_SECRET_KEY in .env}
+      # Listen only on the frontend network.
+      PRINTPIT_BIND: 172.30.0.10:8080
+      # Leave from the printer VLAN, and only reach printers there.
+      PRINTPIT_EGRESS_BIND: 192.168.50.250
+      PRINTPIT_PRINTER_CIDRS: 192.168.50.0/24
+      # Trust X-Forwarded-For from Caddy only (for rate limiting and the audit log).
+      PRINTPIT_TRUSTED_PROXIES: 172.30.0.2
+      RUST_LOG: ${RUST_LOG:-info}
+    volumes:
+      - printpit-data:/data
+    networks:
+      frontend:
+        ipv4_address: 172.30.0.10
+      printers:
+        ipv4_address: 192.168.50.250
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  frontend:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+  printers:
+    driver: macvlan
+    driver_opts:
+      parent: eth0.50
+    ipam:
+      config:
+        - subnet: 192.168.50.0/24
+          gateway: 192.168.50.1
+          ip_range: 192.168.50.248/29
+
+volumes:
+  printpit-data:
+  caddy-data:
+  caddy-config:

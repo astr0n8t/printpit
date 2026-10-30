@@ -1,0 +1,6 @@
+{%- if let Some(e) = error %}
+<p class="err" role="alert">! {{ e }}</p>
+{%- else %}
+<p class="dim log-meta">last {{ shown }} lines · file {{ size }}</p>
+<pre class="log">{% for l in lines %}<span class="{{ l.class }}">{{ l.text }}</span>{% endfor %}</pre>
+{%- endif %}

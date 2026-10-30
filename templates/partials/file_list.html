@@ -1,0 +1,70 @@
+<div class="files-layout">
+<section class="panel files-panel">
+  <h2 class="panel-title">files</h2>
+  <nav class="crumbs" aria-label="Folder">
+{%- for c in crumbs %}{% if !loop.first %}<span class="dim"> / </span>{% endif %}<a href="{{ self.push_url(c.path) }}" hx-get="{{ self.dir_url(c.path) }}" hx-target="#files" hx-push-url="{{ self.push_url(c.path) }}">{{ c.name }}</a>{% endfor %}
+  </nav>
+{%- if let Some(n) = notice %}
+  <p class="{% if n.starts_with("!") %}err{% else %}ok{% endif %}" role="status">{{ n }}</p>
+{%- endif %}
+{%- if let Some(e) = error %}
+  <p class="err" role="alert">! {{ e }}</p>
+{%- else %}
+  <div class="files-tools">
+    <input type="search" data-filter placeholder="/ filter" aria-label="Filter files">
+    <span class="dim">{% if let Some(d) = disk %}{{ d }}{% endif %}</span>
+  </div>
+{%- if rows.is_empty() %}
+  <p class="dim">This folder is empty.</p>
+{%- else %}
+  <div class="scroll-x">
+  <table data-list>
+    <thead><tr>
+      <th><a href="#" hx-get="{{ self.sort_link("name") }}" hx-target="#files">name{{ self.arrow("name") }}</a></th>
+      <th class="num"><a href="#" hx-get="{{ self.sort_link("size") }}" hx-target="#files">size{{ self.arrow("size") }}</a></th>
+      <th class="col-opt"><a href="#" hx-get="{{ self.sort_link("modified") }}" hx-target="#files">modified{{ self.arrow("modified") }}</a></th>
+      <th class="num"><a href="#" hx-get="{{ self.sort_link("time") }}" hx-target="#files">time{{ self.arrow("time") }}</a></th>
+      <th class="num col-opt">filament</th>
+    </tr></thead>
+    <tbody>
+{%- for r in rows %}
+      <tr data-name="{{ r.name|lower }}">
+{%- if r.is_dir %}
+        <td class="wrap"><a href="{{ self.push_url(r.path) }}" hx-get="{{ self.dir_url(r.path) }}" hx-target="#files" hx-push-url="{{ self.push_url(r.path) }}">▸ {{ r.name }}/</a></td>
+{%- else %}
+        <td class="wrap"><a href="#" hx-get="{{ self.meta_url(r) }}" hx-target="#file-meta" hx-swap="outerHTML">{{ r.name }}</a></td>
+{%- endif %}
+        <td class="num dim">{{ r.size }}</td>
+        <td class="dim col-opt">{{ r.modified }}</td>
+        <td class="num">{{ r.time }}</td>
+        <td class="num dim col-opt">{{ r.filament }}</td>
+      </tr>
+{%- endfor %}
+    </tbody>
+  </table>
+  </div>
+{%- endif %}
+{%- endif %}
+{%- if can_edit %}
+  <details class="file-ops">
+    <summary>upload / new folder</summary>
+    <form class="upload" data-upload hx-post="/p/{{ id }}/files/upload" hx-encoding="multipart/form-data" hx-target="#files">
+      <input type="hidden" name="dir" value="{{ path }}">
+      <div class="field"><label><input type="checkbox" name="print">print after upload</label></div>
+      <div class="field"><input type="file" name="file" accept=".gcode,.g,.gco,.ufp" required></div>
+      <div class="actions"><button class="primary">upload</button><span class="upload-progress bar"></span></div>
+      <p class="dim">Max {{ max_upload }}.</p>
+    </form>
+    <form class="mkdir" hx-post="/p/{{ id }}/files/mkdir" hx-target="#files">
+      <input type="hidden" name="dir" value="{{ path }}">
+      <div class="field"><input name="name" placeholder="new folder name" aria-label="New folder name" required></div>
+      <div class="actions"><button>create folder</button></div>
+    </form>
+  </details>
+{%- endif %}
+</section>
+<section class="panel" id="file-meta">
+  <h2 class="panel-title">details</h2>
+  <p class="dim">Select a file to see its details.</p>
+</section>
+</div>

@@ -1,0 +1,30 @@
+<div class="logs-layout">
+<section class="panel">
+  <h2 class="panel-title">log files</h2>
+{%- if let Some(e) = error %}
+  <p class="err" role="alert">! {{ e }}</p>
+{%- else if files.is_empty() %}
+  <p class="dim">No log files.</p>
+{%- else %}
+  <table data-list>
+    <tbody>
+{%- for f in files %}
+      <tr data-name="{{ f.name|lower }}">
+        <td class="log-name" title="{{ f.name }}"><a href="{{ self.push_url(f.name) }}" hx-get="{{ self.view_url(f.name) }}" hx-target="#log-view" hx-swap="outerHTML" hx-push-url="{{ self.push_url(f.name) }}">{{ f.name }}</a></td>
+        <td class="num dim">{{ f.size }}</td>
+        <td class="dim">{{ f.modified }}</td>
+      </tr>
+{%- endfor %}
+    </tbody>
+  </table>
+{%- endif %}
+</section>
+{%- if let Some(v) = viewer %}
+{{ v|safe }}
+{%- else %}
+<section class="panel log-view" id="log-view">
+  <h2 class="panel-title">log</h2>
+  <p class="dim">Pick a log to see its last lines. Use j/k and Enter to choose from the keyboard.</p>
+</section>
+{%- endif %}
+</div>

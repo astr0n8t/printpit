@@ -1,0 +1,65 @@
+<section class="panel">
+  <h2 class="panel-title">users</h2>
+{%- if let Some(n) = notice %}
+  <p class="ok" role="status">✓ {{ n }}</p>
+{%- endif %}
+{%- if let Some(e) = error %}
+  <p class="err" role="alert">! {{ e }}</p>
+{%- endif %}
+  <div class="scroll-x">
+  <table>
+    <thead><tr><th>user</th><th>role</th><th>status</th><th class="num">sessions</th><th>created</th><th>actions</th></tr></thead>
+    <tbody>
+{%- for r in rows %}
+      <tr>
+        <td>{{ r.username }}{% if r.is_self %} <span class="dim">(you)</span>{% endif %}</td>
+        <td>
+{%- if r.is_self %}
+          {{ r.role }}
+{%- else %}
+          <select name="role" aria-label="Role for {{ r.username }}" hx-post="/users/{{ r.id }}/role" hx-target="#main" hx-trigger="change">
+{%- for role in roles %}
+            <option value="{{ role }}"{% if self.is_role(r, role) %} selected{% endif %}>{{ role }}</option>
+{%- endfor %}
+          </select>
+{%- endif %}
+        </td>
+        <td>{% if r.disabled %}<span class="badge badge-err">DISABLED</span>{% else %}<span class="badge badge-ok">ACTIVE</span>{% endif %}</td>
+        <td class="num">{{ r.sessions }}</td>
+        <td class="dim">{{ r.created }}</td>
+        <td class="row-actions">
+{%- if !r.is_self %}
+          <button hx-post="/users/{{ r.id }}/toggle" hx-target="#main"{% if !r.disabled %} hx-confirm="Disable {{ r.username }}? They are signed out immediately."{% endif %}>{% if r.disabled %}enable{% else %}disable{% endif %}</button>
+          <details class="inline-form">
+            <summary>reset password</summary>
+            <form hx-post="/users/{{ r.id }}/password" hx-target="#main">
+              <input name="password" type="password" autocomplete="new-password" placeholder="new password" aria-label="New password for {{ r.username }}" minlength="8" required>
+              <input name="confirm" type="password" autocomplete="new-password" placeholder="confirm" aria-label="Confirm new password" minlength="8" required>
+              <button class="primary">set</button>
+            </form>
+          </details>
+          <button class="danger" hx-delete="/users/{{ r.id }}" hx-target="#main" hx-confirm="Delete user {{ r.username }}? This can't be undone.">delete</button>
+{%- endif %}
+        </td>
+      </tr>
+{%- endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+<section class="panel">
+  <h2 class="panel-title">add user</h2>
+  <form hx-post="/users" hx-target="#main" class="add-user">
+    <div class="field"><label for="new-username">username</label><input id="new-username" name="username" autocomplete="off" autocapitalize="none" spellcheck="false" required></div>
+    <div class="field"><label for="new-role">role</label>
+      <select id="new-role" name="role">
+        <option value="viewer">viewer · watch only</option>
+        <option value="operator" selected>operator · control prints and files</option>
+        <option value="admin">admin · everything, incl. printers and users</option>
+      </select>
+    </div>
+    <div class="field"><label for="new-password">password <span class="dim">(min 8 chars)</span></label><input id="new-password" name="password" type="password" autocomplete="new-password" minlength="8" required></div>
+    <div class="field"><label for="new-confirm">confirm password</label><input id="new-confirm" name="confirm" type="password" autocomplete="new-password" minlength="8" required></div>
+    <div class="actions"><button class="primary">add user</button></div>
+  </form>
+</section>

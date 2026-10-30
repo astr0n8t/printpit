@@ -1,0 +1,67 @@
+[package]
+name = "printpit"
+version = "0.1.0"
+edition = "2024"
+license-file = "LICENSE"
+publish = false
+
+[dependencies]
+aes-gcm = "0.11.1"
+argon2 = "0.6.0"
+askama = "0.16.1"
+async-stream = "0.3.6"
+axum = { version = "0.8.9", features = ["multipart"] }
+axum-extra = { version = "0.12.6", features = ["cookie"] }
+base64 = "0.23.1"
+cookie = "0.18"
+futures-util = "0.3.34"
+getrandom = "0.4.3"
+hex = "0.4.3"
+hkdf = "0.13.0"
+ipnet = "2.12.2"
+mime_guess = "2.0.5"
+percent-encoding = "2.3.2"
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "stream", "query", "multipart"] }
+rust-embed = { version = "8.13.0", features = ["include-exclude"] }
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+serde_urlencoded = "0.7.1"
+sha2 = "0.11.1"
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
+subtle = "2.6.1"
+thiserror = "2.0.21"
+tokio = { version = "1.54.1", features = ["full"] }
+tokio-stream = { version = "0.1.19", features = ["sync"] }
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
+tower = "0.5.3"
+tower-http = { version = "0.7.1", features = ["compression-gzip", "compression-br", "trace", "timeout", "set-header", "limit"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+url = "2.5.8"
+
+[dev-dependencies]
+axum = { version = "0.8.9", features = ["ws"] }
+http-body-util = "0.1.5"
+tempfile = "3.27.0"
+tower = { version = "0.5.3", features = ["util"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+opt-level = "s"
+
+# Password hashing is the one CPU-bound hot path; keep it fully optimised.
+[profile.release.package.argon2]
+opt-level = 3
+
+[profile.release.package.blake2]
+opt-level = 3
+
+# Argon2 is unbearably slow unoptimised; keep debug builds and tests snappy.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3

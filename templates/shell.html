@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block body %}
+<header class="topbar">
+  <a class="brand" href="/">▌printpit</a>
+  {{ tabs|safe }}
+{%- if let Some(token) = layout.csrf %}
+  <form class="logout" method="post" action="/logout">
+    <input type="hidden" name="_csrf" value="{{ token }}">
+    <button type="submit">logout</button>
+  </form>
+{%- endif %}
+</header>
+<main id="main" class="main">{{ content|safe }}</main>
+<dialog id="help" aria-labelledby="help-title">
+  <h2 id="help-title" class="modal-title">keyboard</h2>
+  <table class="keys">
+    <tbody>
+      <tr><td><kbd>1</kbd>–<kbd>4</kbd></td><td>dashboard · files · logs · system</td></tr>
+      <tr><td><kbd>a</kbd></td><td>account</td></tr>
+{%- if let Some(user) = layout.user %}{% if user.role == "admin" %}
+      <tr><td><kbd>p</kbd> <kbd>u</kbd> <kbd>l</kbd></td><td>printers · users · audit log</td></tr>
+{%- endif %}{% endif %}
+      <tr><td><kbd>r</kbd></td><td>refresh what's on screen</td></tr>
+      <tr><td><kbd>/</kbd></td><td>filter the list</td></tr>
+      <tr><td><kbd>j</kbd> <kbd>k</kbd> <kbd>Enter</kbd></td><td>move through a list and open</td></tr>
+      <tr><td><kbd>y</kbd> <kbd>n</kbd></td><td>answer a confirmation</td></tr>
+      <tr><td><kbd>Esc</kbd></td><td>close a dialog · clear the filter</td></tr>
+      <tr><td><kbd>?</kbd></td><td>this help</td></tr>
+    </tbody>
+  </table>
+  <form method="dialog" class="actions"><button>close [esc]</button></form>
+</dialog>
+<dialog id="modal" aria-labelledby="modal-body"><div id="modal-body"></div></dialog>
+<dialog id="confirm" aria-labelledby="confirm-q">
+  <form method="dialog">
+    <p id="confirm-q"></p>
+    <div class="actions">
+      <button value="yes" class="danger">yes [y]</button>
+      <button value="no" autofocus>no [n]</button>
+    </div>
+  </form>
+</dialog>
+<footer class="statusline">
+  <span>printpit {{ layout.version }}{% if let Some(user) = layout.user %} · {{ user.username }} <span class="dim">({{ user.role }})</span>{% endif %}</span>
+  <span class="dim">[1-4] tabs · [r] refresh · [?] help</span>
+</footer>
+{% endblock %}

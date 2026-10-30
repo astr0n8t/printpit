@@ -1,0 +1,37 @@
+<section class="panel">
+  <h2 class="panel-title">printers</h2>
+{%- if let Some(n) = notice %}
+  <p class="ok" role="status">✓ {{ n }}</p>
+{%- endif %}
+{%- if rows.is_empty() %}
+  <p>No printers yet. Add one with its Moonraker address and, if Moonraker requires it, an API key.</p>
+{%- else %}
+  <div class="scroll-x">
+  <table>
+    <thead><tr><th class="num">#</th><th>name</th><th>moonraker</th><th>key</th><th>test</th><th>actions</th></tr></thead>
+    <tbody>
+{%- for r in rows %}
+      <tr>
+        <td class="num">{{ loop.index }}</td>
+        <td>{{ r.name }}{% if !r.enabled %} <span class="badge badge-dim">DISABLED</span>{% endif %}</td>
+        <td class="dim">{{ r.base_url }}</td>
+        <td class="{{ r.key_class }}">{{ r.key_label }}</td>
+        <td id="test-{{ r.id }}" class="wrap"><button hx-post="/printers/{{ r.id }}/test" hx-target="#test-{{ r.id }}" hx-disabled-elt="this">test</button></td>
+        <td class="row-actions">
+          <a class="btn" href="/ui/printers/{{ r.id }}" hx-get="/ui/printers/{{ r.id }}" hx-target="#main" hx-push-url="true">edit</a>
+          <button hx-post="/printers/{{ r.id }}/move/up" hx-target="#main" title="move up"{% if loop.first %} disabled{% endif %}>↑</button>
+          <button hx-post="/printers/{{ r.id }}/move/down" hx-target="#main" title="move down"{% if loop.last %} disabled{% endif %}>↓</button>
+          <button hx-post="/printers/{{ r.id }}/toggle" hx-target="#main">{% if r.enabled %}disable{% else %}enable{% endif %}</button>
+          <button class="danger" hx-delete="/printers/{{ r.id }}" hx-target="#main" hx-confirm="Delete printer {{ r.name }}?">delete</button>
+        </td>
+      </tr>
+{%- endfor %}
+    </tbody>
+  </table>
+  </div>
+{%- endif %}
+  <div class="actions">
+    <a class="btn btn-primary" href="/ui/printers/new" hx-get="/ui/printers/new" hx-target="#main" hx-push-url="true">add printer</a>
+  </div>
+  <p class="dim">Printer addresses must be inside PRINTPIT_PRINTER_CIDRS: {{ cidrs }}</p>
+</section>

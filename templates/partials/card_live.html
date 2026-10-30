@@ -1,0 +1,29 @@
+<div class="card-state">
+  <span class="badge {{ class }}">{{ label }}</span>
+{%- if polling %} <span class="dim">(polling)</span>{% endif %}
+{%- if manual %}
+  <button type="button" class="refresh" hx-get="/p/{{ id }}/status" hx-target="#live-{{ id }}" data-refresh>refresh [r]</button>
+{%- endif %}
+</div>
+{%- if let Some(m) = message %}
+<p class="{% if class == "badge-err" %}err{% else %}dim{% endif %}">{{ m }}</p>
+{%- endif %}
+{%- if let Some(j) = job %}
+<dl class="kv">
+  <dt>file</dt><dd>{{ j.filename }}</dd>
+  <dt>progress</dt><dd><span class="bar">[{{ j.filled }}<span class="empty">{{ j.empty }}</span>]</span> {{ j.percent }}</dd>
+  <dt>elapsed</dt><dd>{{ j.elapsed }}{% if let Some(e) = j.eta %} <span class="dim">eta</span> {{ e }}{% endif %}{% if let Some(l) = j.layer %} <span class="dim">layer</span> {{ l }}{% endif %}</dd>
+</dl>
+{%- endif %}
+{%- if !sensors.is_empty() %}
+<table class="sensors">
+  <tbody>
+{%- for s in sensors %}
+    <tr><td>{{ s.name }}</td><td class="num">{{ s.temp }}{% if let Some(t) = s.target %}<span class="dim"> / </span>{{ t }}{% endif %}°C</td><td class="spark">{{ s.spark }}</td><td class="num dim">{% if let Some(p) = s.power %}{{ p }}{% endif %}</td></tr>
+{%- endfor %}
+  </tbody>
+</table>
+{%- endif %}
+{%- if !fans.is_empty() %}
+<p class="fans"><span class="dim">fans</span>{% for (name, speed) in fans %} {{ name }} {{ speed }}{% if !loop.last %} <span class="dim">·</span>{% endif %}{% endfor %}</p>
+{%- endif %}

@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en"{% if let Some(t) = layout.theme %} data-theme="{{ t }}"{% endif %}>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false,"historyCacheSize":0,"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"[45]..","swap":true,"error":true}]}'>
+<title>{{ layout.title }} · printpit</title>
+<link rel="icon" type="image/svg+xml" href="{{ layout.asset("favicon.svg") }}">
+<link rel="stylesheet" href="{{ layout.asset("css/tui.css") }}">
+<script src="{{ layout.asset("js/htmx.min.js") }}" defer></script>
+<script src="{{ layout.asset("js/app.js") }}" defer></script>
+</head>
+<body{% if let Some(token) = layout.csrf %} hx-headers='{"X-CSRF-Token":"{{ token }}"}'{% endif %}>
+{% block body %}{% endblock %}
+</body>
+</html>

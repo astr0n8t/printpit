@@ -1,0 +1,39 @@
+<section class="panel" id="file-meta">
+  <h2 class="panel-title">{% if is_dir %}folder{% else %}details{% endif %}</h2>
+  <p class="meta-name">{{ name }}</p>
+{%- if let Some(e) = error %}
+  <p class="err" role="alert">! {{ e }}</p>
+{%- endif %}
+{%- if let Some(t) = thumbnail %}
+  <img class="thumb" src="{{ t }}" alt="thumbnail of {{ name }}">
+{%- endif %}
+{%- if !facts.is_empty() %}
+  <dl class="kv">
+{%- for (label, value) in facts %}
+    <dt>{{ label }}</dt><dd>{{ value }}</dd>
+{%- endfor %}
+  </dl>
+{%- endif %}
+  <div class="actions">
+{%- if !is_dir %}
+{%- if can_edit %}
+    <form hx-post="/p/{{ id }}/print/start" hx-target="#file-msg" hx-confirm="Start printing {{ path }}?"><input type="hidden" name="filename" value="{{ path }}"><button class="primary">print</button></form>
+{%- endif %}
+    <a class="btn" href="{{ self.download_url() }}" download>download</a>
+{%- endif %}
+{%- if can_edit %}
+    <button class="danger" hx-delete="{{ self.delete_url() }}" hx-target="#files" hx-confirm="Delete {{ path }}{% if is_dir %} and everything in it{% endif %}?">delete</button>
+{%- endif %}
+  </div>
+  <div id="file-msg" class="msg" role="status"></div>
+{%- if can_edit %}
+  <form class="move" hx-post="/p/{{ id }}/files/move" hx-target="#files">
+    <input type="hidden" name="source" value="{{ path }}">
+    <div class="field">
+      <label for="dest">move / rename / copy to</label>
+      <input id="dest" name="dest" value="{{ path }}" spellcheck="false" autocapitalize="none" required>
+    </div>
+    <div class="actions"><button>move</button><label><input type="checkbox" name="copy">copy instead</label></div>
+  </form>
+{%- endif %}
+</section>

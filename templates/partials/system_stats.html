@@ -1,0 +1,51 @@
+<section class="panel">
+  <h2 class="panel-title">load</h2>
+  <div class="panel-tools">
+    <button type="button" hx-get="/p/{{ id }}/system/stats" hx-target="#sys-stats" data-refresh{% if let Some(ms) = refresh_ms %} data-every="{{ ms }}"{% endif %}>refresh [r]</button>
+{%- if refresh_ms.is_some() %}
+    <span class="dim">auto</span>
+{%- else %}
+    <span class="dim">manual (auto-refresh is off)</span>
+{%- endif %}
+  </div>
+{%- if let Some(e) = error %}
+  <p class="err" role="alert">! {{ e }}</p>
+{%- else %}
+{%- for m in meters %}
+  {% include "partials/meter.html" %}
+{%- endfor %}
+{%- if !cores.is_empty() %}
+  <details class="cores">
+    <summary class="dim">per core</summary>
+{%- for m in cores %}
+    {% include "partials/meter.html" %}
+{%- endfor %}
+  </details>
+{%- endif %}
+{%- if !throttled.is_empty() %}
+  <p class="warn">⚠ {% for t in throttled %}{{ t }}{% if !loop.last %} · {% endif %}{% endfor %}</p>
+{%- endif %}
+{%- if !facts.is_empty() %}
+  <dl class="kv">
+{%- for (label, value) in facts %}
+    <dt>{{ label }}</dt><dd>{{ value }}</dd>
+{%- endfor %}
+  </dl>
+{%- endif %}
+{%- endif %}
+</section>
+{%- if error.is_none() && !networks.is_empty() %}
+<section class="panel">
+  <h2 class="panel-title">network</h2>
+  <table>
+    <tbody>
+{%- for n in networks %}
+      <tr><td>{{ n.name }}</td><td class="num">{{ n.rate }}</td><td class="dim">{{ n.total }}</td></tr>
+{%- if !n.addresses.is_empty() %}
+      <tr><td></td><td colspan="2" class="dim wrap">{% for a in n.addresses %}{{ a }}{% if !loop.last %} · {% endif %}{% endfor %}</td></tr>
+{%- endif %}
+{%- endfor %}
+    </tbody>
+  </table>
+</section>
+{%- endif %}
