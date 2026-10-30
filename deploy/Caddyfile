@@ -1,0 +1,9 @@
+# TLS-terminating reverse proxy for printpit. Replace the hostname; Caddy gets a
+# certificate automatically (use `tls internal` for a LAN-only name).
+printpit.example.com {
+	encode zstd gzip
+	reverse_proxy printpit:8080 {
+		# Live dashboard updates are Server-Sent Events: don't buffer them.
+		flush_interval -1
+	}
+}

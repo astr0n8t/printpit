@@ -4,7 +4,8 @@
 #   echo "PRINTPIT_SECRET_KEY=$(openssl rand -base64 32)" > .env
 #   docker compose up -d
 #
-# A segmented variant (separate printer network) will follow; see PLAN.md §8.
+# For a segmented setup (UI and printer traffic on separate networks, TLS via Caddy), see
+# docker-compose.segmented.yml.
 services:
   printpit:
     image: printpit:latest
