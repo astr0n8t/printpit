@@ -1,0 +1,29 @@
+[package]
+name = "printpit"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+askama = "0.16.1"
+axum = "0.8.9"
+base64 = "0.23.1"
+hex = "0.4.3"
+ipnet = "2.12.2"
+mime_guess = "2.0.5"
+rust-embed = { version = "8.13.0", features = ["include-exclude"] }
+serde = { version = "1.0.229", features = ["derive"] }
+thiserror = "2.0.21"
+tokio = { version = "1.54.1", features = ["full"] }
+tower = "0.5.3"
+tower-http = { version = "0.7.1", features = ["compression-gzip", "compression-br", "trace", "timeout", "set-header", "limit"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+
+[dev-dependencies]
+http-body-util = "0.1.5"
+tower = { version = "0.5.3", features = ["util"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

@@ -4,20 +4,22 @@ Work through this top to bottom. Tick `[x]` when an item is done **and tested**.
 See `PLAN.md` for design details and `CLAUDE.md` for rules.
 
 ## M0 — Skeleton
-- [ ] `cargo init`, set edition 2021, add the core dependencies (axum, tokio, tower-http, serde, askama, rust-embed, tracing)
-- [ ] `config.rs`: load `PRINTPIT_*` env vars, `*_FILE` secret variants, validation with clear errors
-- [ ] `tracing` setup (pretty locally, JSON via `PRINTPIT_LOG_FORMAT=json`)
-- [ ] `AppState` + `AppError` (HTML error panel rendering)
-- [ ] axum server with graceful shutdown (SIGTERM/SIGINT)
-- [ ] Embedded static assets with content-hash URLs and long-cache headers
-- [ ] Vendor a pinned htmx into `static/js/` (record the version in CLAUDE.md)
-- [ ] `tui.css`: palette variables (dark + light), monospace grid, box panels with inset titles, tab strip, buttons, badges, text progress bar, modal
-- [ ] Base askama layout: top bar, tab strip with key hints, content region, footer/status line
-- [ ] `GET /healthz` and a `--healthcheck` CLI subcommand
-- [ ] Dockerfile (multi-stage, static musl binary, distroless/scratch, non-root, read-only rootfs friendly, HEALTHCHECK)
-- [ ] `docker-compose.yml` (simple single-network variant first)
-- [ ] CI workflow: fmt, clippy, test, docker build
-- [ ] README quickstart
+- [x] `cargo init` (edition 2024), core dependencies (axum, tokio, tower-http, serde, askama, rust-embed, tracing)
+- [x] `config.rs`: load `PRINTPIT_*` env vars, `*_FILE` secret variants, validation with clear errors
+- [x] `tracing` setup (pretty locally, JSON via `PRINTPIT_LOG_FORMAT=json`; ANSI only on a TTY)
+- [x] `AppState` + `AppError` (HTML error panel rendering; full-page wrap for non-htmx requests)
+- [x] axum server with graceful shutdown (SIGTERM/SIGINT)
+- [x] Embedded static assets with content-hash URLs and long-cache headers
+- [x] Vendor a pinned htmx into `static/js/` (record the version in CLAUDE.md)
+- [x] `tui.css`: palette variables (dark + light), monospace grid, box panels with inset titles, tab strip, buttons, badges, text progress bar, modal
+- [x] Base askama layout: top bar, tab strip with key hints, content region, footer/status line
+- [x] Placeholder tab partials (`/ui/{dashboard,files,logs,system,printers}`), partial vs full page + OOB tab strip
+- [x] Keyboard tab shortcuts (`1`–`4`, `p`) in `app.js`
+- [x] `GET /healthz` and a `healthcheck` CLI subcommand
+- [x] Dockerfile (multi-stage, static musl binary, distroless/static nonroot, read-only rootfs friendly, HEALTHCHECK); image 11.9 MB, idle RSS < 1 MB
+- [x] `docker-compose.yml` (simple single-network variant first)
+- [x] CI workflow: fmt, clippy, test, docker build + container smoke test
+- [x] README quickstart
 
 ## M1 — Authentication (before any printer features)
 - [ ] sqlx + SQLite pool, migrations folder, run migrations on startup
@@ -30,7 +32,7 @@ See `PLAN.md` for design details and `CLAUDE.md` for rules.
 - [ ] Auth extractors: `CurrentUser`, `RequireRole<Operator>`, `RequireRole<Admin>`; unauthenticated → redirect to `/login` (or `HX-Redirect` for htmx)
 - [ ] CSRF: per-session token, `hx-headers` injection in the layout, hidden field for forms, middleware check on non-GET
 - [ ] Login rate limiting (per IP + per username), trusted-proxy aware client IP
-- [ ] Security headers middleware (CSP, nosniff, referrer policy, frame-ancestors none, permissions policy)
+- [x] Security headers middleware (CSP, nosniff, referrer policy, frame-ancestors none, permissions policy) — done in M0 (`web/security.rs`)
 - [ ] Account page: change your own password (revokes other sessions)
 - [ ] Tests: unauthenticated access rejected on every route, CSRF enforced, session expiry, rate limit
 

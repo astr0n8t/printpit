@@ -1,0 +1,27 @@
+# Simple single-network deployment. Put a TLS-terminating reverse proxy in front of it,
+# or set PRINTPIT_SECURE_COOKIES=false for plain-HTTP testing on a trusted network.
+#
+#   echo "PRINTPIT_SECRET_KEY=$(openssl rand -base64 32)" > .env
+#   docker compose up -d
+#
+# A segmented variant (separate printer network) will follow; see PLAN.md §8.
+services:
+  printpit:
+    image: printpit:latest
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      PRINTPIT_SECRET_KEY: ${PRINTPIT_SECRET_KEY:?set PRINTPIT_SECRET_KEY in .env}
+      PRINTPIT_SECURE_COOKIES: ${PRINTPIT_SECURE_COOKIES:-true}
+      RUST_LOG: ${RUST_LOG:-info}
+    volumes:
+      - printpit-data:/data
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  printpit-data:

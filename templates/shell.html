@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block body %}
+<header class="topbar">
+  <a class="brand" href="/">▌printpit</a>
+  {{ tabs|safe }}
+</header>
+<main id="main" class="main">{{ content|safe }}</main>
+<footer class="statusline">
+  <span>printpit {{ layout.version }}</span>
+  <span class="dim">[1-4] tabs · [p] printers</span>
+</footer>
+{% endblock %}

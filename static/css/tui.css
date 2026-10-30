@@ -1,0 +1,267 @@
+/* printpit: terminal-UI theme. Everything sits on a monospace character grid. */
+
+:root {
+  --bg: #0b0d0b;
+  --bg-alt: #121612;
+  --fg: #c9d4c5;
+  --dim: #6f7b6c;
+  --border: #364036;
+  --border-hi: #5d6d5a;
+  --accent: #7ee787;
+  --warn: #e3b341;
+  --err: #ff6b6b;
+  --info: #79c0ff;
+  --sel-bg: #1d2a1d;
+  --font: ui-monospace, "JetBrains Mono", "Cascadia Mono", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --fs: 14px;
+  --lh: 1.45;
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f4f2e9;
+    --bg-alt: #ebe8dc;
+    --fg: #1f2a1f;
+    --dim: #6c7468;
+    --border: #b9b9a6;
+    --border-hi: #858a76;
+    --accent: #1a7f37;
+    --warn: #9a6700;
+    --err: #cf222e;
+    --info: #0969da;
+    --sel-bg: #dde5d4;
+    color-scheme: light;
+  }
+}
+
+:root[data-theme="light"] {
+  --bg: #f4f2e9;
+  --bg-alt: #ebe8dc;
+  --fg: #1f2a1f;
+  --dim: #6c7468;
+  --border: #b9b9a6;
+  --border-hi: #858a76;
+  --accent: #1a7f37;
+  --warn: #9a6700;
+  --err: #cf222e;
+  --info: #0969da;
+  --sel-bg: #dde5d4;
+  color-scheme: light;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body { margin: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font: var(--fs)/var(--lh) var(--font);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, p { margin: 0 0 calc(var(--lh) * 0.5em); font-size: 1em; font-weight: normal; }
+a { color: var(--info); text-decoration: none; }
+a:hover, a:focus-visible { text-decoration: underline; }
+:focus-visible { outline: 1px dashed var(--accent); outline-offset: 2px; }
+
+.dim { color: var(--dim); }
+.ok { color: var(--accent); }
+.warn { color: var(--warn); }
+.err { color: var(--err); }
+
+/* ── Top bar and tabs ─────────────────────────────────────────────── */
+
+.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 2ch;
+  padding: 0.4em 2ch;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-alt);
+}
+
+.brand { color: var(--accent); font-weight: bold; }
+.brand:hover { text-decoration: none; }
+
+.tabs { display: flex; flex-wrap: wrap; gap: 0 1ch; }
+
+.tab { color: var(--fg); padding: 0 1ch; }
+.tab .key { color: var(--dim); }
+.tab:hover { text-decoration: none; background: var(--sel-bg); }
+.tab.active { background: var(--fg); color: var(--bg); }
+.tab.active .key { color: inherit; }
+
+/* ── Main region and status line ──────────────────────────────────── */
+
+.main {
+  flex: 1;
+  width: 100%;
+  max-width: 160ch;
+  margin: 0 auto;
+  padding: 1.5em 2ch;
+}
+
+.statusline {
+  display: flex;
+  justify-content: space-between;
+  gap: 2ch;
+  padding: 0.2em 2ch;
+  border-top: 1px solid var(--border);
+  background: var(--bg-alt);
+  color: var(--dim);
+}
+
+/* ── Panels: box with title inset in the top border ───────────────── */
+
+.panel {
+  position: relative;
+  border: 1px solid var(--border);
+  padding: 1em 2ch 0.5em;
+  margin: 0.8em 0 1.4em;
+}
+
+.panel-title {
+  position: absolute;
+  top: calc(var(--lh) * -0.5em);
+  left: 1.5ch;
+  margin: 0;
+  padding: 0 1ch;
+  background: var(--bg);
+  color: var(--fg);
+}
+.panel-title::before { content: "┤ "; color: var(--border-hi); }
+.panel-title::after { content: " ├"; color: var(--border-hi); }
+
+.panel:focus-within { border-color: var(--border-hi); }
+.panel-err { border-color: var(--err); }
+.panel-err .panel-title { color: var(--err); }
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 46ch), 1fr));
+  gap: 0 2ch;
+}
+
+/* ── Badges: [PRINTING] ───────────────────────────────────────────── */
+
+.badge { white-space: nowrap; }
+.badge::before { content: "["; }
+.badge::after { content: "]"; }
+.badge-ok { color: var(--accent); }
+.badge-warn { color: var(--warn); }
+.badge-err { color: var(--err); }
+.badge-info { color: var(--info); }
+.badge-dim { color: var(--dim); }
+
+/* ── Text bars / meters: [████░░░░] 52% (glyphs rendered server-side) */
+
+.bar { white-space: pre; color: var(--accent); }
+.bar .empty { color: var(--border-hi); }
+.bar.warn { color: var(--warn); }
+.bar.err { color: var(--err); }
+
+/* ── Key/value rows ───────────────────────────────────────────────── */
+
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 0 2ch; margin: 0 0 0.5em; }
+.kv dt { color: var(--dim); }
+.kv dd { margin: 0; overflow-wrap: anywhere; }
+
+/* ── Buttons: [ Pause ] ───────────────────────────────────────────── */
+
+.btn, button {
+  font: inherit;
+  color: var(--fg);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn::before, button::before { content: "[ "; color: var(--dim); }
+.btn::after, button::after { content: " ]"; color: var(--dim); }
+.btn:hover, button:hover { background: var(--sel-bg); text-decoration: none; }
+button:disabled { color: var(--dim); cursor: not-allowed; background: none; }
+.btn-danger, button.danger { color: var(--err); }
+.btn-primary, button.primary { color: var(--accent); }
+
+.actions { display: flex; flex-wrap: wrap; gap: 0.3em 2ch; margin: 0.5em 0; }
+
+/* ── Forms ────────────────────────────────────────────────────────── */
+
+label { display: block; color: var(--dim); }
+
+input, select, textarea {
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 0;
+  padding: 0.15em 1ch;
+  width: 100%;
+  max-width: 60ch;
+}
+input:focus, select:focus, textarea:focus { border-color: var(--accent); outline: none; }
+
+input[type="checkbox"] {
+  appearance: none;
+  width: auto;
+  border: none;
+  background: none;
+  padding: 0;
+  margin: 0 1ch 0 0;
+  cursor: pointer;
+  color: var(--fg);
+  font: inherit;
+}
+input[type="checkbox"]::before { content: "[ ]"; }
+input[type="checkbox"]:checked::before { content: "[x]"; color: var(--accent); }
+label:has(> input[type="checkbox"]) { display: inline-flex; color: var(--fg); cursor: pointer; }
+
+.field { margin: 0 0 0.8em; }
+
+/* ── Tables / lists ───────────────────────────────────────────────── */
+
+table { width: 100%; border-collapse: collapse; }
+th { text-align: left; color: var(--dim); font-weight: normal; border-bottom: 1px solid var(--border); }
+th, td { padding: 0 1ch; white-space: nowrap; }
+td.wrap { white-space: normal; overflow-wrap: anywhere; }
+tr.selected, tbody tr:hover { background: var(--sel-bg); }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+pre, .log {
+  font: inherit;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ── Modal (native <dialog>) ──────────────────────────────────────── */
+
+dialog {
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px double var(--border-hi);
+  border-width: 3px;
+  padding: 1em 2ch;
+  max-width: min(70ch, calc(100vw - 4ch));
+  font: inherit;
+}
+dialog::backdrop { background: rgb(0 0 0 / 0.6); }
+
+/* ── htmx request indicator ───────────────────────────────────────── */
+
+.htmx-indicator { visibility: hidden; color: var(--dim); }
+.htmx-request .htmx-indicator, .htmx-request.htmx-indicator { visibility: visible; }
+
+@media (max-width: 600px) {
+  :root { --fs: 13px; }
+  .main { padding: 1em 16px; }
+  .topbar, .statusline { padding-left: 16px; padding-right: 16px; }
+  .statusline .dim { display: none; }
+}

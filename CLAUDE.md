@@ -16,10 +16,13 @@ printpit is a Rust web app, shipped as a Docker image, for controlling several M
 6. **No CORS.** Don't add CORS layers. Everything is same-origin.
 
 ## Stack and conventions
-- axum + tokio, askama templates, htmx (vendored in `static/js/`, pinned, embedded with rust-embed), SSE for live updates, sqlx + SQLite, reqwest (rustls) + tokio-tungstenite for Moonraker.
+- Rust edition 2024, `rustfmt.toml` max_width 110. Library crate (`src/lib.rs`) + thin `main.rs`; integration tests in `tests/` drive `web::router` with `tower::ServiceExt::oneshot`.
+- axum 0.8 + tokio, askama 0.16 templates (`templates/`), htmx **2.0.10** (vendored at `static/js/htmx.min.js`, sha512 checked against npm), SSE for live updates, sqlx + SQLite, reqwest (rustls) + tokio-tungstenite for Moonraker.
+- Static files: `static/` is embedded via rust-embed; reference them in templates as `{{ layout.asset("css/tui.css") }}`, which returns `/static/{hash}/...`.
 - No JS framework and no frontend build step. Keep `static/js/app.js` small. CSS custom properties for theming live in `static/css/tui.css`.
-- `/ui/*` routes return an htmx partial when `HX-Request` is set, or the full shell otherwise, so deep links work.
-- Errors: `AppError` maps to an HTML error panel. `MoonrakerError` variants (offline, unauthorized, klippy not ready, …) render as an inline TUI error box and never panic.
+- `/ui/*` routes return an htmx partial when `HX-Request` is set, or the full shell otherwise, so deep links work. Use `web::layout::page(hx, Tab::X, html)`. It also re-renders the tab strip out of band (`hx-swap-oob`). New tabs go in `layout::Tab`.
+- CSP is strict (`script-src 'self'; style-src 'self'`): no inline `<script>`, no `style=""` attributes, no `on*=` handlers. htmx is configured through the `htmx-config` meta tag in `base.html`. Indicator styles are off, and 4xx/5xx responses *are* swapped so error panels show.
+- Errors: `AppError` renders just an error panel. The `error::wrap_full_page` middleware wraps it in page chrome for non-htmx requests. `MoonrakerError` variants (offline, unauthorized, klippy not ready, …) render as an inline TUI error box and never panic.
 - Config comes only from `PRINTPIT_*` env vars (plus `*_FILE` variants for Docker secrets).
 - Before committing: `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, `cargo test`.
 
@@ -31,14 +34,17 @@ printpit is a Rust web app, shipped as a Docker image, for controlling several M
 
 ## Commands
 ```
-cargo run                                   # needs PRINTPIT_SECRET_KEY, PRINTPIT_SECURE_COOKIES=false for local http
-cargo test
+PRINTPIT_SECRET_KEY=$(openssl rand -base64 32) PRINTPIT_SECURE_COOKIES=false PRINTPIT_BIND=127.0.0.1:8080 cargo run
+cargo fmt && cargo clippy --all-targets -- -D warnings && cargo test
 docker build -t printpit .
-docker compose up
+docker compose up            # needs PRINTPIT_SECRET_KEY in .env
+printpit healthcheck         # probes GET /healthz on PRINTPIT_BIND (used by Docker HEALTHCHECK)
 ```
-(Update this section as tooling is added.)
 
 ## Gotchas / decisions log
 - *(add entries as `YYYY-MM-DD: note`)*
 - 2026-10-30: The project started. Decided on server-rendered HTML + htmx + SSE instead of an SPA, to meet the speed and minimal-UI goals and so that tab partials are lazy by construction.
 - 2026-10-30: The auto-refresh checkbox lives on the dashboard and is remembered per user (`user_prefs.auto_refresh`, default on). It controls dashboard SSE and System tab auto-refresh. Logs follow mode is separate. The compose file ships both the simple and the segmented variants.
+- 2026-10-30: `/healthz` is routed *after* the TraceLayer so Docker health probes don't spam the logs. It still gets the security headers.
+- 2026-10-30: Runtime image is `gcr.io/distroless/static-debian12:nonroot` (UID 65532, CA certs included). The builder is `rust:1.97-alpine`, which links musl statically.
+- 2026-10-30: Claude cloud sandbox only: `dockerd` isn't running by default (start it with `dockerd &`). Builds there need the proxy CA: build with a scratch copy of the Dockerfile that `COPY`s `/root/.ccr/ca-bundle.crt` and sets `CARGO_HTTP_CAINFO`. Never commit that to the real Dockerfile.
