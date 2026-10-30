@@ -16,7 +16,7 @@ See `PLAN.md` for design details and `CLAUDE.md` for rules.
 - [x] Placeholder tab partials (`/ui/{dashboard,files,logs,system,printers}`), partial vs full page + OOB tab strip
 - [x] Keyboard tab shortcuts (`1`–`4`, `p`) in `app.js`
 - [x] `GET /healthz` and a `healthcheck` CLI subcommand
-- [x] Dockerfile (multi-stage, static musl binary, distroless/static nonroot, read-only rootfs friendly, HEALTHCHECK); image 11.9 MB, idle RSS < 1 MB
+- [x] Dockerfile (multi-stage, static musl binary, distroless/static nonroot, read-only rootfs friendly, HEALTHCHECK); image 11.9 MB at M0 (17.1 MB with SQLite at M1), idle RSS < 2 MB
 - [x] `docker-compose.yml` (simple single-network variant first)
 - [x] CI workflow: fmt, clippy, test, docker build + container smoke test
 - [x] README quickstart

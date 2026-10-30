@@ -28,11 +28,12 @@ pub async fn open(path: &Path) -> Result<Db, sqlx::Error> {
         .connect_with(options)
         .await?;
     sqlx::migrate!().run(&pool).await?;
+    restrict_permissions(path)?;
     Ok(pool)
 }
 
 /// Creates the database file owner-only (0600) if it doesn't exist yet. It holds password
-/// hashes and encrypted secrets; SQLite gives its -wal/-shm files the same mode.
+/// hashes and encrypted secrets.
 fn create_private(path: &Path) -> std::io::Result<()> {
     let mut opts = std::fs::OpenOptions::new();
     opts.write(true).create_new(true);
@@ -43,6 +44,27 @@ fn create_private(path: &Path) -> std::io::Result<()> {
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
         Err(e) => Err(e),
     }
+}
+
+/// Forces 0600 on the database and its -wal/-shm files once SQLite has opened them. SQLite
+/// can `fchmod` an empty database file back to its default 0644 on open, so pre-creating the
+/// file isn't enough. Running on every start also repairs older installs.
+fn restrict_permissions(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for suffix in ["", "-wal", "-shm"] {
+            let mut file = path.as_os_str().to_owned();
+            file.push(suffix);
+            match std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+                _ => {}
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
 }
 
 /// Current time as unix seconds.

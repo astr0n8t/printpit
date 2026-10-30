@@ -572,9 +572,11 @@ async fn disabled_user_is_locked_out() {
 async fn database_file_is_owner_only() {
     use std::os::unix::fs::PermissionsExt;
     let app = TestApp::new().await;
-    let mode = std::fs::metadata(app.state.config.data_dir.join("printpit.db"))
-        .unwrap()
-        .permissions()
-        .mode();
-    assert_eq!(mode & 0o777, 0o600);
+    for name in ["printpit.db", "printpit.db-wal", "printpit.db-shm"] {
+        let mode = std::fs::metadata(app.state.config.data_dir.join(name))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600, "{name}");
+    }
 }
