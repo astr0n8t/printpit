@@ -6,7 +6,7 @@ A minimal web interface for controlling several [Moonraker](https://github.com/A
 - **Server-side Moonraker client.** The browser only talks to printpit and never to a printer, so Moonraker needs no CORS setup, and printer traffic can stay on its own network.
 - **Lazy loading.** Each tab queries the printer only when you open it.
 
-> **Status:** early development. Authentication, printer management and the live dashboard are done; the files tab is next.
+> **Status:** early development. Authentication, printer management, the live dashboard and file management are done; the logs and system tabs are next.
 > See [`PLAN.md`](PLAN.md) for the design and [`CHECKLIST.md`](CHECKLIST.md) for progress.
 
 ## Quickstart (Docker Compose)

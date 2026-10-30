@@ -73,17 +73,17 @@ See `PLAN.md` for design details and `CLAUDE.md` for rules.
 - [x] `cargo run --example mock_moonraker`: fake printers for UI work
 
 ## M4 — Files tab
-- [ ] Printer selector component (remembered in `user_prefs`)
-- [ ] Lazy-loaded `/ui/files` partial: directory listing (name, size, modified, estimated time, filament)
-- [ ] Navigation into subdirectories, breadcrumb, `/` filter, `j/k` selection, sort by column
-- [ ] Metadata panel + proxied thumbnail
-- [ ] Upload: streaming passthrough (no full buffering), size limit, progress indicator, optional "print after upload"
-- [ ] Delete file/directory (confirm), rename/move, copy, mkdir
-- [ ] Download (streamed proxy)
-- [ ] Start print from the file list (operator+)
-- [ ] Short-TTL cache invalidated on mutation
-- [ ] Path safety: reject `..`, absolute paths, encode segments
-- [ ] Audit entries for upload/delete/move/start
+- [x] Printer selector component (remembered in `user_prefs.selected_printer_id`; shared via `web/select.rs`)
+- [x] Lazy-loaded listing: `/ui/files` renders instantly, `/p/{id}/files` loads the directory (name, size, modified, estimated time, filament, disk usage)
+- [x] Navigation into subdirectories with URL/history, breadcrumb, `/` filter, `j/k` selection + Enter, sort by column
+- [x] Metadata panel + proxied thumbnail (largest ≤ 400 px)
+- [x] Upload: streaming passthrough (multipart piped through a channel, no buffering), size limit, text progress bar, optional "print after upload"
+- [x] Delete file/directory (confirm), rename/move, copy, mkdir
+- [x] Download (streamed proxy, Content-Disposition)
+- [x] Start print from the file details (operator+)
+- [x] Short-TTL (5 s) listing cache invalidated on mutation and printer edits
+- [x] Path safety: reject `..`, absolute paths, empty segments, backslashes; encode segments
+- [x] Audit entries for upload/delete/move/copy/mkdir/start
 
 ## M5 — Logs tab
 - [ ] Lazy-loaded `/ui/logs` partial: list files in the `logs` root

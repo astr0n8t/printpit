@@ -39,7 +39,9 @@ printpit is a Rust web app, shipped as a Docker image, for controlling several M
 - Hub (`moonraker/hub.rs`): `state.hub.subscribe(id)` returns a `Subscription` (a watch receiver plus a refcount guard). Call `state.printer_changed(id)` after editing, toggling or deleting a printer. `poll_once()` is the one-shot HTTP status used for manual refresh and the fallback.
 - Webcams: relative URLs from `server.webcams.list` resolve against the printer host, dropping port 7125 (served by nginx, not Moonraker). The admin's webcam override is a stream URL; the snapshot URL is derived from `action=stream`.
 - JSON-RPC over the WebSocket: `printer.objects.subscribe`. Updates arrive as `notify_status_update` with *partial* objects, so merge them into the cached state. Don't replace it.
-- File roots: `gcodes` (manage), `logs` (read). Paths are relative to the root. URL-encode each path segment.
+- File roots: `gcodes` (manage), `logs` (read). Paths are relative to the root. Always run user paths through `moonraker::files::clean_path` / `clean_name`, and use `encode_path` for URL paths. Directory endpoints take root-prefixed paths (`gcodes/sub`); metadata and print start take root-relative names.
+- Per-printer tabs (Files, Logs, System) use `web::select::select()` for the remembered printer selector, and `select::enabled_printer()` for `/p/{id}/...` routes. `web::files::attachment()` streams any upstream file as a download.
+- Uploads: `files::upload` pipes the browser's multipart field into a `reqwest::Body` through an mpsc channel, joined with the upstream request, so nothing is buffered. Form fields must precede the file input. The route has its own `DefaultBodyLimit` (max upload + 1 MB).
 - `/printer/*` endpoints fail with an error when Klippy isn't ready. Show that state instead of treating it as offline.
 
 ## Commands
@@ -70,3 +72,5 @@ cargo run --example mock_moonraker   # fake printers on 127.0.0.1:7201-7203 (run
 - 2026-10-30: Sparklines are rendered server-side from the hub's temperature history (40 samples, every 2 s), so there is no client-side state. In manual mode there is no history, so no sparklines.
 - 2026-10-30: Unauthenticated `Accept: text/event-stream` requests get a 401, not a redirect, so EventSource stops retrying. A 204 from the stream means auto-refresh is off.
 - 2026-10-30: Shell gotcha: `pkill -f <pattern>` kills its own shell if the same command line contains the pattern text anywhere. Run `pkill` as a separate Bash call (exit code 144 is the symptom).
+- 2026-10-30: Askama escapes `&` as `&#38;` (not `&amp;`). Keep that in mind when asserting on rendered URLs in tests.
+- 2026-10-30: The mock Moonraker records request paths without the HTTP method, so `POST` and `GET /server/files/directory` look the same in `mock.paths()`.
