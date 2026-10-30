@@ -358,3 +358,12 @@ pre.log > .dim { color: var(--dim); }
 @media (max-width: 900px) {
   .logs-layout { grid-template-columns: 1fr; }
 }
+
+/* ── System ───────────────────────────────────────────────────────── */
+
+.sys-layout { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 52ch), 1fr)); gap: 0 2ch; align-items: start; }
+.panel-tools { display: flex; gap: 2ch; align-items: center; margin-bottom: 0.4em; }
+.meter { display: grid; grid-template-columns: 9ch max-content 1fr; gap: 0 1ch; white-space: nowrap; }
+.meter-value { overflow: hidden; text-overflow: ellipsis; }
+.cores { margin: 0.2em 0 0.4em; }
+.cores summary { cursor: pointer; }

@@ -157,3 +157,140 @@ pub struct Thumbnail {
 pub struct UploadResult {
     pub print_started: bool,
 }
+
+/// `GET /machine/system_info` (only the parts printpit shows; serial numbers are ignored).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct SystemInfoEnvelope {
+    pub system_info: SystemInfo,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct SystemInfo {
+    pub cpu_info: CpuInfo,
+    pub sd_info: SdInfo,
+    pub distribution: Distribution,
+    pub available_services: Vec<String>,
+    pub service_state: std::collections::BTreeMap<String, ServiceState>,
+    pub virtualization: Virtualization,
+    pub python: PythonInfo,
+    pub network: std::collections::BTreeMap<String, NetInterface>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct CpuInfo {
+    pub cpu_count: Option<u32>,
+    pub bits: String,
+    pub processor: String,
+    pub cpu_desc: String,
+    pub hardware_desc: String,
+    pub model: String,
+    pub total_memory: Option<u64>,
+    pub memory_units: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct SdInfo {
+    pub manufacturer: String,
+    pub product_name: String,
+    pub capacity: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct Distribution {
+    pub name: String,
+    pub codename: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct ServiceState {
+    pub active_state: String,
+    pub sub_state: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct Virtualization {
+    pub virt_type: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct PythonInfo {
+    pub version_string: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct NetInterface {
+    pub mac_address: String,
+    pub ip_addresses: Vec<IpAddressInfo>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct IpAddressInfo {
+    pub family: String,
+    pub address: String,
+    pub is_link_local: bool,
+}
+
+/// `GET /machine/proc_stats`
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct ProcStats {
+    pub moonraker_stats: Vec<MoonrakerSample>,
+    pub throttled_state: ThrottledState,
+    pub cpu_temp: Option<f64>,
+    pub network: std::collections::BTreeMap<String, NetStats>,
+    pub system_cpu_usage: std::collections::BTreeMap<String, f64>,
+    pub system_memory: SystemMemory,
+    pub system_uptime: Option<f64>,
+    pub websocket_connections: Option<u32>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct MoonrakerSample {
+    pub cpu_usage: f64,
+    pub memory: u64,
+    pub mem_units: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct ThrottledState {
+    pub bits: u64,
+    pub flags: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct NetStats {
+    pub rx_bytes: u64,
+    pub tx_bytes: u64,
+    /// Bytes per second.
+    pub bandwidth: f64,
+}
+
+/// In kB.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct SystemMemory {
+    pub total: u64,
+    pub available: u64,
+    pub used: u64,
+}
+
+/// `GET /machine/update/status`
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct UpdateStatus {
+    pub busy: bool,
+    pub version_info: std::collections::BTreeMap<String, serde_json::Value>,
+}

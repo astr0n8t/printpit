@@ -114,6 +114,21 @@
     document.querySelector("button[data-log-refresh]")?.click();
   }, FOLLOW_EVERY_MS);
 
+  // ── Timed refresh ─────────────────────────────────────────────────
+  // A button with data-every="<ms>" clicks itself on that interval while the page is visible.
+  // The server only renders data-every when the user's auto-refresh pref is on.
+  setInterval(() => {
+    if (document.visibilityState !== "visible") return;
+    const now = Date.now();
+    document.querySelectorAll("button[data-every]").forEach((b) => {
+      b.dataset.since ??= String(now);
+      if (now - Number(b.dataset.since) >= Number(b.dataset.every)) {
+        b.dataset.since = String(now);
+        b.click();
+      }
+    });
+  }, 1000);
+
   // ── Dialogs ───────────────────────────────────────────────────────
   // TUI confirm for hx-confirm: "Delete printer X? [y/N]".
   const ask = (question) =>

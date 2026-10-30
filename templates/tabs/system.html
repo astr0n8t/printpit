@@ -1,0 +1,12 @@
+{%- if let Some(sel) = select %}
+<div class="tab-head">{{ sel|safe }}</div>
+<div class="sys-layout">
+  <div id="sys-stats" hx-get="/p/{{ id }}/system/stats" hx-trigger="load"><p class="dim">loading…</p></div>
+  <div id="sys-info" hx-get="/p/{{ id }}/system/info" hx-trigger="load"><p class="dim">loading…</p></div>
+</div>
+{%- else %}
+<section class="panel">
+  <h2 class="panel-title">system</h2>
+  <p>No printers configured yet.</p>
+</section>
+{%- endif %}

@@ -67,6 +67,17 @@ pub fn age(unix: f64) -> String {
     }
 }
 
+/// `12d 3h`, `3h 07m`, `5m`.
+pub fn uptime(secs: f64) -> String {
+    let total = secs.max(0.0) as u64;
+    let (d, h, m) = (total / 86_400, (total % 86_400) / 3600, (total % 3600) / 60);
+    match (d, h) {
+        (0, 0) => format!("{m}m"),
+        (0, _) => format!("{h}h {m:02}m"),
+        _ => format!("{d}d {h}h"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -97,6 +108,13 @@ mod tests {
         assert_eq!(age(now), "just now");
         assert_eq!(age(now - 7200.0), "2h ago");
         assert_eq!(age(now - 3.0 * 86_400.0), "3d ago");
+    }
+
+    #[test]
+    fn uptimes() {
+        assert_eq!(uptime(59.0), "0m");
+        assert_eq!(uptime(3.0 * 3600.0 + 7.0 * 60.0), "3h 07m");
+        assert_eq!(uptime(12.0 * 86_400.0 + 3.0 * 3600.0), "12d 3h");
     }
 
     #[test]

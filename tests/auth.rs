@@ -32,6 +32,8 @@ const PROTECTED_GET: &[&str] = &[
     "/p/1/logs/view?name=klippy.log",
     "/p/1/logs/tail?name=klippy.log",
     "/p/1/logs/download?name=klippy.log",
+    "/p/1/system/info",
+    "/p/1/system/stats",
 ];
 const PROTECTED_POST: &[&str] = &[
     "/logout",

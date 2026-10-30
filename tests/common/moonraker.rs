@@ -31,6 +31,8 @@ pub struct MockOptions {
     pub no_websocket: bool,
     /// Ignore `Range` headers on log downloads (forces the streaming tail fallback).
     pub no_range: bool,
+    /// Answer `/machine/update/status` with 404, as when `[update_manager]` isn't configured.
+    pub no_update_manager: bool,
 }
 
 impl Default for MockOptions {
@@ -41,6 +43,7 @@ impl Default for MockOptions {
             webcam: true,
             no_websocket: false,
             no_range: false,
+            no_update_manager: false,
         }
     }
 }
@@ -161,6 +164,9 @@ impl MockMoonraker {
                 get(download).merge(delete(delete_file)),
             )
             .route("/server/files/logs/{*path}", get(log_file))
+            .route("/machine/system_info", get(system_info))
+            .route("/machine/proc_stats", get(proc_stats))
+            .route("/machine/update/status", get(update_status))
             .route("/printer/print/{action}", post(print_action))
             .route("/printer/emergency_stop", post(estop))
             .route("/webcam/", get(webcam))
@@ -426,6 +432,56 @@ async fn download(State(mock): State<Mock>, Path(path): Path<String>) -> Respons
         }
         None => not_found("File does not exist"),
     }
+}
+
+async fn system_info() -> Response {
+    ok(json!({"system_info": {
+        "provider": "systemd_dbus",
+        "cpu_info": {"cpu_count": 4, "bits": "64bit", "processor": "aarch64", "cpu_desc": "Cortex-A72",
+                     "serial_number": "SERIAL-SHOULD-NOT-SHOW", "hardware_desc": "BCM2835",
+                     "model": "Raspberry Pi 4 Model B Rev 1.4", "total_memory": 3884916, "memory_units": "kB"},
+        "sd_info": {"manufacturer": "SanDisk", "product_name": "SN32G", "capacity": "29.7 GiB",
+                    "serial_number": "SD-SERIAL-SHOULD-NOT-SHOW"},
+        "distribution": {"name": "Debian GNU/Linux 12 (bookworm)", "id": "debian", "codename": "bookworm"},
+        "available_services": ["klipper", "moonraker", "crowsnest"],
+        "service_state": {
+            "klipper": {"active_state": "active", "sub_state": "running"},
+            "moonraker": {"active_state": "active", "sub_state": "running"},
+            "crowsnest": {"active_state": "failed", "sub_state": "failed"}
+        },
+        "virtualization": {"virt_type": "none", "virt_identifier": "none"},
+        "python": {"version": [3, 11, 2, "final", 0], "version_string": "3.11.2 (main, Mar 13 2023)"},
+        "network": {"wlan0": {"mac_address": "dc:a6:32:00:00:01", "ip_addresses": [
+            {"family": "ipv4", "address": "10.20.0.11", "is_link_local": false},
+            {"family": "ipv6", "address": "fe80::1", "is_link_local": true}]}}
+    }}))
+}
+
+async fn proc_stats() -> Response {
+    ok(json!({
+        "moonraker_stats": [{"time": 1.0, "cpu_usage": 2.5, "memory": 40960, "mem_units": "kB"}],
+        "throttled_state": {"bits": 327680, "flags": ["Previously Under-Volted", "Previously Throttled"]},
+        "cpu_temp": 52.3,
+        "network": {
+            "lo": {"rx_bytes": 1, "tx_bytes": 1, "bandwidth": 10.0},
+            "wlan0": {"rx_bytes": 52_428_800u64, "tx_bytes": 10_485_760u64, "bandwidth": 2048.0}
+        },
+        "system_cpu_usage": {"cpu": 41.5, "cpu0": 80.0, "cpu1": 20.0, "cpu2": 33.0, "cpu3": 95.0},
+        "system_memory": {"total": 3884916, "available": 2884916, "used": 1000000},
+        "system_uptime": 1_036_800.0,
+        "websocket_connections": 3
+    }))
+}
+
+async fn update_status(State(mock): State<Mock>) -> Response {
+    if mock.opts.no_update_manager {
+        return not_found("No registered endpoint");
+    }
+    ok(json!({"busy": false, "version_info": {
+        "moonraker": {"version": "v0.9.3-12", "remote_version": "v0.9.3-20", "is_valid": true, "is_dirty": false},
+        "klipper": {"version": "v0.12.0-301", "remote_version": "v0.12.0-301", "is_valid": true, "is_dirty": false},
+        "system": {"package_count": 2, "package_list": ["libc6", "openssl"]}
+    }}))
 }
 
 /// Serves a log, honouring a suffix `Range: bytes=-N` unless `no_range` is set.

@@ -1,0 +1,56 @@
+<section class="panel">
+  <h2 class="panel-title">host</h2>
+  <div class="panel-tools">
+    <button type="button" hx-get="/p/{{ id }}/system/info" hx-target="#sys-info" data-refresh>reload</button>
+  </div>
+{%- if let Some(e) = error %}
+  <p class="err" role="alert">! {{ e }}</p>
+{%- endif %}
+{%- if !host.is_empty() %}
+  <dl class="kv">
+{%- for (label, value) in host %}
+    <dt>{{ label }}</dt><dd>{{ value }}</dd>
+{%- endfor %}
+  </dl>
+{%- endif %}
+{%- if !versions.is_empty() %}
+  <dl class="kv">
+{%- for (label, value) in versions %}
+    <dt>{{ label }}</dt><dd>{{ value }}</dd>
+{%- endfor %}
+  </dl>
+{%- endif %}
+</section>
+{%- if !services.is_empty() %}
+<section class="panel">
+  <h2 class="panel-title">services</h2>
+  <table>
+    <tbody>
+{%- for s in services %}
+      <tr><td>{{ s.name }}</td><td><span class="badge {{ s.class }}">{{ s.state }}</span></td></tr>
+{%- endfor %}
+    </tbody>
+  </table>
+</section>
+{%- endif %}
+{%- if !components.is_empty() || updates_error.is_some() %}
+<section class="panel">
+  <h2 class="panel-title">updates</h2>
+{%- if let Some(e) = updates_error %}
+  <p class="dim">{{ e }}</p>
+{%- endif %}
+{%- if !components.is_empty() %}
+  <div class="scroll-x">
+  <table>
+    <thead><tr><th>component</th><th>installed</th><th>latest</th><th></th></tr></thead>
+    <tbody>
+{%- for c in components %}
+      <tr><td>{{ c.name }}</td><td class="dim">{{ c.version }}</td><td class="dim">{{ c.remote }}</td><td><span class="badge {{ c.class }}">{{ c.status }}</span></td></tr>
+{%- endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="dim">Read-only. Run updates from Mainsail/Fluidd or KIAUH.</p>
+{%- endif %}
+</section>
+{%- endif %}

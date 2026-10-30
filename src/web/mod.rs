@@ -11,7 +11,7 @@ mod logs;
 mod printers;
 pub mod security;
 mod select;
-mod tabs;
+mod system;
 pub mod widgets;
 
 use axum::Router;
@@ -62,7 +62,9 @@ pub fn router(state: AppState) -> Router {
         .route("/p/{id}/logs/view", get(logs::view))
         .route("/p/{id}/logs/tail", get(logs::tail))
         .route("/p/{id}/logs/download", get(logs::download))
-        .route("/ui/system", get(tabs::system))
+        .route("/ui/system", get(system::tab))
+        .route("/p/{id}/system/info", get(system::info))
+        .route("/p/{id}/system/stats", get(system::stats))
         .route("/ui/printers", get(printers::list))
         .route("/ui/printers/new", get(printers::new_form))
         .route("/ui/printers/{id}", get(printers::edit_form))

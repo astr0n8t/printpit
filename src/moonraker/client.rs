@@ -17,7 +17,8 @@ use super::MoonrakerError;
 use super::net::{self, Egress};
 use super::status::query_string;
 use super::types::{
-    Envelope, ErrorEnvelope, FileEntry, ObjectList, ObjectStatus, PrinterInfo, ServerInfo, WebcamList,
+    Envelope, ErrorEnvelope, FileEntry, ObjectList, ObjectStatus, PrinterInfo, ProcStats, ServerInfo,
+    SystemInfo, SystemInfoEnvelope, UpdateStatus, WebcamList,
 };
 
 pub type MoonrakerSocket = WebSocketStream<reqwest::Upgraded>;
@@ -93,6 +94,22 @@ impl MoonrakerClient {
     ) -> Result<Map<String, Value>, MoonrakerError> {
         let path = format!("/printer/objects/query?{}", query_string(sub));
         Ok(self.get_json::<ObjectStatus>(&path).await?.status)
+    }
+
+    pub async fn system_info(&self) -> Result<SystemInfo, MoonrakerError> {
+        Ok(self
+            .get_json::<SystemInfoEnvelope>("/machine/system_info")
+            .await?
+            .system_info)
+    }
+
+    pub async fn proc_stats(&self) -> Result<ProcStats, MoonrakerError> {
+        self.get_json("/machine/proc_stats").await
+    }
+
+    /// Cached update status; `refresh=false` so viewing never triggers an update check.
+    pub async fn update_status(&self) -> Result<UpdateStatus, MoonrakerError> {
+        self.get_json("/machine/update/status?refresh=false").await
     }
 
     pub async fn webcams(&self) -> Result<WebcamList, MoonrakerError> {
