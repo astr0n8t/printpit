@@ -38,17 +38,19 @@ See `PLAN.md` for design details and `CLAUDE.md` for rules.
 - [x] Tests: unauthenticated access rejected on every route, CSRF enforced, session expiry, rate limit, roles, disabled users, open-redirect guard, session fixation
 
 ## M2 — Printer management
-- [ ] Migration: `printers` table
-- [ ] `crypto.rs`: AES-256-GCM seal/open with random nonce, key from config (+ round-trip test)
-- [ ] `moonraker/net.rs`: egress `reqwest::Client` builder (rustls, timeouts, optional `local_address` = `PRINTPIT_EGRESS_BIND`)
-- [ ] CIDR allowlist check with a custom DNS resolver that rejects disallowed IPs after resolution (+ tests incl. rebinding case)
-- [ ] `MoonrakerClient::new(printer)`: base URL, decrypted key → `X-Api-Key` header
-- [ ] `server.info` / `printer.info` calls + typed models
-- [ ] Printers page (admin): list, add, edit, delete, reorder, enable/disable
-- [ ] API key never rendered back (show "set"/"not set", replace/clear controls)
-- [ ] "Test connection" button showing Klippy state + versions, or a typed error
-- [ ] Audit entries for printer create/update/delete
-- [ ] Test: API key never appears in any HTTP response body
+- [x] Migration: `printers` table
+- [x] `crypto.rs`: AES-256-GCM seal/open with random nonce, HKDF subkey from config, AAD context (+ round-trip/tamper tests)
+- [x] `moonraker/net.rs`: egress `reqwest::Client` builder (rustls + ring, connect timeout, `no_proxy`, no redirects, optional `local_address` = `PRINTPIT_EGRESS_BIND`)
+- [x] CIDR allowlist check with a custom DNS resolver that rejects disallowed IPs after resolution; IP literals checked separately (+ tests incl. rebinding case)
+- [x] `MoonrakerClient::new(printer)`: base URL, decrypted key → `X-Api-Key` header
+- [x] `server.info` / `printer.info` calls + typed models; typed `MoonrakerError` (address-free messages)
+- [x] Printers page (admin): list, add, edit, delete, reorder, enable/disable
+- [x] API key never rendered back (show "set"/"none"/"unreadable", replace/clear controls)
+- [x] "Test connection" button showing Klippy state + versions, or a typed error
+- [x] Audit entries for printer create/update/delete/enable/disable
+- [x] Test: API key never appears in any HTTP response body (and is sent upstream)
+- [x] TUI confirm dialog for `hx-confirm` (y/n keys) — reused by M3 controls
+- [x] Dashboard placeholder lists enabled printers (DB only, no Moonraker calls)
 
 ## M3 — Dashboard (main page)
 - [ ] `moonraker/ws.rs`: connect WebSocket (header or oneshot token), JSON-RPC request/response matching, reconnect with backoff

@@ -16,9 +16,20 @@ const PROTECTED_GET: &[&str] = &[
     "/ui/logs",
     "/ui/system",
     "/ui/printers",
+    "/ui/printers/new",
+    "/ui/printers/1",
     "/ui/account",
 ];
-const PROTECTED_POST: &[&str] = &["/logout", "/account/password"];
+const PROTECTED_POST: &[&str] = &[
+    "/logout",
+    "/account/password",
+    "/printers",
+    "/printers/1",
+    "/printers/1/toggle",
+    "/printers/1/move/up",
+    "/printers/1/test",
+];
+const PROTECTED_DELETE: &[&str] = &["/printers/1"];
 
 // ── First-run setup ──────────────────────────────────────────────────
 
@@ -178,6 +189,10 @@ async fn unauthenticated_requests_are_rejected_everywhere() {
         let res = anon.post(path, &[("_csrf", "x")]).await;
         assert_eq!(res.status, StatusCode::SEE_OTHER, "{path}");
         assert!(res.location().starts_with("/login"), "{path}");
+    }
+    for path in PROTECTED_DELETE {
+        let res = anon.delete_hx(path, "x").await;
+        assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{path}");
     }
     // A garbage session cookie is treated the same way, and cleared.
     anon.cookies.insert("printpit_session".into(), "garbage".into());

@@ -229,7 +229,7 @@ label:has(> input[type="checkbox"]) { display: inline-flex; color: var(--fg); cu
 
 table { width: 100%; border-collapse: collapse; }
 th { text-align: left; color: var(--dim); font-weight: normal; border-bottom: 1px solid var(--border); }
-th, td { padding: 0 1ch; white-space: nowrap; }
+th, td { padding: 0 1ch; white-space: nowrap; vertical-align: top; }
 td.wrap { white-space: normal; overflow-wrap: anywhere; }
 tr.selected, tbody tr:hover { background: var(--sel-bg); }
 .num { text-align: right; font-variant-numeric: tabular-nums; }
@@ -273,3 +273,9 @@ dialog::backdrop { background: rgb(0 0 0 / 0.6); }
 .tab.secondary { margin-left: auto; }
 .logout { margin: 0; }
 code { font: inherit; color: var(--info); }
+
+/* ── Printer table ────────────────────────────────────────────────── */
+
+.scroll-x { overflow-x: auto; }
+.row-actions { display: flex; gap: 0 1.5ch; }
+.field > .dim { margin: 0.2em 0 0; max-width: 60ch; }

@@ -4,13 +4,14 @@ mod account;
 pub mod assets;
 mod auth;
 pub mod layout;
+mod printers;
 pub mod security;
 mod tabs;
 
 use axum::Router;
 use axum::middleware;
 use axum::response::Redirect;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use tower_http::compression::CompressionLayer;
 use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
 use tracing::Level;
@@ -30,7 +31,15 @@ pub fn router(state: AppState) -> Router {
         .route("/ui/files", get(tabs::files))
         .route("/ui/logs", get(tabs::logs))
         .route("/ui/system", get(tabs::system))
-        .route("/ui/printers", get(tabs::printers))
+        .route("/ui/printers", get(printers::list))
+        .route("/ui/printers/new", get(printers::new_form))
+        .route("/ui/printers/{id}", get(printers::edit_form))
+        .route("/printers", post(printers::create))
+        .route("/printers/{id}", post(printers::update))
+        .route("/printers/{id}", delete(printers::delete))
+        .route("/printers/{id}/toggle", post(printers::toggle))
+        .route("/printers/{id}/move/{dir}", post(printers::reorder))
+        .route("/printers/{id}/test", post(printers::test))
         .route("/ui/account", get(account::show))
         .route("/account/password", post(account::change_password))
         .route("/logout", post(auth::logout))

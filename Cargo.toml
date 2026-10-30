@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+aes-gcm = "0.11.1"
 argon2 = "0.6.0"
 askama = "0.16.1"
 axum = "0.8.9"
@@ -12,10 +13,14 @@ base64 = "0.23.1"
 cookie = "0.18"
 getrandom = "0.4.3"
 hex = "0.4.3"
+hkdf = "0.13.0"
 ipnet = "2.12.2"
 mime_guess = "2.0.5"
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "stream", "query"] }
 rust-embed = { version = "8.13.0", features = ["include-exclude"] }
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
 serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
 serde_urlencoded = "0.7.1"
 sha2 = "0.11.1"
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
@@ -26,6 +31,7 @@ tower = "0.5.3"
 tower-http = { version = "0.7.1", features = ["compression-gzip", "compression-br", "trace", "timeout", "set-header", "limit"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+url = "2.5.8"
 
 [dev-dependencies]
 http-body-util = "0.1.5"

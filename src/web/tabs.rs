@@ -4,8 +4,12 @@
 use askama::Template;
 use axum::response::Response;
 
-use crate::auth::{Admin, CurrentUser, RequireRole};
+use axum::extract::State;
+
+use crate::auth::{CurrentUser, Role};
+use crate::db::printers;
 use crate::error::AppError;
+use crate::state::AppState;
 use crate::web::layout::{HxRequest, Tab, page};
 
 #[derive(Template)]
@@ -20,20 +24,32 @@ fn placeholder(hx: HxRequest, user: &CurrentUser, tab: Tab, p: Placeholder) -> R
     page(hx, user, tab, p.render()?)
 }
 
-pub async fn dashboard(hx: HxRequest, user: CurrentUser) -> Result<Response, AppError> {
-    placeholder(
-        hx,
-        &user,
-        Tab::Dashboard,
-        Placeholder {
-            title: "dashboard",
-            milestone: "M3",
-            lines: &[
-                "No printers configured yet.",
-                "Add one from the [p] Printers tab once printer management lands (M2).",
-            ],
-        },
-    )
+#[derive(Template)]
+#[template(path = "tabs/dashboard.html")]
+struct Dashboard {
+    printers: Vec<String>,
+    is_admin: bool,
+}
+
+/// Lists configured printers from the database only; live status (and the first Moonraker
+/// traffic) arrives with M3.
+pub async fn dashboard(
+    State(state): State<AppState>,
+    hx: HxRequest,
+    user: CurrentUser,
+) -> Result<Response, AppError> {
+    let printers = printers::list(&state.db)
+        .await?
+        .into_iter()
+        .filter(|p| p.enabled)
+        .map(|p| p.name)
+        .collect();
+    let html = Dashboard {
+        printers,
+        is_admin: user.has(Role::Admin),
+    }
+    .render()?;
+    page(hx, &user, Tab::Dashboard, html)
 }
 
 pub async fn files(hx: HxRequest, user: CurrentUser) -> Result<Response, AppError> {
@@ -71,19 +87,6 @@ pub async fn system(hx: HxRequest, user: CurrentUser) -> Result<Response, AppErr
             title: "system",
             milestone: "M6",
             lines: &["CPU, memory, disk, network and services on the printer host."],
-        },
-    )
-}
-
-pub async fn printers(hx: HxRequest, user: RequireRole<Admin>) -> Result<Response, AppError> {
-    placeholder(
-        hx,
-        &user,
-        Tab::Printers,
-        Placeholder {
-            title: "printers",
-            milestone: "M2",
-            lines: &["Add printers by Moonraker URL and API key."],
         },
     )
 }

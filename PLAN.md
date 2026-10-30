@@ -262,7 +262,7 @@ Every `/ui/*` route returns a partial when `HX-Request` is present, or the full 
 ```sql
 users(id, username UNIQUE, password_hash, role, created_at, updated_at, disabled)
 sessions(id_hash PK, user_id FK, csrf_token, created_at, last_seen_at, expires_at, user_agent, ip)
-printers(id, name, base_url, api_key_enc BLOB NULL, api_key_nonce BLOB NULL,
+printers(id, name UNIQUE NOCASE, base_url, api_key_enc BLOB NULL /* version||nonce||ciphertext */,
          webcam_override NULL, enabled, sort_order, created_at, updated_at)
 user_prefs(user_id PK, selected_printer_id, theme, auto_refresh BOOL DEFAULT 1)
 audit_log(id, user_id, printer_id NULL, action, detail_json, created_at)

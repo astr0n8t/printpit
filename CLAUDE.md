@@ -8,7 +8,7 @@ printpit is a Rust web app, shipped as a Docker image, for controlling several M
 - `CHECKLIST.md`: the implementation checklist. **Tick items off (`[x]`) as you finish them and add new items as you discover work.** Read it before you start a session's work.
 
 ## Non-negotiable rules
-1. **The browser never talks to a printer.** All Moonraker HTTP and WebSocket traffic comes from the backend. Printer URLs, hosts and API keys must never appear in any response body, HTML, JS or log line. The browser only knows `/p/{printer_id}/...`.
+1. **The browser never talks to a printer.** All Moonraker HTTP and WebSocket traffic comes from the backend. Printer URLs and hosts must never appear in any response body, HTML, JS or log line, with one exception: the admin-only printer settings pages (`web/printers.rs`). API keys never appear anywhere, not even there. The browser only knows `/p/{printer_id}/...`. `MoonrakerError` messages are written to be address-free (`reqwest::Error::without_url`, plus only the root cause), so they are safe to show.
 2. **Lazy loading.** A tab or view makes Moonraker calls only when the user opens it. There is no prefetching and no background polling without an active viewer. The dashboard's live data goes through `PrinterHub` (refcounted WebSocket, one per printer, closed after an idle grace period). Don't add a Moonraker call to a shared layout or shell. The user's `auto_refresh` pref (a checkbox on the dashboard, stored in `user_prefs`) gates all automatic refreshing: when it is off, there is no SSE and no timers, only manual refresh.
 3. **Auth on everything** except `/login`, `/setup` (while no users exist), `/healthz` and `/static/*`. State-changing routes require a CSRF token and the right role (`admin` > `operator` > `viewer`).
 4. **Egress is segmented.** Outbound printer requests use the egress client from `moonraker/net.rs`, which applies `PRINTPIT_EGRESS_BIND` and the `PRINTPIT_PRINTER_CIDRS` allowlist, checked *after* DNS resolution. Never build an ad-hoc `reqwest::Client` for printer traffic.
@@ -31,6 +31,9 @@ printpit is a Rust web app, shipped as a Docker image, for controlling several M
 - Before committing: `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, `cargo test`.
 
 ## Moonraker notes
+- Build clients with `state.printer_client(&printer)`. It decrypts the key and validates the URL against the allowlist. Show errors with `MoonrakerError::label()` (badge) + `detail()`.
+- Egress (`moonraker/net.rs`): one shared `reqwest::Client` with the allowlist DNS resolver, `no_proxy()`, no redirects, a 3 s connect timeout and an optional `local_address`. IP-literal hosts bypass DNS, so `Egress::check_url` covers them (`MoonrakerClient::new` calls it). Use `Egress::vet` at save time for friendly form errors.
+- TLS: reqwest is built with `rustls-no-provider`, and `Egress::new` installs rustls' `ring` provider. Don't enable reqwest's default features; they pull in aws-lc-rs (C/CMake, painful on musl).
 - Auth header: `X-Api-Key: <key>`. For the WebSocket, use the header on the upgrade request, or fetch `GET /access/oneshot_token` and pass `?token=`.
 - JSON-RPC over the WebSocket: `printer.objects.subscribe`. Updates arrive as `notify_status_update` with *partial* objects, so merge them into the cached state. Don't replace it.
 - File roots: `gcodes` (manage), `logs` (read). Paths are relative to the root. URL-encode each path segment.
@@ -56,3 +59,5 @@ printpit healthcheck         # probes GET /healthz on PRINTPIT_BIND (used by Doc
 - 2026-10-30: Login rate limiting is hand-rolled and in memory. It counts failures only: 10 per username and 20 per IP in 15 minutes. A successful login clears the username counter, not the IP counter. The limit resets on restart, which is acceptable.
 - 2026-10-30: Argon2 is built with opt-level 3 even in dev (`[profile.dev.package.argon2]`), otherwise tests crawl.
 - 2026-10-30: SQLite can `fchmod` an empty database file back to 0644 when it opens it. This happened inside the container (non-root) but not locally (root). `db::open` therefore re-applies 0600 to `printpit.db`, `-wal` and `-shm` after opening. Verify permission changes in the Docker image, not only in local tests. The image is 17.1 MB with bundled SQLite.
+- 2026-10-30: API keys are sealed with AES-256-GCM under an HKDF-derived subkey, in one blob (`version || nonce || ct`) in `printers.api_key_enc`, with AAD `printer-api-key`. If `PRINTPIT_SECRET_KEY` changes, the key shows as "unreadable" and test connection reports CONFIG.
+- 2026-10-30: Confirmations use `hx-confirm="…?"`. `app.js` turns that into the TUI `<dialog id="confirm">` (y/n/Esc) in `shell.html`. Reuse it for cancel and e-stop in M3.

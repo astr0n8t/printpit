@@ -1,0 +1,16 @@
+<section class="panel">
+  <h2 class="panel-title">dashboard</h2>
+{%- if printers.is_empty() %}
+  <p>No printers configured yet.</p>
+{%- if is_admin %}
+  <p><a class="btn btn-primary" href="/ui/printers/new" hx-get="/ui/printers/new" hx-target="#main" hx-push-url="true">add printer</a></p>
+{%- else %}
+  <p class="dim">Ask an admin to add one.</p>
+{%- endif %}
+{%- else %}
+{%- for name in printers %}
+  <p>▸ {{ name }}</p>
+{%- endfor %}
+{%- endif %}
+  <p class="dim">── live status arrives in M3 ──</p>
+</section>

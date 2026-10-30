@@ -1,6 +1,8 @@
 //! Test harness: an app on a temp database plus a tiny cookie-tracking client.
 #![allow(dead_code)]
 
+pub mod moonraker;
+
 use std::collections::HashMap;
 
 use axum::Router;
@@ -53,7 +55,11 @@ impl TestApp {
 
     /// An app whose first admin already exists, plus a client logged in as that admin.
     pub async fn with_admin() -> (Self, Client) {
-        let app = Self::new().await;
+        Self::with_admin_env(&[("PRINTPIT_SECURE_COOKIES", "false")]).await
+    }
+
+    pub async fn with_admin_env(env: &[(&str, &str)]) -> (Self, Client) {
+        let app = Self::with_env(env).await;
         let mut c = app.client();
         c.setup(ADMIN, ADMIN_PW).await;
         (app, c)
@@ -167,6 +173,22 @@ impl Client {
 
     pub async fn get(&mut self, uri: &str) -> Resp {
         self.send(Method::GET, uri, &[], None).await
+    }
+
+    pub async fn delete_hx(&mut self, uri: &str, csrf: &str) -> Resp {
+        self.send(
+            Method::DELETE,
+            uri,
+            &[("hx-request", "true"), ("x-csrf-token", csrf)],
+            None,
+        )
+        .await
+    }
+
+    /// An htmx form post with the session CSRF header.
+    pub async fn post_hx(&mut self, uri: &str, csrf: &str, fields: &[(&str, &str)]) -> Resp {
+        self.post_with(uri, fields, &[("hx-request", "true"), ("x-csrf-token", csrf)])
+            .await
     }
 
     pub async fn get_hx(&mut self, uri: &str) -> Resp {
