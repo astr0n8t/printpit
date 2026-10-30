@@ -4,12 +4,8 @@
 use askama::Template;
 use axum::response::Response;
 
-use axum::extract::State;
-
-use crate::auth::{CurrentUser, Role};
-use crate::db::printers;
+use crate::auth::CurrentUser;
 use crate::error::AppError;
-use crate::state::AppState;
 use crate::web::layout::{HxRequest, Tab, page};
 
 #[derive(Template)]
@@ -22,34 +18,6 @@ struct Placeholder {
 
 fn placeholder(hx: HxRequest, user: &CurrentUser, tab: Tab, p: Placeholder) -> Result<Response, AppError> {
     page(hx, user, tab, p.render()?)
-}
-
-#[derive(Template)]
-#[template(path = "tabs/dashboard.html")]
-struct Dashboard {
-    printers: Vec<String>,
-    is_admin: bool,
-}
-
-/// Lists configured printers from the database only; live status (and the first Moonraker
-/// traffic) arrives with M3.
-pub async fn dashboard(
-    State(state): State<AppState>,
-    hx: HxRequest,
-    user: CurrentUser,
-) -> Result<Response, AppError> {
-    let printers = printers::list(&state.db)
-        .await?
-        .into_iter()
-        .filter(|p| p.enabled)
-        .map(|p| p.name)
-        .collect();
-    let html = Dashboard {
-        printers,
-        is_admin: user.has(Role::Admin),
-    }
-    .render()?;
-    page(hx, &user, Tab::Dashboard, html)
 }
 
 pub async fn files(hx: HxRequest, user: CurrentUser) -> Result<Response, AppError> {

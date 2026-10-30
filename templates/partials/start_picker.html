@@ -1,0 +1,21 @@
+<h2 class="modal-title">start a print · {{ name }}</h2>
+{%- if let Some(e) = error %}
+<p class="err" role="alert">! {{ e }}</p>
+{%- else if files.is_empty() %}
+<p>No G-code files on this printer.</p>
+{%- else %}
+<div class="scroll-y">
+<table>
+  <thead><tr><th>file</th><th class="num">size</th><th>modified</th><th></th></tr></thead>
+  <tbody>
+{%- for f in files %}
+    <tr>
+      <td class="wrap">{{ f.path }}</td><td class="num dim">{{ f.size }}</td><td class="dim">{{ f.age }}</td>
+      <td><form hx-post="/p/{{ id }}/print/start" hx-target="#msg-{{ id }}" hx-confirm="Start {{ f.path }} on {{ name }}?"><input type="hidden" name="filename" value="{{ f.path }}"><button class="primary">print</button></form></td>
+    </tr>
+{%- endfor %}
+  </tbody>
+</table>
+</div>
+{%- endif %}
+<form method="dialog" class="actions"><button>close [esc]</button></form>

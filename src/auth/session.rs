@@ -165,6 +165,20 @@ pub async fn check(state: &AppState, jar: &CookieJar) -> Result<SessionCheck, sq
     })))
 }
 
+/// Whether a session is still live. Long-lived responses (SSE) call this periodically so a
+/// logout, password change or account disable also ends open streams.
+pub async fn still_valid(state: &AppState, session_hash: &[u8]) -> bool {
+    match sessions::lookup(&state.db, session_hash).await {
+        Ok(Some(s)) => {
+            let now = db::now();
+            !s.disabled
+                && s.expires_at > now
+                && s.last_seen_at + state.config.session_idle.as_secs() as i64 > now
+        }
+        _ => false,
+    }
+}
+
 /// Resolves the session cookie to a user, or sends the client to the login page.
 pub async fn require_auth(
     State(state): State<AppState>,
@@ -189,7 +203,15 @@ pub async fn require_auth(
 /// htmx can't follow a redirect into a full page, so it gets 401 + `HX-Redirect`. Browsers get
 /// a 303 to `/login?next=<where they were going>`.
 fn unauthenticated(hx: HxRequest, req: &Request, clear: Option<Cookie<'static>>) -> Response {
-    let mut res = if hx.0 {
+    let wants_sse = req
+        .headers()
+        .get(axum::http::header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|a| a.contains("text/event-stream"));
+    let mut res = if wants_sse {
+        // EventSource treats a non-200 answer as final and stops reconnecting.
+        StatusCode::UNAUTHORIZED.into_response()
+    } else if hx.0 {
         let mut r = StatusCode::UNAUTHORIZED.into_response();
         r.headers_mut()
             .insert("hx-redirect", HeaderValue::from_static("/login"));

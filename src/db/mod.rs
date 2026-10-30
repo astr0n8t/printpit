@@ -2,6 +2,7 @@
 //! `DATABASE_URL`), each covered by tests.
 
 pub mod audit;
+pub mod prefs;
 pub mod printers;
 pub mod sessions;
 pub mod users;

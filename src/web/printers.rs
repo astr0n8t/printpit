@@ -360,6 +360,7 @@ pub async fn update(
         },
     )
     .await;
+    state.printer_changed(id);
     after_change(&state, hx, &user, format!("Saved {}.", v.name)).await
 }
 
@@ -383,6 +384,7 @@ pub async fn delete(
         },
     )
     .await;
+    state.printer_changed(id);
     after_change(&state, hx, &user, format!("Deleted {}.", p.name)).await
 }
 
@@ -411,6 +413,7 @@ pub async fn toggle(
         },
     )
     .await;
+    state.printer_changed(id);
     after_change(&state, hx, &user, format!("{verb} {}.", p.name)).await
 }
 

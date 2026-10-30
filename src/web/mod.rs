@@ -3,10 +3,13 @@
 mod account;
 pub mod assets;
 mod auth;
+pub mod card;
+mod dashboard;
 pub mod layout;
 mod printers;
 pub mod security;
 mod tabs;
+pub mod widgets;
 
 use axum::Router;
 use axum::middleware;
@@ -27,7 +30,15 @@ pub fn router(state: AppState) -> Router {
     // Everything here needs a session; non-GET requests also need the CSRF token.
     let protected = Router::new()
         .route("/", get(|| async { Redirect::to("/ui/dashboard") }))
-        .route("/ui/dashboard", get(tabs::dashboard))
+        .route("/ui/dashboard", get(dashboard::show))
+        .route("/ui/dashboard/stream", get(dashboard::stream))
+        .route("/account/prefs", post(dashboard::set_prefs))
+        .route("/p/{id}/status", get(dashboard::status))
+        .route("/p/{id}/start", get(dashboard::start_picker))
+        .route("/p/{id}/print/{action}", post(dashboard::print_action))
+        .route("/p/{id}/estop", post(dashboard::estop))
+        .route("/p/{id}/camera/snapshot", get(dashboard::camera_snapshot))
+        .route("/p/{id}/camera/stream", get(dashboard::camera_stream))
         .route("/ui/files", get(tabs::files))
         .route("/ui/logs", get(tabs::logs))
         .route("/ui/system", get(tabs::system))

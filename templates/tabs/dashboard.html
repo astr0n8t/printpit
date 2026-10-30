@@ -1,16 +1,35 @@
+<div class="dash-head">
+  <span>{{ printers.len() }} printer{% if printers.len() != 1 %}s{% endif %}</span>
+{%- if !printers.is_empty() %}
+  <label class="auto-refresh"><input type="checkbox" name="auto_refresh" hx-post="/account/prefs" hx-target="#main"{% if auto_refresh %} checked{% endif %}>auto-refresh</label>
+{%- endif %}
+</div>
+{%- if printers.is_empty() %}
 <section class="panel">
   <h2 class="panel-title">dashboard</h2>
-{%- if printers.is_empty() %}
   <p>No printers configured yet.</p>
 {%- if is_admin %}
   <p><a class="btn btn-primary" href="/ui/printers/new" hx-get="/ui/printers/new" hx-target="#main" hx-push-url="true">add printer</a></p>
 {%- else %}
   <p class="dim">Ask an admin to add one.</p>
 {%- endif %}
-{%- else %}
-{%- for name in printers %}
-  <p>▸ {{ name }}</p>
-{%- endfor %}
-{%- endif %}
-  <p class="dim">── live status arrives in M3 ──</p>
 </section>
+{%- else %}
+<div class="grid cards" data-auto="{% if auto_refresh %}1{% else %}0{% endif %}"{% if auto_refresh %} data-sse="/ui/dashboard/stream"{% endif %}>
+{%- for (id, name) in printers %}
+  <section class="panel card" id="card-{{ id }}">
+    <h2 class="panel-title">{{ name }}</h2>
+    <div id="live-{{ id }}" class="live"{% if !auto_refresh %} hx-get="/p/{{ id }}/status" hx-trigger="load"{% endif %}>
+      <p class="dim">connecting…</p>
+    </div>
+    <div class="cam">
+      <img class="cam-img" src="/p/{{ id }}/camera/snapshot" data-snapshot="/p/{{ id }}/camera/snapshot" alt="camera: {{ name }}" loading="lazy">
+      <p class="cam-none dim">[ no camera ]</p>
+      <div class="cam-actions"><button type="button" data-live="/p/{{ id }}/camera/stream">live</button></div>
+    </div>
+    <div id="ctl-{{ id }}" class="controls"></div>
+    <div id="msg-{{ id }}" class="msg" role="status"></div>
+  </section>
+{%- endfor %}
+</div>
+{%- endif %}

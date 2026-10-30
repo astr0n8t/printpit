@@ -41,3 +41,46 @@ pub struct PrinterInfo {
     pub hostname: String,
     pub software_version: String,
 }
+
+/// `GET /printer/objects/list`
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct ObjectList {
+    pub objects: Vec<String>,
+}
+
+/// `GET /printer/objects/query` and the `printer.objects.subscribe` result.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct ObjectStatus {
+    pub status: serde_json::Map<String, serde_json::Value>,
+}
+
+/// One entry of `GET /server/webcams/list`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct WebcamInfo {
+    pub name: String,
+    pub enabled: Option<bool>,
+    pub service: String,
+    pub snapshot_url: String,
+    pub stream_url: String,
+    pub flip_horizontal: bool,
+    pub flip_vertical: bool,
+    pub rotation: i32,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct WebcamList {
+    pub webcams: Vec<WebcamInfo>,
+}
+
+/// One entry of `GET /server/files/list`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct FileEntry {
+    pub path: String,
+    pub modified: f64,
+    pub size: u64,
+}

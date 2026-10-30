@@ -279,3 +279,31 @@ code { font: inherit; color: var(--info); }
 .scroll-x { overflow-x: auto; }
 .row-actions { display: flex; gap: 0 1.5ch; }
 .field > .dim { margin: 0.2em 0 0; max-width: 60ch; }
+
+/* ── Dashboard ────────────────────────────────────────────────────── */
+
+.dash-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3em 3ch; margin-bottom: 0.4em; }
+.auto-refresh { margin-left: auto; }
+.cards { gap: 0 2ch; }
+.card .card-state { display: flex; align-items: center; gap: 2ch; margin-bottom: 0.4em; }
+.card .refresh { margin-left: auto; }
+.card .kv { margin-bottom: 0.6em; }
+.sensors { width: auto; margin-bottom: 0.4em; }
+.sensors td { padding: 0 2ch 0 0; }
+.spark { color: var(--accent); letter-spacing: -0.05em; }
+.fans { margin-bottom: 0.4em; }
+.controls .actions { margin: 0.4em 0 0; }
+.estop { font-weight: bold; }
+.msg:empty { display: none; }
+.msg { margin-top: 0.3em; }
+
+.cam { position: relative; margin: 0.4em 0; border: 1px solid var(--border); }
+.cam-img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: contain; background: var(--bg-alt); }
+.cam-none { display: none; margin: 0; padding: 0.4em 1ch; }
+.cam-actions { position: absolute; right: 1ch; bottom: 0.3em; background: var(--bg); padding: 0 0.5ch; }
+.cam-missing .cam-img, .cam-missing .cam-actions { display: none; }
+.cam-missing .cam-none { display: block; }
+
+#modal { width: min(90ch, calc(100vw - 4ch)); }
+.modal-title { margin-bottom: 0.6em; }
+.scroll-y { max-height: 60vh; overflow-y: auto; }

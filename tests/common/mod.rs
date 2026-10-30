@@ -121,6 +121,61 @@ impl Resp {
     }
 }
 
+/// An open SSE response, read event by event.
+pub struct SseStream {
+    pub status: StatusCode,
+    body: Body,
+    buf: String,
+}
+
+impl SseStream {
+    /// The raw body, for non-SSE streams such as MJPEG.
+    pub fn body_mut(&mut self) -> &mut Body {
+        &mut self.body
+    }
+
+    /// The next event's `data` (multi-line data joined with `\n`), or `None` on timeout/end.
+    pub async fn next_event(&mut self, timeout: std::time::Duration) -> Option<String> {
+        loop {
+            if let Some(idx) = self.buf.find("\n\n") {
+                let raw: String = self.buf.drain(..idx + 2).collect();
+                let data: Vec<&str> = raw
+                    .lines()
+                    .filter_map(|l| l.strip_prefix("data: ").or_else(|| l.strip_prefix("data:")))
+                    .collect();
+                if data.is_empty() {
+                    continue; // keep-alive comment
+                }
+                return Some(data.join("\n"));
+            }
+            let frame = tokio::time::timeout(timeout, self.body.frame())
+                .await
+                .ok()??
+                .ok()?;
+            if let Some(bytes) = frame.data_ref() {
+                self.buf.push_str(&String::from_utf8_lossy(bytes));
+            }
+        }
+    }
+
+    /// Reads until an event for `target` (e.g. `live-1`) whose HTML contains `needle`.
+    pub async fn wait_for(&mut self, target: &str, needle: &str) -> String {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        while tokio::time::Instant::now() < deadline {
+            let Some(event) = self.next_event(std::time::Duration::from_secs(10)).await else {
+                break;
+            };
+            if let Some((id, html)) = event.split_once('\n')
+                && id == target
+                && html.contains(needle)
+            {
+                return html.to_string();
+            }
+        }
+        panic!("no `{target}` event containing `{needle}`");
+    }
+}
+
 pub struct Client {
     router: Router,
     state: AppState,
@@ -169,6 +224,34 @@ impl Client {
             }
         }
         resp
+    }
+
+    /// Opens a streaming response (SSE) without reading it to the end.
+    pub async fn open_stream(&mut self, uri: &str) -> SseStream {
+        let mut req = Request::builder()
+            .method(Method::GET)
+            .uri(uri)
+            .header(header::ACCEPT, "text/event-stream");
+        if !self.cookies.is_empty() {
+            let cookie = self
+                .cookies
+                .iter()
+                .map(|(k, v)| format!("{k}={v}"))
+                .collect::<Vec<_>>()
+                .join("; ");
+            req = req.header(header::COOKIE, cookie);
+        }
+        let res = self
+            .router
+            .clone()
+            .oneshot(req.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        SseStream {
+            status: res.status(),
+            body: res.into_body(),
+            buf: String::new(),
+        }
     }
 
     pub async fn get(&mut self, uri: &str) -> Resp {

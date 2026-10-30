@@ -188,7 +188,8 @@ async fn reorder_and_toggle() {
     assert!(res.body.contains("DISABLED"));
     let dash = c.get("/ui/dashboard").await.body;
     assert!(
-        dash.contains("▸ A") && !dash.contains("▸ B"),
+        dash.contains(r#"<h2 class="panel-title">A</h2>"#)
+            && !dash.contains(r#"<h2 class="panel-title">B</h2>"#),
         "disabled printers hidden from dashboard"
     );
 }

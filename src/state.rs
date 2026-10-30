@@ -7,9 +7,11 @@ use crate::auth::ratelimit::LoginLimiter;
 use crate::auth::setup::SetupState;
 use crate::config::Config;
 use crate::crypto::Cipher;
-use crate::db::printers::{API_KEY_CONTEXT, Printer};
+use crate::db::printers::Printer;
 use crate::db::{self, Db, sessions};
-use crate::moonraker::{Egress, MoonrakerClient, MoonrakerError};
+use crate::moonraker::hub::{HubConfig, HubDeps, PrinterHub};
+use crate::moonraker::webcam::WebcamCache;
+use crate::moonraker::{self, Egress, MoonrakerClient, MoonrakerError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StartupError {
@@ -30,6 +32,9 @@ pub struct AppState {
     /// The only way to reach printers: allowlisted, optionally interface-bound.
     pub egress: Egress,
     pub cipher: Arc<Cipher>,
+    /// Live, viewer-gated printer connections for the dashboard.
+    pub hub: Arc<PrinterHub>,
+    pub webcams: Arc<WebcamCache>,
 }
 
 impl AppState {
@@ -43,6 +48,17 @@ impl AppState {
         let setup = SetupState::init(&db).await?;
         let egress = Egress::new(&config)?;
         let cipher = Arc::new(Cipher::new(&config.secret_key));
+        let hub = PrinterHub::new(
+            HubDeps {
+                db: db.clone(),
+                egress: egress.clone(),
+                cipher: cipher.clone(),
+            },
+            HubConfig {
+                refresh: config.ui_refresh,
+                grace: config.ws_idle_grace,
+            },
+        );
         Ok(Self {
             config: Arc::new(config),
             db,
@@ -50,24 +66,24 @@ impl AppState {
             login_limiter: Arc::default(),
             egress,
             cipher,
+            hub,
+            webcams: Arc::default(),
         })
     }
 
     pub fn decrypt_api_key(&self, printer: &Printer) -> Result<Option<String>, MoonrakerError> {
-        printer
-            .api_key_enc
-            .as_deref()
-            .map(|enc| {
-                self.cipher
-                    .open(enc, API_KEY_CONTEXT)
-                    .map_err(|e| MoonrakerError::Config(format!("API key: {e}")))
-            })
-            .transpose()
+        moonraker::decrypt_api_key(&self.cipher, printer)
     }
 
     /// A Moonraker client for `printer`, with its API key decrypted.
     pub fn printer_client(&self, printer: &Printer) -> Result<MoonrakerClient, MoonrakerError> {
-        MoonrakerClient::new(&self.egress, &printer.base_url, self.decrypt_api_key(printer)?)
+        moonraker::client_for(&self.egress, &self.cipher, printer)
+    }
+
+    /// Drops cached connections and webcam info after a printer's settings change.
+    pub fn printer_changed(&self, printer_id: i64) {
+        self.hub.reset(printer_id);
+        self.webcams.invalidate(printer_id);
     }
 
     /// Periodically purges expired sessions and stale rate-limit windows.

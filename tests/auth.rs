@@ -19,6 +19,11 @@ const PROTECTED_GET: &[&str] = &[
     "/ui/printers/new",
     "/ui/printers/1",
     "/ui/account",
+    "/ui/dashboard/stream",
+    "/p/1/status",
+    "/p/1/start",
+    "/p/1/camera/snapshot",
+    "/p/1/camera/stream",
 ];
 const PROTECTED_POST: &[&str] = &[
     "/logout",
@@ -28,6 +33,9 @@ const PROTECTED_POST: &[&str] = &[
     "/printers/1/toggle",
     "/printers/1/move/up",
     "/printers/1/test",
+    "/account/prefs",
+    "/p/1/print/pause",
+    "/p/1/estop",
 ];
 const PROTECTED_DELETE: &[&str] = &["/printers/1"];
 

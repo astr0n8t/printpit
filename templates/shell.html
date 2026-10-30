@@ -11,6 +11,7 @@
 {%- endif %}
 </header>
 <main id="main" class="main">{{ content|safe }}</main>
+<dialog id="modal" aria-labelledby="modal-body"><div id="modal-body"></div></dialog>
 <dialog id="confirm" aria-labelledby="confirm-q">
   <form method="dialog">
     <p id="confirm-q"></p>
@@ -22,6 +23,6 @@
 </dialog>
 <footer class="statusline">
   <span>printpit {{ layout.version }}{% if let Some(user) = layout.user %} · {{ user.username }} <span class="dim">({{ user.role }})</span>{% endif %}</span>
-  <span class="dim">[1-4] tabs · [a] account</span>
+  <span class="dim">[1-4] tabs · [r] refresh · [a] account</span>
 </footer>
 {% endblock %}
