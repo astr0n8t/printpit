@@ -425,11 +425,11 @@ fn upstream_error(e: &MoonrakerError) -> Response {
     (status, e.detail()).into_response()
 }
 
-async fn client_for(state: &AppState, id: i64) -> Result<MoonrakerClient, Response> {
+async fn client_for(state: &AppState, id: i64) -> Result<MoonrakerClient, Box<Response>> {
     let p = enabled_printer(state, id)
         .await
-        .map_err(IntoResponse::into_response)?;
-    state.printer_client(&p).map_err(|e| upstream_error(&e))
+        .map_err(|e| Box::new(e.into_response()))?;
+    state.printer_client(&p).map_err(|e| Box::new(upstream_error(&e)))
 }
 
 #[derive(Deserialize)]
@@ -453,7 +453,7 @@ pub async fn thumb(
     };
     let client = match client_for(&state, id).await {
         Ok(c) => c,
-        Err(res) => return res,
+        Err(res) => return *res,
     };
     let res = match client.download("gcodes", &path).await {
         Ok(r) => r,
@@ -495,7 +495,7 @@ pub async fn download(
     };
     let client = match client_for(&state, id).await {
         Ok(c) => c,
-        Err(res) => return res,
+        Err(res) => return *res,
     };
     let res = match client.download("gcodes", &path).await {
         Ok(r) => r,

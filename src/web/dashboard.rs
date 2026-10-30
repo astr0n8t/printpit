@@ -382,14 +382,14 @@ pub async fn estop(
     run_action(&state, ip, &user, &p, action).await
 }
 
-async fn camera_client(state: &AppState, id: i64) -> Result<(MoonrakerClient, Printer), Response> {
+async fn camera_client(state: &AppState, id: i64) -> Result<(MoonrakerClient, Printer), Box<Response>> {
     let p = match enabled_printer(state, id).await {
         Ok(p) => p,
-        Err(e) => return Err(e.into_response()),
+        Err(e) => return Err(Box::new(e.into_response())),
     };
     match state.printer_client(&p) {
         Ok(c) => Ok((c, p)),
-        Err(_) => Err(StatusCode::BAD_GATEWAY.into_response()),
+        Err(_) => Err(Box::new(StatusCode::BAD_GATEWAY.into_response())),
     }
 }
 
@@ -406,7 +406,7 @@ pub async fn camera_snapshot(
 ) -> Response {
     let (client, p) = match camera_client(&state, id).await {
         Ok(v) => v,
-        Err(res) => return res,
+        Err(res) => return *res,
     };
     let cam = match state.webcams.get(id, &client, p.webcam_override.as_deref()).await {
         Ok(cam) => cam,
@@ -462,7 +462,7 @@ pub async fn camera_stream(
 ) -> Response {
     let (client, p) = match camera_client(&state, id).await {
         Ok(v) => v,
-        Err(res) => return res,
+        Err(res) => return *res,
     };
     let cam = match state.webcams.get(id, &client, p.webcam_override.as_deref()).await {
         Ok(cam) => cam,
