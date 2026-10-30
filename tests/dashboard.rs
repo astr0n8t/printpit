@@ -394,9 +394,9 @@ async fn camera_snapshot_and_stream_are_proxied() {
 
     let snap = c.get(&format!("/p/{id}/camera/snapshot")).await;
     assert_eq!(snap.status, StatusCode::OK);
-    assert_eq!(snap.header("content-type"), "image/jpeg");
+    assert_eq!(snap.header("content-type"), "image/png");
     assert_eq!(snap.header("cache-control"), "no-store");
-    assert!(snap.body.contains("fake-jpeg"));
+    assert!(snap.body.as_bytes().starts_with(b"\x89PNG") || snap.body.contains("PNG"));
     // A second snapshot reuses the cached webcam lookup.
     c.get(&format!("/p/{id}/camera/snapshot")).await;
     assert_eq!(

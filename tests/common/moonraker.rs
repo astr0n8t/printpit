@@ -73,6 +73,11 @@ impl MockMoonraker {
     }
 
     pub async fn start_opts(opts: MockOptions) -> Self {
+        Self::start_on(0, opts).await
+    }
+
+    /// Binds 127.0.0.1:`port` (0 = any free port).
+    pub async fn start_on(port: u16, opts: MockOptions) -> Self {
         let inner = Arc::new(Inner {
             opts,
             seen: Mutex::new(Vec::new()),
@@ -97,7 +102,7 @@ impl MockMoonraker {
                 record_and_auth,
             ))
             .with_state(inner.clone());
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await.unwrap();
         let port = listener.local_addr().unwrap().port();
         tokio::spawn(axum::serve(listener, app).into_future());
         Self { port, inner }
@@ -257,6 +262,9 @@ async fn estop() -> impl IntoResponse {
     axum::Json(json!({"result": "ok"}))
 }
 
+/// A 320×180 colour-bar PNG, so the camera tile shows something in the browser.
+pub const TESTCARD: &[u8] = include_bytes!("../fixtures/testcard.png");
+
 struct StreamGuard(Mock);
 
 impl Drop for StreamGuard {
@@ -270,21 +278,22 @@ async fn webcam(
     Query(q): Query<std::collections::HashMap<String, String>>,
 ) -> Response {
     match q.get("action").map(String::as_str) {
-        Some("snapshot") => (
-            [(header::CONTENT_TYPE, "image/jpeg")],
-            b"\xff\xd8fake-jpeg\xff\xd9".to_vec(),
-        )
-            .into_response(),
+        Some("snapshot") => ([(header::CONTENT_TYPE, "image/png")], TESTCARD).into_response(),
         Some("stream") => {
             mock.streams_open.fetch_add(1, Ordering::SeqCst);
             let guard = StreamGuard(mock.clone());
             let frames = async_stream::stream! {
                 let _guard = guard;
                 loop {
-                    yield Ok::<_, std::convert::Infallible>(axum::body::Bytes::from_static(
-                        b"--frame\r\nContent-Type: image/jpeg\r\n\r\n\xff\xd8f\xff\xd9\r\n",
-                    ));
-                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    let mut part = format!(
+                        "--frame\r\nContent-Type: image/png\r\nContent-Length: {}\r\n\r\n",
+                        TESTCARD.len()
+                    )
+                    .into_bytes();
+                    part.extend_from_slice(TESTCARD);
+                    part.extend_from_slice(b"\r\n");
+                    yield Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(part));
+                    tokio::time::sleep(Duration::from_millis(200)).await;
                 }
             };
             let mut res = Response::new(Body::from_stream(frames));

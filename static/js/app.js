@@ -63,7 +63,7 @@
   // Content swapped into #modal-body opens the modal; the server closes it via HX-Trigger.
   const modal = () => document.getElementById("modal");
   document.addEventListener("htmx:afterSwap", (e) => {
-    if (e.detail.target.id === "modal-body" && !modal().open) modal().showModal();
+    if (e.detail?.target?.id === "modal-body" && !modal().open) modal().showModal();
   });
   document.addEventListener("printpit:close-modal", () => modal()?.open && modal().close());
 
@@ -108,13 +108,22 @@
   document.addEventListener("htmx:afterSettle", watchCams);
   document.addEventListener("DOMContentLoaded", watchCams);
 
-  // A 404/502 snapshot means no (reachable) camera: show the placeholder instead.
+  // A 404/502 snapshot means no (reachable) camera: show the placeholder instead. A failed
+  // live stream falls back to snapshots rather than hiding the tile (and its stop button).
   document.addEventListener(
     "error",
     (e) => {
-      if (e.target instanceof HTMLImageElement && e.target.matches("img.cam-img")) {
-        e.target.closest(".cam")?.classList.add("cam-missing");
+      const img = e.target;
+      if (!(img instanceof HTMLImageElement && img.matches("img.cam-img"))) return;
+      const cam = img.closest(".cam");
+      if (img.dataset.streaming) {
+        delete img.dataset.streaming;
+        const button = cam?.querySelector("button[data-live]");
+        if (button) button.textContent = "live";
+        img.src = `${img.dataset.snapshot}?t=${Date.now()}`;
+        return;
       }
+      cam?.classList.add("cam-missing");
     },
     true,
   );

@@ -189,6 +189,7 @@ This is the core rule: **printpit talks to a printer only because a logged-in us
 - **Typography:** a system monospace stack (`ui-monospace, "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace`), one font size scale, line height tuned so it reads like a character grid.
 - **Palette:** dark terminal background with a phosphor-ish foreground, plus accent colours for states (printing = green, paused = yellow, error/offline = red, standby = dim). There is a light theme through `prefers-color-scheme` and a toggle. All colours are CSS custom properties.
 - **Chrome:** panels drawn with CSS borders styled like box-drawing characters, with titles inset in the top border (`┌─ Voron 2.4 ─────┐`). The top bar is a tab strip with key hints: `[1]Dash [2]Files [3]Logs [4]System [p]Printers`.
+- **Live updates:** the server renders each card's HTML and pushes it over one SSE stream per dashboard. See CLAUDE.md for the event format.
 - **Widgets:**
   - Progress: `[████████░░░░░░░░] 52%  ETA 01:12:03`
   - Temperatures: `extruder  214.8 / 215.0 °C  ▁▂▃▅▆▇` (sparkline from the last N samples, kept in the browser)
@@ -227,8 +228,9 @@ GET  /setup, POST /setup                first-run admin
 GET  /login, POST /login, POST /logout
 GET  /                                  shell, defaults to dashboard tab
 GET  /ui/dashboard                      partial: printer grid (no live data yet)
-GET  /p/{id}/events                     SSE: live status for one printer
-GET  /ui/dashboard/stream               SSE: multiplexed status for all visible printers
+GET  /ui/dashboard/stream               SSE: multiplexed card updates for all enabled printers (204 if auto-refresh off)
+GET  /p/{id}/status                     one-shot HTTP snapshot (manual refresh)
+GET  /p/{id}/start                      start-print file picker (modal)
 POST /p/{id}/print/{start|pause|resume|cancel}
 POST /p/{id}/estop
 GET  /p/{id}/camera/snapshot            proxied JPEG

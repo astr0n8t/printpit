@@ -53,23 +53,24 @@ See `PLAN.md` for design details and `CLAUDE.md` for rules.
 - [x] Dashboard placeholder lists enabled printers (DB only, no Moonraker calls)
 
 ## M3 — Dashboard (main page)
-- [ ] `moonraker/ws.rs`: connect WebSocket (header or oneshot token), JSON-RPC request/response matching, reconnect with backoff
-- [ ] `printer.objects.list` → build the subscription set (print_stats, virtual_sdcard, display_status, toolhead, extruder*, heater_bed, temperature_sensor/fan, fan, idle_timeout, webhooks)
-- [ ] Merge `notify_status_update` partial deltas into the cached state
-- [ ] `moonraker/hub.rs`: per-printer refcount, start on first subscriber, stop after `PRINTPIT_WS_IDLE_GRACE_SECS`, broadcast fan-out
-- [ ] Throttle/coalesce updates to `PRINTPIT_UI_REFRESH_MS`
-- [ ] HTTP fallback (`/printer/objects/query`) if the WS fails, still viewer-gated
-- [ ] SSE endpoint(s) that render status partials (or JSON + small DOM patcher in app.js; pick one and record it in CLAUDE.md)
-- [ ] `app.js`: close SSE on `visibilitychange` hidden, reopen when visible
-- [ ] Auto-refresh checkbox in the dashboard header, persisted in `user_prefs.auto_refresh` (default on) via `POST /account/prefs`
-- [ ] Auto-refresh on → SSE live updates; off → no SSE, per-card `[r] refresh` that calls `GET /p/{id}/status` (single `/printer/objects/query`)
-- [ ] Toggling starts/stops the stream immediately without a reload
-- [ ] Printer card: state badge, filename, text progress bar, elapsed/ETA, layer if available
-- [ ] Sensors panel: extruder(s), bed, chamber/temperature sensors, fans; client-side sparklines
-- [ ] Core controls: Start (file picker modal), Pause/Resume (state-aware), Cancel (confirm), E-STOP (confirm); role-gated; audit logged
-- [ ] Camera: resolve the webcam via `server.webcams.list` (or override); snapshot proxy refreshed only while visible; MJPEG proxy on "live" click; upstream dropped on client disconnect
-- [ ] Offline / Klippy-not-ready / unauthorized states rendered cleanly per card
-- [ ] Integration test with a mock Moonraker: dashboard triggers only WS/status calls; WS closes after grace period with no viewers; with auto-refresh off, no WS is opened at all
+- [x] `moonraker/client.rs` + `rpc.rs`: WebSocket via HTTP upgrade on the egress client (X-Api-Key header), JSON-RPC request/response matching; hub reconnects with backoff
+- [x] `printer.objects.list` → build the subscription set (print_stats, virtual_sdcard, display_status, extruder*, heater_bed, heater_generic, temperature_sensor/fan, fans, idle_timeout, webhooks)
+- [x] Merge `notify_status_update` partial deltas into the cached state (deep merge)
+- [x] `moonraker/hub.rs`: per-printer refcount, start on first subscriber, stop after `PRINTPIT_WS_IDLE_GRACE_SECS`, `watch` fan-out, reset on printer edit
+- [x] Throttle/coalesce updates to `PRINTPIT_UI_REFRESH_MS`
+- [x] HTTP fallback (`/printer/objects/query`) if the WS fails, still viewer-gated
+- [x] SSE: one multiplexed `/ui/dashboard/stream`, server-rendered HTML per card (`<id>\n<html>`), swapped with `htmx.swap`; controls sent only on change; session re-checked every 60 s
+- [x] `app.js`: close SSE on `visibilitychange` hidden / when the dashboard leaves the DOM, reopen when visible
+- [x] Auto-refresh checkbox in the dashboard header, persisted in `user_prefs.auto_refresh` (default on) via `POST /account/prefs`
+- [x] Auto-refresh on → SSE live updates; off → no SSE, per-card `[r] refresh` that calls `GET /p/{id}/status` (one snapshot on open, then manual only)
+- [x] Toggling starts/stops the stream immediately without a reload
+- [x] Printer card: state badge, filename, text progress bar, elapsed/ETA, layer if available
+- [x] Sensors: extruder(s), bed, chamber/temperature sensors, fans; sparklines (rendered server-side from hub history)
+- [x] Core controls: Start (file picker modal), Pause/Resume (state-aware), Cancel (confirm), E-STOP (confirm); role-gated; audit logged
+- [x] Camera: webcam via `server.webcams.list` (or override, cached 60 s); snapshot proxy refreshed only while visible + auto-refresh on; MJPEG proxy on "live" click; upstream dropped on client disconnect
+- [x] Offline / Klippy-not-ready / unauthorized states rendered cleanly per card
+- [x] Integration tests with a mock Moonraker: page load makes no printer calls; viewers share one WS; WS closes after grace; quick return reuses it; auto-refresh off opens no WS; controls; camera; polling fallback
+- [x] `cargo run --example mock_moonraker`: fake printers for UI work
 
 ## M4 — Files tab
 - [ ] Printer selector component (remembered in `user_prefs`)
@@ -113,6 +114,8 @@ See `PLAN.md` for design details and `CLAUDE.md` for rules.
 - [ ] Docs: configuration reference, reverse proxy examples (Caddy/Traefik/nginx), backup of `/data`
 
 ## Later / nice-to-have
+- [ ] Camera flip/rotation from `server.webcams.list` (needs webcam info at render time without a page-load call)
+- [ ] Use slicer `estimated_time` (file metadata) for ETA alongside the progress-based estimate
 - [ ] TOTP 2FA
 - [ ] Trusted-header SSO (behind an auth proxy)
 - [ ] Job history view

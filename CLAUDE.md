@@ -34,7 +34,10 @@ printpit is a Rust web app, shipped as a Docker image, for controlling several M
 - Build clients with `state.printer_client(&printer)`. It decrypts the key and validates the URL against the allowlist. Show errors with `MoonrakerError::label()` (badge) + `detail()`.
 - Egress (`moonraker/net.rs`): one shared `reqwest::Client` with the allowlist DNS resolver, `no_proxy()`, no redirects, a 3 s connect timeout and an optional `local_address`. IP-literal hosts bypass DNS, so `Egress::check_url` covers them (`MoonrakerClient::new` calls it). Use `Egress::vet` at save time for friendly form errors.
 - TLS: reqwest is built with `rustls-no-provider`, and `Egress::new` installs rustls' `ring` provider. Don't enable reqwest's default features; they pull in aws-lc-rs (C/CMake, painful on musl).
-- Auth header: `X-Api-Key: <key>`. For the WebSocket, use the header on the upgrade request, or fetch `GET /access/oneshot_token` and pass `?token=`.
+- Auth header: `X-Api-Key: <key>`. The WebSocket sends it on the upgrade request.
+- WebSocket: `MoonrakerClient::websocket()` upgrades a request on the egress client (`Response::upgrade`) and wraps it with `tokio_tungstenite::WebSocketStream::from_raw_socket`. Never open sockets any other way. `rpc::Rpc` does sequential JSON-RPC calls; `recv()` is cancel-safe for `select!`.
+- Hub (`moonraker/hub.rs`): `state.hub.subscribe(id)` returns a `Subscription` (a watch receiver plus a refcount guard). Call `state.printer_changed(id)` after editing, toggling or deleting a printer. `poll_once()` is the one-shot HTTP status used for manual refresh and the fallback.
+- Webcams: relative URLs from `server.webcams.list` resolve against the printer host, dropping port 7125 (served by nginx, not Moonraker). The admin's webcam override is a stream URL; the snapshot URL is derived from `action=stream`.
 - JSON-RPC over the WebSocket: `printer.objects.subscribe`. Updates arrive as `notify_status_update` with *partial* objects, so merge them into the cached state. Don't replace it.
 - File roots: `gcodes` (manage), `logs` (read). Paths are relative to the root. URL-encode each path segment.
 - `/printer/*` endpoints fail with an error when Klippy isn't ready. Show that state instead of treating it as offline.
@@ -46,6 +49,7 @@ cargo fmt && cargo clippy --all-targets -- -D warnings && cargo test
 docker build -t printpit .
 docker compose up            # needs PRINTPIT_SECRET_KEY in .env
 printpit healthcheck         # probes GET /healthz on PRINTPIT_BIND (used by Docker HEALTHCHECK)
+cargo run --example mock_moonraker   # fake printers on 127.0.0.1:7201-7203 (run printpit with PRINTPIT_PRINTER_CIDRS=127.0.0.0/8)
 ```
 
 ## Gotchas / decisions log
@@ -62,3 +66,7 @@ printpit healthcheck         # probes GET /healthz on PRINTPIT_BIND (used by Doc
 - 2026-10-30: API keys are sealed with AES-256-GCM under an HKDF-derived subkey, in one blob (`version || nonce || ct`) in `printers.api_key_enc`, with AAD `printer-api-key`. If `PRINTPIT_SECRET_KEY` changes, the key shows as "unreadable" and test connection reports CONFIG.
 - 2026-10-30: Confirmations use `hx-confirm="…?"`. `app.js` turns that into the TUI `<dialog id="confirm">` (y/n/Esc) in `shell.html`. Reuse it for cancel and e-stop in M3.
 - 2026-10-30: Release profile: fat LTO with `opt-level = "s"`, but Argon2 and Blake2 stay at `opt-level = 3`. The binary went from 9.8 MB to 6.8 MB. Do **not** use `panic = "abort"`: a panic in one handler would kill the whole server.
+- 2026-10-30: Live updates use server-rendered HTML pushed over **one multiplexed SSE stream** (`/ui/dashboard/stream`). Event data is `<element id>\n<html>`, and `app.js` applies it with `htmx.swap` (no htmx SSE extension). One stream instead of one per printer avoids the browser's ~6-connections-per-host limit. Card controls (`ctl-{id}`) are pushed only when they change, so buttons aren't replaced under the cursor (that broke `hx-confirm`).
+- 2026-10-30: Sparklines are rendered server-side from the hub's temperature history (40 samples, every 2 s), so there is no client-side state. In manual mode there is no history, so no sparklines.
+- 2026-10-30: Unauthenticated `Accept: text/event-stream` requests get a 401, not a redirect, so EventSource stops retrying. A 204 from the stream means auto-refresh is off.
+- 2026-10-30: Shell gotcha: `pkill -f <pattern>` kills its own shell if the same command line contains the pattern text anywhere. Run `pkill` as a separate Bash call (exit code 144 is the symptom).
