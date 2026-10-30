@@ -20,19 +20,6 @@ fn placeholder(hx: HxRequest, user: &CurrentUser, tab: Tab, p: Placeholder) -> R
     page(hx, user, tab, p.render()?)
 }
 
-pub async fn logs(hx: HxRequest, user: CurrentUser) -> Result<Response, AppError> {
-    placeholder(
-        hx,
-        &user,
-        Tab::Logs,
-        Placeholder {
-            title: "logs",
-            milestone: "M5",
-            lines: &["Tail and download klippy.log, moonraker.log and friends."],
-        },
-    )
-}
-
 pub async fn system(hx: HxRequest, user: CurrentUser) -> Result<Response, AppError> {
     placeholder(
         hx,

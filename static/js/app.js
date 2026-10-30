@@ -84,6 +84,32 @@
     out.textContent = `[${"█".repeat(filled)}${"░".repeat(20 - filled)}] ${Math.round(frac * 100)}%`;
   });
 
+  // ── Log viewer ────────────────────────────────────────────────────
+  // Filter hides non-matching lines; each refresh re-applies it and scrolls to the end.
+  // Follow re-fetches the tail every 3 s, only while ticked, on screen and visible.
+  const FOLLOW_EVERY_MS = 3000;
+  const filterLog = () => {
+    const box = document.querySelector("input[data-log-filter]");
+    const q = box ? box.value.trim().toLowerCase() : "";
+    document.querySelectorAll("pre.log > span").forEach((line) => {
+      line.hidden = q !== "" && !line.textContent.toLowerCase().includes(q);
+    });
+  };
+  document.addEventListener("input", (e) => {
+    if (e.target instanceof HTMLInputElement && e.target.matches("input[data-log-filter]")) filterLog();
+  });
+  document.addEventListener("htmx:afterSettle", (e) => {
+    if (e.detail?.target?.id !== "log-body") return;
+    filterLog();
+    const pre = document.querySelector("pre.log");
+    if (pre) pre.scrollTop = pre.scrollHeight;
+  });
+  setInterval(() => {
+    if (document.visibilityState !== "visible") return;
+    if (!document.querySelector("input[data-follow]:checked")) return;
+    document.querySelector("button[data-log-refresh]")?.click();
+  }, FOLLOW_EVERY_MS);
+
   // ── Dialogs ───────────────────────────────────────────────────────
   // TUI confirm for hx-confirm: "Delete printer X? [y/N]".
   const ask = (question) =>

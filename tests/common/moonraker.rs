@@ -29,6 +29,8 @@ pub struct MockOptions {
     pub webcam: bool,
     /// Answer the WebSocket upgrade with 404 (forces the HTTP polling fallback).
     pub no_websocket: bool,
+    /// Ignore `Range` headers on log downloads (forces the streaming tail fallback).
+    pub no_range: bool,
 }
 
 impl Default for MockOptions {
@@ -38,6 +40,7 @@ impl Default for MockOptions {
             klippy_state: "ready",
             webcam: true,
             no_websocket: false,
+            no_range: false,
         }
     }
 }
@@ -55,6 +58,7 @@ struct Inner {
     ws_open: AtomicUsize,
     ws_total: AtomicUsize,
     streams_open: AtomicUsize,
+    log_bytes_sent: AtomicUsize,
     fs: Mutex<MockFs>,
 }
 
@@ -62,6 +66,23 @@ struct Inner {
 pub struct MockFs {
     pub files: BTreeMap<String, (Vec<u8>, f64)>,
     pub dirs: BTreeSet<String>,
+    /// The read-only `logs` root.
+    pub logs: BTreeMap<String, (Vec<u8>, f64)>,
+}
+
+/// A klippy.log with 6000 lines: mostly Stats, some errors, ending in a known line.
+pub fn klippy_log() -> Vec<u8> {
+    let mut out = String::new();
+    for i in 0..6000 {
+        match i % 50 {
+            0 => out.push_str(&format!("Traceback (most recent call last): line {i}\n")),
+            1 => out.push_str(&format!("[WARNING] heater lag at line {i}\n")),
+            2 => out.push('\n'),
+            _ => out.push_str(&format!("Stats {i}.0: gcodein=0 mcu: mcu_awake=0.002 line {i}\n")),
+        }
+    }
+    out.push_str("LAST LINE marker\n");
+    out.into_bytes()
 }
 
 impl Default for MockFs {
@@ -77,7 +98,14 @@ impl Default for MockFs {
             (TESTCARD.to_vec(), 1_700_000_000.0),
         );
         let dirs = ["parts", "parts/.thumbs"].into_iter().map(String::from).collect();
-        Self { files, dirs }
+        let mut logs = BTreeMap::new();
+        logs.insert("klippy.log".to_string(), (klippy_log(), 1_800_000_000.0));
+        logs.insert(
+            "moonraker.log".to_string(),
+            (b"moonraker started\nall good\n".to_vec(), 1_700_000_000.0),
+        );
+        logs.insert("empty.log".to_string(), (Vec::new(), 1_600_000_000.0));
+        Self { files, dirs, logs }
     }
 }
 
@@ -110,6 +138,7 @@ impl MockMoonraker {
             ws_open: AtomicUsize::new(0),
             ws_total: AtomicUsize::new(0),
             streams_open: AtomicUsize::new(0),
+            log_bytes_sent: AtomicUsize::new(0),
             fs: Mutex::new(MockFs::default()),
         });
         let app = Router::new()
@@ -131,6 +160,7 @@ impl MockMoonraker {
                 "/server/files/gcodes/{*path}",
                 get(download).merge(delete(delete_file)),
             )
+            .route("/server/files/logs/{*path}", get(log_file))
             .route("/printer/print/{action}", post(print_action))
             .route("/printer/emergency_stop", post(estop))
             .route("/webcam/", get(webcam))
@@ -168,6 +198,10 @@ impl MockMoonraker {
 
     pub fn streams_open(&self) -> usize {
         self.inner.streams_open.load(Ordering::SeqCst)
+    }
+
+    pub fn log_bytes_sent(&self) -> usize {
+        self.inner.log_bytes_sent.load(Ordering::SeqCst)
     }
 
     pub fn has_file(&self, path: &str) -> bool {
@@ -328,8 +362,17 @@ fn child_of(dir: &str, path: &str) -> Option<String> {
 }
 
 async fn directory(State(mock): State<Mock>, Query(q): Query<BTreeMap<String, String>>) -> Response {
-    let dir = rel(q.get("path").map(String::as_str).unwrap_or("gcodes"));
+    let full = q.get("path").map(String::as_str).unwrap_or("gcodes");
     let fs = mock.fs.lock().unwrap();
+    if full.trim_matches('/') == "logs" {
+        let files: Vec<Value> = fs
+            .logs
+            .iter()
+            .map(|(name, (d, m))| json!({"filename": name, "modified": m, "size": d.len()}))
+            .collect();
+        return ok(json!({"dirs": [], "files": files}));
+    }
+    let dir = rel(full);
     if !dir.is_empty() && !fs.dirs.contains(&dir) {
         return not_found(&format!("Directory does not exist ({dir})"));
     }
@@ -382,6 +425,43 @@ async fn download(State(mock): State<Mock>, Path(path): Path<String>) -> Respons
             ([(header::CONTENT_TYPE, "application/octet-stream")], data.clone()).into_response()
         }
         None => not_found("File does not exist"),
+    }
+}
+
+/// Serves a log, honouring a suffix `Range: bytes=-N` unless `no_range` is set.
+async fn log_file(
+    State(mock): State<Mock>,
+    Path(path): Path<String>,
+    headers: axum::http::HeaderMap,
+) -> Response {
+    let Some((data, _)) = mock.fs.lock().unwrap().logs.get(&path).cloned() else {
+        return not_found("File does not exist");
+    };
+    let suffix = headers
+        .get(header::RANGE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("bytes=-"))
+        .and_then(|n| n.parse::<usize>().ok());
+    match suffix {
+        Some(_) if data.is_empty() && !mock.opts.no_range => {
+            StatusCode::RANGE_NOT_SATISFIABLE.into_response()
+        }
+        Some(n) if !mock.opts.no_range => {
+            let start = data.len().saturating_sub(n);
+            let part = data[start..].to_vec();
+            mock.log_bytes_sent.fetch_add(part.len(), Ordering::SeqCst);
+            let range = format!("bytes {start}-{}/{}", data.len() - 1, data.len());
+            (
+                StatusCode::PARTIAL_CONTENT,
+                [(header::CONTENT_RANGE, range)],
+                part,
+            )
+                .into_response()
+        }
+        _ => {
+            mock.log_bytes_sent.fetch_add(data.len(), Ordering::SeqCst);
+            ([(header::CONTENT_TYPE, "text/plain")], data).into_response()
+        }
     }
 }
 

@@ -1,0 +1,18 @@
+<section class="panel log-view" id="log-view">
+  <h2 class="panel-title">{{ name }}</h2>
+  <div class="log-tools">
+    <label class="inline">lines
+      <select name="lines" id="log-lines" hx-get="{{ tail_url }}" hx-target="#log-body" hx-trigger="change">
+{%- for n in choices %}
+        <option value="{{ n }}"{% if *n == default_lines %} selected{% endif %}>{{ n }}</option>
+{%- endfor %}
+      </select>
+    </label>
+    <input type="search" data-log-filter placeholder="filter lines" aria-label="Filter lines">
+    <label><input type="checkbox" class="wrap-toggle">wrap</label>
+    <label><input type="checkbox" data-follow>follow</label>
+    <button type="button" hx-get="{{ tail_url }}" hx-include="#log-lines" hx-target="#log-body" data-refresh data-log-refresh>refresh [r]</button>
+    <a class="btn" href="{{ download_url }}" download>download</a>
+  </div>
+  <div id="log-body" hx-get="{{ tail_url }}" hx-include="#log-lines" hx-trigger="load"><p class="dim">loading…</p></div>
+</section>

@@ -28,6 +28,10 @@ const PROTECTED_GET: &[&str] = &[
     "/p/1/files/meta?path=a.gcode",
     "/p/1/files/thumb?path=a.png",
     "/p/1/files/download?path=a.gcode",
+    "/p/1/logs",
+    "/p/1/logs/view?name=klippy.log",
+    "/p/1/logs/tail?name=klippy.log",
+    "/p/1/logs/download?name=klippy.log",
 ];
 const PROTECTED_POST: &[&str] = &[
     "/logout",

@@ -82,6 +82,29 @@ pub fn join(dir: &str, name: &str) -> String {
     }
 }
 
+/// The end of a file, from [`MoonrakerClient::tail`].
+#[derive(Debug, Default)]
+pub struct Tail {
+    pub data: Vec<u8>,
+    /// Size of the whole file.
+    pub total: u64,
+    /// `data` starts mid-file (so its first line is probably partial).
+    pub truncated: bool,
+}
+
+impl Tail {
+    /// The last `n` complete lines.
+    pub fn last_lines(&self, n: usize) -> Vec<String> {
+        let text = String::from_utf8_lossy(&self.data);
+        let mut lines: Vec<&str> = text.lines().collect();
+        if self.truncated && !lines.is_empty() {
+            lines.remove(0);
+        }
+        let skip = lines.len().saturating_sub(n);
+        lines[skip..].iter().map(|l| l.to_string()).collect()
+    }
+}
+
 /// Directory listings cached for a few seconds, so double clicks, sort changes and several
 /// users don't each hit the printer. Any file change on a printer drops its entries.
 #[derive(Default)]
@@ -159,6 +182,64 @@ impl MoonrakerClient {
             status,
             message: "download failed".into(),
         }))
+    }
+
+    /// The last `window` bytes of a file. Uses a suffix `Range` request; if the server ignores
+    /// it, streams the whole file keeping only the last `window` bytes in memory.
+    pub async fn tail(&self, root: &str, path: &str, window: u64) -> Result<Tail, MoonrakerError> {
+        let url = format!("/server/files/{root}/{}", encode_path(path));
+        let mut res = self
+            .request(reqwest::Method::GET, &url)
+            .header(reqwest::header::RANGE, format!("bytes=-{window}"))
+            .timeout(Duration::from_secs(30))
+            .send()
+            .await
+            .map_err(MoonrakerError::from_reqwest)?;
+        match res.status() {
+            reqwest::StatusCode::PARTIAL_CONTENT => {
+                // Content-Range: bytes <start>-<end>/<total>
+                let range = res
+                    .headers()
+                    .get(reqwest::header::CONTENT_RANGE)
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|v| v.strip_prefix("bytes "))
+                    .and_then(|v| v.split_once('/'))
+                    .map(|(span, total)| {
+                        let start = span.split('-').next().and_then(|s| s.parse::<u64>().ok());
+                        (start.unwrap_or(0), total.parse::<u64>().ok())
+                    });
+                let (start, total) = range.unwrap_or((0, None));
+                let mut data = Vec::new();
+                while let Some(chunk) = res.chunk().await.map_err(MoonrakerError::from_reqwest)? {
+                    data.extend_from_slice(&chunk);
+                    if data.len() as u64 > window {
+                        break; // misbehaving server: don't read more than asked for
+                    }
+                }
+                Ok(Tail {
+                    total: total.unwrap_or(start + data.len() as u64),
+                    truncated: start > 0,
+                    data,
+                })
+            }
+            reqwest::StatusCode::RANGE_NOT_SATISFIABLE => Ok(Tail::default()),
+            s if s.is_success() => {
+                let mut ring: std::collections::VecDeque<u8> = std::collections::VecDeque::new();
+                let mut total: u64 = 0;
+                while let Some(chunk) = res.chunk().await.map_err(MoonrakerError::from_reqwest)? {
+                    total += chunk.len() as u64;
+                    ring.extend(chunk.iter());
+                    let excess = ring.len().saturating_sub(window as usize);
+                    ring.drain(..excess);
+                }
+                Ok(Tail {
+                    truncated: total > window,
+                    total,
+                    data: ring.into(),
+                })
+            }
+            _ => decode::<Value>(res).await.map(|_| Tail::default()),
+        }
     }
 
     pub async fn delete_file(&self, path: &str) -> Result<(), MoonrakerError> {
@@ -265,6 +346,28 @@ mod tests {
         assert_eq!(clean_name(".hidden"), None);
         assert_eq!(clean_name(".."), None);
         assert_eq!(clean_name(""), None);
+    }
+
+    #[test]
+    fn tail_lines() {
+        let t = Tail {
+            data: b"tial line\nline 2\nline 3\nline 4\n".to_vec(),
+            total: 1000,
+            truncated: true,
+        };
+        assert_eq!(
+            t.last_lines(10),
+            ["line 2", "line 3", "line 4"],
+            "partial first line dropped"
+        );
+        assert_eq!(t.last_lines(2), ["line 3", "line 4"]);
+        let whole = Tail {
+            data: b"a\nb".to_vec(),
+            total: 3,
+            truncated: false,
+        };
+        assert_eq!(whole.last_lines(10), ["a", "b"]);
+        assert!(Tail::default().last_lines(5).is_empty());
     }
 
     #[test]

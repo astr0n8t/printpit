@@ -5,8 +5,9 @@ pub mod assets;
 mod auth;
 pub mod card;
 mod dashboard;
-mod files;
+pub(crate) mod files;
 pub mod layout;
+mod logs;
 mod printers;
 pub mod security;
 mod select;
@@ -56,7 +57,11 @@ pub fn router(state: AppState) -> Router {
             "/p/{id}/files/upload",
             post(files::upload).layer(axum::extract::DefaultBodyLimit::max(upload_limit)),
         )
-        .route("/ui/logs", get(tabs::logs))
+        .route("/ui/logs", get(logs::tab))
+        .route("/p/{id}/logs", get(logs::list))
+        .route("/p/{id}/logs/view", get(logs::view))
+        .route("/p/{id}/logs/tail", get(logs::tail))
+        .route("/p/{id}/logs/download", get(logs::download))
         .route("/ui/system", get(tabs::system))
         .route("/ui/printers", get(printers::list))
         .route("/ui/printers/new", get(printers::new_form))
