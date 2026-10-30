@@ -51,7 +51,9 @@ async fn serve(config: Config) -> std::io::Result<()> {
         tracing::warn!("PRINTPIT_SECURE_COOKIES=false: session cookies will be sent over plain HTTP");
     }
     let bind = config.bind;
-    let app = web::router(AppState::new(config));
+    let state = AppState::init(config).await.map_err(std::io::Error::other)?;
+    state.spawn_maintenance();
+    let app = web::router(state);
     let listener = tokio::net::TcpListener::bind(bind).await?;
     tracing::info!(%bind, version = env!("CARGO_PKG_VERSION"), "printpit listening");
     axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())

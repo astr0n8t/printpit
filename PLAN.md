@@ -67,7 +67,7 @@ It is written in Rust, ships as one Docker container, and has a minimal, fast UI
 | Static assets | `rust-embed` | The binary is the whole app. |
 | Logging | `tracing` + `tracing-subscriber` (JSON or pretty) | Structured logs. |
 | Config | Environment variables (`PRINTPIT_*`), optional TOML file | Fits Docker. |
-| Rate limiting | `tower_governor` (or a hand-rolled limiter on login) | Brute-force protection. |
+| Rate limiting | Hand-rolled in-memory limiter that counts failed logins (`auth/ratelimit.rs`) | Brute-force protection without penalising normal use. |
 
 ### 2.2 Proposed layout
 
@@ -121,8 +121,8 @@ docker-compose.yml
 
 1. **First run.** If the `users` table is empty, every route redirects to `/setup`, where you create the first admin. A one-time setup token, printed to the container log, guards it so that whoever reaches the port first cannot claim the instance.
 2. **Login.** Username and password are checked against an Argon2id hash. Failed attempts are rate-limited per IP and per username, with a constant-time response path.
-3. **Sessions.** Sessions live on the server in SQLite. The cookie holds a random 256-bit ID, stored only as a SHA-256 hash, and is `HttpOnly; Secure; SameSite=Strict; Path=/`. Sessions have an idle timeout and an absolute timeout. Logging out deletes the row.
-4. **CSRF.** Each session has a token. htmx sends it in an `X-CSRF-Token` header (set globally through `hx-headers`), and plain forms carry it in a hidden field. Every state-changing method is checked. `SameSite=Strict` is a second layer.
+3. **Sessions.** Sessions live on the server in SQLite. The cookie holds a random 256-bit ID, stored only as a SHA-256 hash, and is `HttpOnly; Secure; SameSite=Lax; Path=/`, named `__Host-printpit_session` when secure. (`Lax` instead of `Strict` keeps you signed in when you follow a link to printpit from elsewhere. Cross-site POSTs still carry no cookie.) Sessions have an idle timeout and an absolute timeout. Logging out deletes the row.
+4. **CSRF.** Each session has a token. htmx sends it in an `X-CSRF-Token` header (set globally through `hx-headers`), and plain forms carry it in a hidden field. Every state-changing method is checked. `SameSite=Lax` and a `Sec-Fetch-Site: cross-site` rejection are extra layers. Login and setup, which happen before any session exists, use a double-submit cookie.
 5. **Roles.**
    - `admin`: everything, including users and printers.
    - `operator`: can control printers, manage files and view logs/system, but cannot manage users or printers.
@@ -266,7 +266,7 @@ printers(id, name, base_url, api_key_enc BLOB NULL, api_key_nonce BLOB NULL,
          webcam_override NULL, enabled, sort_order, created_at, updated_at)
 user_prefs(user_id PK, selected_printer_id, theme, auto_refresh BOOL DEFAULT 1)
 audit_log(id, user_id, printer_id NULL, action, detail_json, created_at)
-login_attempts(key, window_start, count)      -- or kept in memory
+-- failed-login counters are kept in memory (auth/ratelimit.rs), not in the DB
 ```
 
 ---

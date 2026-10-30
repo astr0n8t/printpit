@@ -4,14 +4,22 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+argon2 = "0.6.0"
 askama = "0.16.1"
 axum = "0.8.9"
+axum-extra = { version = "0.12.6", features = ["cookie"] }
 base64 = "0.23.1"
+cookie = "0.18"
+getrandom = "0.4.3"
 hex = "0.4.3"
 ipnet = "2.12.2"
 mime_guess = "2.0.5"
 rust-embed = { version = "8.13.0", features = ["include-exclude"] }
 serde = { version = "1.0.229", features = ["derive"] }
+serde_urlencoded = "0.7.1"
+sha2 = "0.11.1"
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
+subtle = "2.6.1"
 thiserror = "2.0.21"
 tokio = { version = "1.54.1", features = ["full"] }
 tower = "0.5.3"
@@ -21,9 +29,17 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 
 [dev-dependencies]
 http-body-util = "0.1.5"
+tempfile = "3.27.0"
 tower = { version = "0.5.3", features = ["util"] }
 
 [profile.release]
 lto = "thin"
 codegen-units = 1
 strip = true
+
+# Argon2 is unbearably slow unoptimised; keep debug builds and tests snappy.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3

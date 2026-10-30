@@ -11,7 +11,7 @@
 <script src="{{ layout.asset("js/htmx.min.js") }}" defer></script>
 <script src="{{ layout.asset("js/app.js") }}" defer></script>
 </head>
-<body>
+<body{% if let Some(token) = layout.csrf %} hx-headers='{"X-CSRF-Token":"{{ token }}"}'{% endif %}>
 {% block body %}{% endblock %}
 </body>
 </html>

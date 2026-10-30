@@ -4,6 +4,7 @@
 use askama::Template;
 use axum::response::Response;
 
+use crate::auth::{Admin, CurrentUser, RequireRole};
 use crate::error::AppError;
 use crate::web::layout::{HxRequest, Tab, page};
 
@@ -15,13 +16,14 @@ struct Placeholder {
     lines: &'static [&'static str],
 }
 
-fn placeholder(hx: HxRequest, tab: Tab, p: Placeholder) -> Result<Response, AppError> {
-    page(hx, tab, p.render()?)
+fn placeholder(hx: HxRequest, user: &CurrentUser, tab: Tab, p: Placeholder) -> Result<Response, AppError> {
+    page(hx, user, tab, p.render()?)
 }
 
-pub async fn dashboard(hx: HxRequest) -> Result<Response, AppError> {
+pub async fn dashboard(hx: HxRequest, user: CurrentUser) -> Result<Response, AppError> {
     placeholder(
         hx,
+        &user,
         Tab::Dashboard,
         Placeholder {
             title: "dashboard",
@@ -34,9 +36,10 @@ pub async fn dashboard(hx: HxRequest) -> Result<Response, AppError> {
     )
 }
 
-pub async fn files(hx: HxRequest) -> Result<Response, AppError> {
+pub async fn files(hx: HxRequest, user: CurrentUser) -> Result<Response, AppError> {
     placeholder(
         hx,
+        &user,
         Tab::Files,
         Placeholder {
             title: "files",
@@ -46,9 +49,10 @@ pub async fn files(hx: HxRequest) -> Result<Response, AppError> {
     )
 }
 
-pub async fn logs(hx: HxRequest) -> Result<Response, AppError> {
+pub async fn logs(hx: HxRequest, user: CurrentUser) -> Result<Response, AppError> {
     placeholder(
         hx,
+        &user,
         Tab::Logs,
         Placeholder {
             title: "logs",
@@ -58,9 +62,10 @@ pub async fn logs(hx: HxRequest) -> Result<Response, AppError> {
     )
 }
 
-pub async fn system(hx: HxRequest) -> Result<Response, AppError> {
+pub async fn system(hx: HxRequest, user: CurrentUser) -> Result<Response, AppError> {
     placeholder(
         hx,
+        &user,
         Tab::System,
         Placeholder {
             title: "system",
@@ -70,9 +75,10 @@ pub async fn system(hx: HxRequest) -> Result<Response, AppError> {
     )
 }
 
-pub async fn printers(hx: HxRequest) -> Result<Response, AppError> {
+pub async fn printers(hx: HxRequest, user: RequireRole<Admin>) -> Result<Response, AppError> {
     placeholder(
         hx,
+        &user,
         Tab::Printers,
         Placeholder {
             title: "printers",

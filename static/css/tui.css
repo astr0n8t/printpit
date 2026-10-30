@@ -265,3 +265,11 @@ dialog::backdrop { background: rgb(0 0 0 / 0.6); }
   .topbar, .statusline { padding-left: 16px; padding-right: 16px; }
   .statusline .dim { display: none; }
 }
+
+/* ── Auth pages, account strip, logout ────────────────────────────── */
+
+.main-narrow { max-width: 64ch; }
+.tabs { flex: 1; }
+.tab.secondary { margin-left: auto; }
+.logout { margin: 0; }
+code { font: inherit; color: var(--info); }

@@ -20,6 +20,8 @@ pub enum AppError {
     BadRequest(String),
     #[error("forbidden")]
     Forbidden,
+    #[error("csrf check failed")]
+    Csrf,
     /// Details are logged, never shown to the user.
     #[error("internal error: {0}")]
     Internal(String),
@@ -34,7 +36,7 @@ impl AppError {
         match self {
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
-            Self::Forbidden => StatusCode::FORBIDDEN,
+            Self::Forbidden | Self::Csrf => StatusCode::FORBIDDEN,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -44,8 +46,15 @@ impl AppError {
             Self::NotFound => "Nothing here.".into(),
             Self::BadRequest(msg) => msg.clone(),
             Self::Forbidden => "You don't have permission to do that.".into(),
+            Self::Csrf => "Security token missing or invalid. Reload the page and try again.".into(),
             Self::Internal(_) => "Something went wrong. Details are in the server log.".into(),
         }
+    }
+}
+
+impl From<sqlx::Error> for AppError {
+    fn from(err: sqlx::Error) -> Self {
+        Self::internal(err)
     }
 }
 

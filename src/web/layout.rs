@@ -8,6 +8,7 @@ use axum::http::request::Parts;
 use axum::http::{HeaderValue, header};
 use axum::response::{Html, IntoResponse, Response};
 
+use crate::auth::{CurrentUser, Role};
 use crate::error::AppError;
 use crate::web::assets;
 
@@ -32,10 +33,18 @@ pub enum Tab {
     Logs,
     System,
     Printers,
+    Account,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 5] = [Tab::Dashboard, Tab::Files, Tab::Logs, Tab::System, Tab::Printers];
+    pub const ALL: [Tab; 6] = [
+        Tab::Dashboard,
+        Tab::Files,
+        Tab::Logs,
+        Tab::System,
+        Tab::Printers,
+        Tab::Account,
+    ];
 
     pub fn path(self) -> &'static str {
         match self {
@@ -44,6 +53,7 @@ impl Tab {
             Tab::Logs => "/ui/logs",
             Tab::System => "/ui/system",
             Tab::Printers => "/ui/printers",
+            Tab::Account => "/ui/account",
         }
     }
 
@@ -54,6 +64,7 @@ impl Tab {
             Tab::Logs => "Logs",
             Tab::System => "System",
             Tab::Printers => "Printers",
+            Tab::Account => "Account",
         }
     }
 
@@ -64,6 +75,7 @@ impl Tab {
             Tab::Logs => "logs",
             Tab::System => "system",
             Tab::Printers => "printers",
+            Tab::Account => "account",
         }
     }
 
@@ -74,14 +86,37 @@ impl Tab {
             Tab::Logs => "3",
             Tab::System => "4",
             Tab::Printers => "p",
+            Tab::Account => "a",
         }
+    }
+
+    /// Lowest role that sees this tab in the strip.
+    pub fn min_role(self) -> Role {
+        match self {
+            Tab::Printers => Role::Admin,
+            _ => Role::Viewer,
+        }
+    }
+
+    /// Pushed to the right-hand end of the strip.
+    pub fn is_secondary(self) -> bool {
+        self == Tab::Account
     }
 }
 
-/// Data every full page needs. Grows a user and CSRF token once auth lands.
+/// The signed-in user as shown in the chrome.
+pub struct UserBadge {
+    pub username: String,
+    pub role: &'static str,
+}
+
+/// Data every full page needs.
 pub struct Layout {
     pub title: &'static str,
     pub version: &'static str,
+    pub user: Option<UserBadge>,
+    /// Session CSRF token; emitted on `<body hx-headers>` and in plain forms.
+    pub csrf: Option<String>,
 }
 
 impl Layout {
@@ -89,6 +124,19 @@ impl Layout {
         Self {
             title,
             version: env!("CARGO_PKG_VERSION"),
+            user: None,
+            csrf: None,
+        }
+    }
+
+    pub fn for_user(title: &'static str, user: &CurrentUser) -> Self {
+        Self {
+            user: Some(UserBadge {
+                username: user.username.clone(),
+                role: user.role.as_str(),
+            }),
+            csrf: Some(user.csrf_token.clone()),
+            ..Self::new(title)
         }
     }
 
@@ -110,11 +158,16 @@ struct ShellTemplate<'a> {
 struct TabsTemplate {
     active: Tab,
     oob: bool,
+    tabs: Vec<Tab>,
 }
 
 impl TabsTemplate {
-    fn tabs(&self) -> [Tab; 5] {
-        Tab::ALL
+    fn for_user(active: Tab, oob: bool, user: &CurrentUser) -> Self {
+        Self {
+            active,
+            oob,
+            tabs: Tab::ALL.into_iter().filter(|t| user.has(t.min_role())).collect(),
+        }
     }
 
     fn is_active(&self, tab: &Tab) -> bool {
@@ -124,21 +177,13 @@ impl TabsTemplate {
 
 /// Renders a tab's content either as an htmx fragment (content plus an out-of-band tab strip
 /// update) or wrapped in the full shell, so deep links and reloads work.
-pub fn page(hx: HxRequest, tab: Tab, content: String) -> Result<Response, AppError> {
+pub fn page(hx: HxRequest, user: &CurrentUser, tab: Tab, content: String) -> Result<Response, AppError> {
     let html = if hx.0 {
-        let tabs = TabsTemplate {
-            active: tab,
-            oob: true,
-        }
-        .render()?;
-        content + &tabs
+        content + &TabsTemplate::for_user(tab, true, user).render()?
     } else {
         ShellTemplate {
-            layout: Layout::new(tab.title()),
-            tabs: TabsTemplate {
-                active: tab,
-                oob: false,
-            },
+            layout: Layout::for_user(tab.title(), user),
+            tabs: TabsTemplate::for_user(tab, false, user),
             content: &content,
         }
         .render()?

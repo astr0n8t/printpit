@@ -6,7 +6,7 @@ A minimal web interface for controlling several [Moonraker](https://github.com/A
 - **Server-side Moonraker client.** The browser only talks to printpit and never to a printer, so Moonraker needs no CORS setup, and printer traffic can stay on its own network.
 - **Lazy loading.** Each tab queries the printer only when you open it.
 
-> **Status:** early development. The app skeleton is in place; authentication and printer features are next.
+> **Status:** early development. The skeleton and authentication are done; printer management is next.
 > See [`PLAN.md`](PLAN.md) for the design and [`CHECKLIST.md`](CHECKLIST.md) for progress.
 
 ## Quickstart (Docker Compose)
@@ -18,7 +18,13 @@ echo "PRINTPIT_SECRET_KEY=$(openssl rand -base64 32)" > .env
 docker compose up -d --build
 ```
 
-Then open <http://localhost:8080>.
+Then open <http://localhost:8080>. On first start, printpit prints a one-time **setup token** to its log:
+
+```sh
+docker compose logs printpit | grep "setup token"
+```
+
+Enter it on the setup page to create the admin account.
 
 Keep the secret key safe and stable. It encrypts the printer API keys stored in `/data`, so if you lose it you will need to re-enter those keys.
 

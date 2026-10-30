@@ -23,6 +23,10 @@ printpit is a Rust web app, shipped as a Docker image, for controlling several M
 - `/ui/*` routes return an htmx partial when `HX-Request` is set, or the full shell otherwise, so deep links work. Use `web::layout::page(hx, Tab::X, html)`. It also re-renders the tab strip out of band (`hx-swap-oob`). New tabs go in `layout::Tab`.
 - CSP is strict (`script-src 'self'; style-src 'self'`): no inline `<script>`, no `style=""` attributes, no `on*=` handlers. htmx is configured through the `htmx-config` meta tag in `base.html`. Indicator styles are off, and 4xx/5xx responses *are* swapped so error panels show.
 - Errors: `AppError` renders just an error panel. The `error::wrap_full_page` middleware wraps it in page chrome for non-htmx requests. `MoonrakerError` variants (offline, unauthorized, klippy not ready, …) render as an inline TUI error box and never panic.
+- Auth plumbing: protected routes live in the `protected` router in `web/mod.rs`, behind `session::require_auth` then `csrf::verify`. Handlers take `CurrentUser` or `RequireRole<Admin|Operator>`. **When you add a protected route, also add it to `PROTECTED_GET`/`PROTECTED_POST` in `tests/auth.rs`.**
+- Audit every state-changing action with `db::audit::record` (it never fails the request).
+- DB: runtime `sqlx::query*` with `&'static str` SQL (sqlx 0.9 requires `SqlSafeStr`), no compile-time macros or `DATABASE_URL`. Timestamps are unix seconds (`db::now()`). Add schema changes as new files in `migrations/`; never edit an applied one.
+- Tests: `tests/common` has `TestApp` (temp DB) and a cookie-tracking `Client` (`setup`, `login`, `post_with`, `session_csrf`). `TestApp::with_admin()` gives a signed-in admin.
 - Config comes only from `PRINTPIT_*` env vars (plus `*_FILE` variants for Docker secrets).
 - Before committing: `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, `cargo test`.
 
@@ -48,3 +52,6 @@ printpit healthcheck         # probes GET /healthz on PRINTPIT_BIND (used by Doc
 - 2026-10-30: `/healthz` is routed *after* the TraceLayer so Docker health probes don't spam the logs. It still gets the security headers.
 - 2026-10-30: Runtime image is `gcr.io/distroless/static-debian12:nonroot` (UID 65532, CA certs included). The builder is `rust:1.97-alpine`, which links musl statically.
 - 2026-10-30: Claude cloud sandbox only: `dockerd` isn't running by default (start it with `dockerd &`). Builds there need the proxy CA: build with a scratch copy of the Dockerfile that `COPY`s `/root/.ccr/ca-bundle.crt` and sets `CARGO_HTTP_CAINFO`. Never commit that to the real Dockerfile.
+- 2026-10-30: Session and pre-session cookies use `SameSite=Lax`, not the `Strict` the plan first said. With `Strict`, following a link to printpit from chat or email showed the login page. Every state change still needs a CSRF token.
+- 2026-10-30: Login rate limiting is hand-rolled and in memory. It counts failures only: 10 per username and 20 per IP in 15 minutes. A successful login clears the username counter, not the IP counter. The limit resets on restart, which is acceptable.
+- 2026-10-30: Argon2 is built with opt-level 3 even in dev (`[profile.dev.package.argon2]`), otherwise tests crawl.

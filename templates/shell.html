@@ -3,10 +3,16 @@
 <header class="topbar">
   <a class="brand" href="/">▌printpit</a>
   {{ tabs|safe }}
+{%- if let Some(token) = layout.csrf %}
+  <form class="logout" method="post" action="/logout">
+    <input type="hidden" name="_csrf" value="{{ token }}">
+    <button type="submit">logout</button>
+  </form>
+{%- endif %}
 </header>
 <main id="main" class="main">{{ content|safe }}</main>
 <footer class="statusline">
-  <span>printpit {{ layout.version }}</span>
-  <span class="dim">[1-4] tabs · [p] printers</span>
+  <span>printpit {{ layout.version }}{% if let Some(user) = layout.user %} · {{ user.username }} <span class="dim">({{ user.role }})</span>{% endif %}</span>
+  <span class="dim">[1-4] tabs · [a] account</span>
 </footer>
 {% endblock %}

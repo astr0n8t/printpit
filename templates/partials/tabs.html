@@ -1,5 +1,5 @@
 <nav id="tabs" class="tabs" aria-label="Tabs" hx-target="#main" hx-push-url="true"{% if oob %} hx-swap-oob="true"{% endif %}>
-{%- for t in self.tabs() %}
-  <a href="{{ t.path() }}" hx-get="{{ t.path() }}" data-key="{{ t.key() }}" class="tab{% if self.is_active(t) %} active" aria-current="page{% endif %}"><span class="key">[{{ t.key() }}]</span>{{ t.label() }}</a>
+{%- for t in tabs %}
+  <a href="{{ t.path() }}" hx-get="{{ t.path() }}" data-key="{{ t.key() }}" class="tab{% if t.is_secondary() %} secondary{% endif %}{% if self.is_active(t) %} active" aria-current="page{% endif %}"><span class="key">[{{ t.key() }}]</span>{{ t.label() }}</a>
 {%- endfor %}
 </nav>

@@ -1,6 +1,8 @@
 //! HTTP layer: router assembly and middleware.
 
+mod account;
 pub mod assets;
+mod auth;
 pub mod layout;
 pub mod security;
 mod tabs;
@@ -8,11 +10,12 @@ mod tabs;
 use axum::Router;
 use axum::middleware;
 use axum::response::Redirect;
-use axum::routing::get;
+use axum::routing::{get, post};
 use tower_http::compression::CompressionLayer;
 use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
 use tracing::Level;
 
+use crate::auth::{csrf, session, setup};
 use crate::error;
 use crate::state::AppState;
 
@@ -20,16 +23,34 @@ use crate::state::AppState;
 const BODY_LIMIT: usize = 64 * 1024;
 
 pub fn router(state: AppState) -> Router {
-    Router::new()
+    // Everything here needs a session; non-GET requests also need the CSRF token.
+    let protected = Router::new()
         .route("/", get(|| async { Redirect::to("/ui/dashboard") }))
         .route("/ui/dashboard", get(tabs::dashboard))
         .route("/ui/files", get(tabs::files))
         .route("/ui/logs", get(tabs::logs))
         .route("/ui/system", get(tabs::system))
         .route("/ui/printers", get(tabs::printers))
-        .route("/static/{hash}/{*path}", get(assets::serve))
+        .route("/ui/account", get(account::show))
+        .route("/account/password", post(account::change_password))
+        .route("/logout", post(auth::logout))
+        .route_layer(middleware::from_fn(csrf::verify))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            session::require_auth,
+        ));
+
+    let public = Router::new()
+        .route("/login", get(auth::login_page).post(auth::login))
+        .route("/setup", get(auth::setup_page).post(auth::setup))
+        .route("/static/{hash}/{*path}", get(assets::serve));
+
+    Router::new()
+        .merge(public)
+        .merge(protected)
         .fallback(error::not_found)
         .layer(middleware::from_fn(error::wrap_full_page))
+        .layer(middleware::from_fn_with_state(state.clone(), setup::gate))
         .layer(axum::extract::DefaultBodyLimit::max(BODY_LIMIT))
         .layer(CompressionLayer::new())
         .layer(

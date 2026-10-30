@@ -22,19 +22,20 @@ See `PLAN.md` for design details and `CLAUDE.md` for rules.
 - [x] README quickstart
 
 ## M1 — Authentication (before any printer features)
-- [ ] sqlx + SQLite pool, migrations folder, run migrations on startup
-- [ ] Migrations: `users`, `sessions`, `user_prefs` (incl. `auto_refresh` default 1), `audit_log`
-- [ ] `password.rs`: Argon2id hash/verify (+ tests)
-- [ ] First-run setup: detect no users, generate a one-time setup token and log it, `/setup` form creates the admin
-- [ ] Login page (TUI styled) + `POST /login`
-- [ ] Server-side sessions: random 256-bit ID, SHA-256 stored, cookie flags (HttpOnly, Secure, SameSite=Strict), idle + absolute expiry, periodic cleanup task
-- [ ] `POST /logout`
-- [ ] Auth extractors: `CurrentUser`, `RequireRole<Operator>`, `RequireRole<Admin>`; unauthenticated → redirect to `/login` (or `HX-Redirect` for htmx)
-- [ ] CSRF: per-session token, `hx-headers` injection in the layout, hidden field for forms, middleware check on non-GET
-- [ ] Login rate limiting (per IP + per username), trusted-proxy aware client IP
+- [x] sqlx + SQLite pool, migrations folder, run migrations on startup (DB file created 0600)
+- [x] Migrations: `users`, `sessions`, `user_prefs` (incl. `auto_refresh` default 1), `audit_log`
+- [x] `password.rs`: Argon2id hash/verify (+ tests), dummy-hash verify for unknown users (timing)
+- [x] First-run setup: detect no users, generate a one-time setup token and log it, `/setup` form creates the admin (atomic: `INSERT … WHERE NOT EXISTS`)
+- [x] Login page (TUI styled) + `POST /login`
+- [x] Server-side sessions: random 256-bit ID, SHA-256 stored, cookie flags (HttpOnly, Secure, SameSite=Lax, `__Host-` prefix when secure), idle + absolute expiry, periodic cleanup task
+- [x] `POST /logout`
+- [x] Auth extractors: `CurrentUser`, `RequireRole<Operator>`, `RequireRole<Admin>`; unauthenticated → redirect to `/login?next=` (or 401 + `HX-Redirect` for htmx)
+- [x] CSRF: per-session token, `hx-headers` injection in the layout, hidden field for forms, middleware check on non-GET; double-submit cookie for login/setup; `Sec-Fetch-Site: cross-site` refused
+- [x] Login rate limiting (per IP + per username, failures only), trusted-proxy aware client IP
 - [x] Security headers middleware (CSP, nosniff, referrer policy, frame-ancestors none, permissions policy) — done in M0 (`web/security.rs`)
-- [ ] Account page: change your own password (revokes other sessions)
-- [ ] Tests: unauthenticated access rejected on every route, CSRF enforced, session expiry, rate limit
+- [x] Account page: change your own password (revokes other sessions)
+- [x] Audit entries: setup, login, login_failed, logout, password_change
+- [x] Tests: unauthenticated access rejected on every route, CSRF enforced, session expiry, rate limit, roles, disabled users, open-redirect guard, session fixation
 
 ## M2 — Printer management
 - [ ] Migration: `printers` table
