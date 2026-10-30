@@ -9,7 +9,7 @@ printpit is a Rust web app, shipped as a Docker image, for controlling several M
 
 ## Non-negotiable rules
 1. **The browser never talks to a printer.** All Moonraker HTTP and WebSocket traffic comes from the backend. Printer URLs, hosts and API keys must never appear in any response body, HTML, JS or log line. The browser only knows `/p/{printer_id}/...`.
-2. **Lazy loading.** A tab or view makes Moonraker calls only when the user opens it. There is no prefetching and no background polling without an active viewer. The dashboard's live data goes through `PrinterHub` (refcounted WebSocket, one per printer, closed after an idle grace period). Don't add a Moonraker call to a shared layout or shell.
+2. **Lazy loading.** A tab or view makes Moonraker calls only when the user opens it. There is no prefetching and no background polling without an active viewer. The dashboard's live data goes through `PrinterHub` (refcounted WebSocket, one per printer, closed after an idle grace period). Don't add a Moonraker call to a shared layout or shell. The user's `auto_refresh` pref (a checkbox on the dashboard, stored in `user_prefs`) gates all automatic refreshing: when it is off, there is no SSE and no timers, only manual refresh.
 3. **Auth on everything** except `/login`, `/setup` (while no users exist), `/healthz` and `/static/*`. State-changing routes require a CSRF token and the right role (`admin` > `operator` > `viewer`).
 4. **Egress is segmented.** Outbound printer requests use the egress client from `moonraker/net.rs`, which applies `PRINTPIT_EGRESS_BIND` and the `PRINTPIT_PRINTER_CIDRS` allowlist, checked *after* DNS resolution. Never build an ad-hoc `reqwest::Client` for printer traffic.
 5. **Secrets.** Printer API keys are encrypted with AES-GCM (`crypto.rs`) using `PRINTPIT_SECRET_KEY`. Passwords use Argon2id. Session IDs are stored as SHA-256 hashes only.
@@ -41,3 +41,4 @@ docker compose up
 ## Gotchas / decisions log
 - *(add entries as `YYYY-MM-DD: note`)*
 - 2026-10-30: The project started. Decided on server-rendered HTML + htmx + SSE instead of an SPA, to meet the speed and minimal-UI goals and so that tab partials are lazy by construction.
+- 2026-10-30: The auto-refresh checkbox lives on the dashboard and is remembered per user (`user_prefs.auto_refresh`, default on). It controls dashboard SSE and System tab auto-refresh. Logs follow mode is separate. The compose file ships both the simple and the segmented variants.

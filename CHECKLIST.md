@@ -21,7 +21,7 @@ See `PLAN.md` for design details and `CLAUDE.md` for rules.
 
 ## M1 — Authentication (before any printer features)
 - [ ] sqlx + SQLite pool, migrations folder, run migrations on startup
-- [ ] Migrations: `users`, `sessions`, `user_prefs`, `audit_log`
+- [ ] Migrations: `users`, `sessions`, `user_prefs` (incl. `auto_refresh` default 1), `audit_log`
 - [ ] `password.rs`: Argon2id hash/verify (+ tests)
 - [ ] First-run setup: detect no users, generate a one-time setup token and log it, `/setup` form creates the admin
 - [ ] Login page (TUI styled) + `POST /login`
@@ -56,12 +56,15 @@ See `PLAN.md` for design details and `CLAUDE.md` for rules.
 - [ ] HTTP fallback (`/printer/objects/query`) if the WS fails, still viewer-gated
 - [ ] SSE endpoint(s) that render status partials (or JSON + small DOM patcher in app.js; pick one and record it in CLAUDE.md)
 - [ ] `app.js`: close SSE on `visibilitychange` hidden, reopen when visible
+- [ ] Auto-refresh checkbox in the dashboard header, persisted in `user_prefs.auto_refresh` (default on) via `POST /account/prefs`
+- [ ] Auto-refresh on → SSE live updates; off → no SSE, per-card `[r] refresh` that calls `GET /p/{id}/status` (single `/printer/objects/query`)
+- [ ] Toggling starts/stops the stream immediately without a reload
 - [ ] Printer card: state badge, filename, text progress bar, elapsed/ETA, layer if available
 - [ ] Sensors panel: extruder(s), bed, chamber/temperature sensors, fans; client-side sparklines
 - [ ] Core controls: Start (file picker modal), Pause/Resume (state-aware), Cancel (confirm), E-STOP (confirm); role-gated; audit logged
 - [ ] Camera: resolve the webcam via `server.webcams.list` (or override); snapshot proxy refreshed only while visible; MJPEG proxy on "live" click; upstream dropped on client disconnect
 - [ ] Offline / Klippy-not-ready / unauthorized states rendered cleanly per card
-- [ ] Integration test with a mock Moonraker: dashboard triggers only WS/status calls; WS closes after grace period with no viewers
+- [ ] Integration test with a mock Moonraker: dashboard triggers only WS/status calls; WS closes after grace period with no viewers; with auto-refresh off, no WS is opened at all
 
 ## M4 — Files tab
 - [ ] Printer selector component (remembered in `user_prefs`)
@@ -88,7 +91,7 @@ See `PLAN.md` for design details and `CLAUDE.md` for rules.
 - [ ] `machine.system_info`: CPU, distribution, memory, network interfaces, SD card / disk, services, virtualization
 - [ ] `machine.proc_stats`: CPU usage, memory, Moonraker process stats, system load, throttled state (Pi), network throughput, CPU temp
 - [ ] Moonraker/Klipper versions (`server.info`, `machine.update.status` read-only)
-- [ ] Manual refresh + opt-in auto-refresh that stops when the tab is left
+- [ ] Manual `[r] refresh` always available; auto-refresh every `PRINTPIT_SYSTEM_REFRESH_SECS` only when the user's `auto_refresh` pref is on; timer stops when the tab is left
 - [ ] TUI meters (`CPU [████░░░░] 41%`)
 
 ## M7 — Admin, hardening and polish

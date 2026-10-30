@@ -176,7 +176,11 @@ This is the core rule: **printpit talks to a printer only because a logged-in us
 4. **Hidden tabs pause.** `app.js` closes the SSE stream when `document.visibilityState === 'hidden'` and reopens it when the page is visible again.
 5. **The camera loads on demand.** Snapshots refresh only while the card is visible. MJPEG streams only after the user clicks "live", and the upstream connection drops when the client disconnects.
 6. **Short-TTL caches** (e.g. a 5 s file list and a 2 s system info) absorb double-clicks and multiple users without refetching. Files are invalidated on upload, delete and move.
-7. **System tab refresh** is opt-in: manual refresh by default, with an optional auto-refresh toggle (e.g. 5 s) that stops when you leave the tab.
+7. **Auto-refresh checkbox.** The main page (dashboard) has an `[x] auto-refresh` checkbox in its header. It is saved per user in `user_prefs.auto_refresh`, so it follows you across devices and reloads. It is on by default.
+   - **On:** dashboard cards get live updates over SSE, and the System tab refreshes itself every `PRINTPIT_SYSTEM_REFRESH_SECS` (default 5 s) while it is open.
+   - **Off:** no SSE stream and no timers. Each card and the System tab show a `[r] refresh` action that fetches a single snapshot (`/printer/objects/query` for cards). This is the lowest-traffic mode.
+   - Toggling the box saves the setting (`POST /account/prefs`, CSRF-protected) and starts or stops the live stream right away, without a page reload.
+   - The Logs tab's follow mode stays a separate toggle on that tab and is not remembered.
 
 ---
 
@@ -191,6 +195,7 @@ This is the core rule: **printpit talks to a printer only because a logged-in us
   - State badge: `[PRINTING]`, `[PAUSED]`, `[READY]`, `[OFFLINE]`
 - **Keyboard:** number keys switch tabs, `j/k` move the selection in lists, `Enter` opens, `/` filters, `?` shows help, `Esc` closes dialogs. Every action is also clickable, and the layout works on touch screens and phones.
 - **Destructive actions** (cancel, e-stop, delete) need a TUI-style confirmation modal (`Cancel print on Voron? [y/N]`).
+- **Dashboard header:** the printer count summary (`3 printers · 1 printing · 1 offline`) and the remembered `[x] auto-refresh` checkbox (see §6.7).
 - **Dashboard layout:** a responsive grid with one card per printer. Each card shows the state, file, progress, temperatures, sensors, a camera tile and core controls (`Start`, `Pause/Resume`, `Cancel`, `E-STOP`). "Start" opens a small picker of recent or uploaded files.
 - **Printer scope for tabs:** Files, Logs and System act on one printer at a time, with a printer selector at the top of the tab (remembered per user).
 
@@ -241,6 +246,8 @@ GET  /ui/system?printer={id}            partial: host info
 GET  /ui/printers, POST /printers, POST /printers/{id}, DELETE /printers/{id}, POST /printers/{id}/test
 GET  /ui/users, ... (admin)
 GET  /ui/account, POST /account/password
+POST /account/prefs                     save prefs (auto_refresh, theme, selected printer)
+GET  /p/{id}/status                     one-shot status snapshot (manual refresh when auto-refresh is off)
 GET  /ui/audit (admin)
 GET  /healthz                           liveness (no auth, no printer calls)
 GET  /static/*                          embedded assets, long cache + content hash
@@ -257,7 +264,7 @@ users(id, username UNIQUE, password_hash, role, created_at, updated_at, disabled
 sessions(id_hash PK, user_id FK, csrf_token, created_at, last_seen_at, expires_at, user_agent, ip)
 printers(id, name, base_url, api_key_enc BLOB NULL, api_key_nonce BLOB NULL,
          webcam_override NULL, enabled, sort_order, created_at, updated_at)
-user_prefs(user_id PK, selected_printer_id, theme)
+user_prefs(user_id PK, selected_printer_id, theme, auto_refresh BOOL DEFAULT 1)
 audit_log(id, user_id, printer_id NULL, action, detail_json, created_at)
 login_attempts(key, window_start, count)      -- or kept in memory
 ```
@@ -276,6 +283,7 @@ login_attempts(key, window_start, count)      -- or kept in memory
 | `PRINTPIT_PRINTER_CIDRS` | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` | Allowed printer address ranges |
 | `PRINTPIT_EGRESS_BIND` | *(unset)* | Local IP for outbound printer traffic |
 | `PRINTPIT_UI_REFRESH_MS` | `1000` | Max push rate to the browser per printer |
+| `PRINTPIT_SYSTEM_REFRESH_SECS` | `5` | System tab interval when auto-refresh is on |
 | `PRINTPIT_WS_IDLE_GRACE_SECS` | `30` | Keep the Moonraker WebSocket open after the last viewer leaves |
 | `PRINTPIT_MAX_UPLOAD_MB` | `1024` | Upload size limit |
 | `PRINTPIT_TRUSTED_PROXIES` | *(unset)* | CIDRs whose `X-Forwarded-For` is trusted (for rate limiting and audit IPs) |
