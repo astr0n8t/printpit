@@ -23,7 +23,7 @@ It is written in Rust, ships as one Docker container, and has a minimal, fast UI
 | G12 | **Network segmentation** | Printer traffic leaves the container on its own network, separate from the network that serves the web app. |
 
 ### Non-goals (for v1)
-- Replacing Mainsail/Fluidor for deep tuning (macros editor, config file editing, bed mesh visualisation, console).
+- Replacing Mainsail/Fluidd for deep tuning (macros editor, config file editing, bed mesh visualisation, console).
 - Slicing.
 - OctoPrint or other non-Moonraker backends. The client sits behind a trait so they could be added later.
 - Multiple tenants or organisations.
