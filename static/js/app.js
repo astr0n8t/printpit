@@ -3,9 +3,13 @@
 "use strict";
 
 (() => {
+  // Only text entry swallows shortcuts; a focused checkbox or button must not.
+  const TEXT_INPUTS = ["text", "search", "password", "email", "url", "number", "tel"];
   const typing = (el) =>
     el instanceof HTMLElement &&
-    (el.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName));
+    (el.isContentEditable ||
+      ["TEXTAREA", "SELECT"].includes(el.tagName) ||
+      (el instanceof HTMLInputElement && TEXT_INPUTS.includes(el.type)));
 
   // ── Keyboard ──────────────────────────────────────────────────────
   // Links with data-key="<key>" are clicked by that key; "r" clicks every [data-refresh].

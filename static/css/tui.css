@@ -332,7 +332,8 @@ tr[hidden] { display: none; }
 
 /* ── Logs ─────────────────────────────────────────────────────────── */
 
-.logs-layout { display: grid; grid-template-columns: minmax(0, 34ch) minmax(0, 1fr); gap: 0 2ch; align-items: start; }
+.logs-layout { display: grid; grid-template-columns: minmax(0, 46ch) minmax(0, 1fr); gap: 0 2ch; align-items: start; }
+.log-name { max-width: 26ch; overflow: hidden; text-overflow: ellipsis; }
 .log-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3em 2ch; margin-bottom: 0.5em; }
 .log-tools input[type="search"] { max-width: 28ch; }
 label.inline { display: inline-flex; gap: 1ch; align-items: center; }

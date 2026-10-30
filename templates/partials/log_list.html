@@ -10,7 +10,7 @@
     <tbody>
 {%- for f in files %}
       <tr data-name="{{ f.name|lower }}">
-        <td class="wrap"><a href="{{ self.push_url(f.name) }}" hx-get="{{ self.view_url(f.name) }}" hx-target="#log-view" hx-swap="outerHTML" hx-push-url="{{ self.push_url(f.name) }}">{{ f.name }}</a></td>
+        <td class="log-name" title="{{ f.name }}"><a href="{{ self.push_url(f.name) }}" hx-get="{{ self.view_url(f.name) }}" hx-target="#log-view" hx-swap="outerHTML" hx-push-url="{{ self.push_url(f.name) }}">{{ f.name }}</a></td>
         <td class="num dim">{{ f.size }}</td>
         <td class="dim">{{ f.modified }}</td>
       </tr>

@@ -86,11 +86,12 @@ See `PLAN.md` for design details and `CLAUDE.md` for rules.
 - [x] Audit entries for upload/delete/move/copy/mkdir/start
 
 ## M5 — Logs tab
-- [ ] Lazy-loaded `/ui/logs` partial: list files in the `logs` root
-- [ ] Tail view: last N lines (Range request if supported, else a bounded streaming ring buffer)
-- [ ] Line count selector (200/500/2000), client-side filter/highlight, wrap toggle
-- [ ] Manual refresh + optional follow mode (stops when the tab is left)
-- [ ] Download full log (streamed)
+- [x] Lazy-loaded `/ui/logs`: list files in the `logs` root (newest first) when the tab opens; viewer only on pick; deep links preload the viewer
+- [x] Tail view: last N lines via a suffix `Range` request sized for N (widened once if short), else a bounded streaming ring buffer
+- [x] Line count selector (200/500/2000), server-side highlighting (errors/warnings/dim Stats), client-side filter, CSS-only wrap toggle
+- [x] Manual refresh (`r`) + optional follow mode (every 3 s; stops when unticked, the tab is left or the page is hidden)
+- [x] Download full log (streamed)
+- [x] Keyboard shortcuts work while a checkbox/button has focus (only text inputs swallow keys)
 
 ## M6 — System tab
 - [ ] Lazy-loaded `/ui/system` partial
