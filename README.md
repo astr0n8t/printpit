@@ -25,6 +25,10 @@ Open <http://localhost:8080> and enter the setup token to create the admin accou
 
 Keep `PRINTPIT_SECRET_KEY` safe and stable. It encrypts the printer API keys stored in `/data`; if it changes, printpit shows those keys as "unreadable" and you re-enter them.
 
+## Images
+
+Multi-arch images (`linux/amd64`, `linux/arm64`, so a Raspberry Pi 4/5 works) are built by `.github/workflows/release.yml` and published to `ghcr.io/astr0n8t/printpit` (`:main` and `:sha-…` from `main`; `:X.Y.Z`, `:X.Y` and `:latest` from `vX.Y.Z` tags). To use a published image, replace `build: .` with `image: ghcr.io/astr0n8t/printpit:latest` in the compose file. While the repository is private, `docker login ghcr.io` first.
+
 ## Deployment
 
 ### Simple

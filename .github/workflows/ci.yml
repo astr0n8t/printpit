@@ -24,20 +24,37 @@ jobs:
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked
 
+  deny:
+    # RustSec advisories, licences (GPL-3.0 compatible), banned crates, sources. See deny.toml.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+
   docker:
     runs-on: ubuntu-latest
     needs: check
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
+      - name: Build amd64 + arm64 (cross-compiled, no emulation)
+        uses: docker/build-push-action@v6
         with:
           context: .
+          platforms: linux/amd64,linux/arm64
           push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Load amd64 for the smoke test
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
           load: true
           tags: printpit:ci
           cache-from: type=gha
-          cache-to: type=gha,mode=max
       - name: Smoke test container
         run: |
           docker run -d --name pp --read-only --cap-drop ALL \

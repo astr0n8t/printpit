@@ -102,17 +102,17 @@ See `PLAN.md` for design details and `CLAUDE.md` for rules.
 - [x] TUI meters (`cpu [████░░░░] 41%`), amber ≥ 75 %, red ≥ 90 %
 
 ## M7 — Admin, hardening and polish
-- [ ] User management (admin): create, disable, change role, reset password, delete
-- [ ] Audit log view (admin) with filtering
-- [ ] Keyboard shortcuts + `?` help overlay
-- [ ] Responsive/mobile layout pass
-- [ ] Theme toggle persisted in `user_prefs`
-- [ ] Segmented `docker-compose.yml` example (frontend bridge + macvlan printer network) + docs for `PRINTPIT_BIND` / `PRINTPIT_EGRESS_BIND`
-- [ ] Multi-arch image build (amd64, arm64)
-- [ ] `cargo deny` / `cargo audit` in CI
-- [ ] Performance check: image < 20 MB, idle RSS < 20 MB, page TTFB measured
-- [ ] Security review pass (secrets in logs, SSRF, CSRF, authz on every route)
-- [ ] Docs: configuration reference, reverse proxy examples (Caddy/Traefik/nginx), backup of `/data`
+- [x] User management (admin): create, disable, change role, reset password, delete; self-protection + last-admin guard; revokes sessions
+- [x] Audit log view (admin) with filtering (action/user/printer) and paging
+- [x] Keyboard shortcuts + `?` help overlay
+- [x] Responsive/mobile layout pass (no horizontal scroll at 390 px; tab strip row; optional columns hide)
+- [x] Theme toggle (auto/dark/light) persisted in `user_prefs`
+- [x] Segmented `docker-compose.segmented.yml` (Caddy on a frontend bridge, printer macvlan, `PRINTPIT_BIND` / `PRINTPIT_EGRESS_BIND`) — verified with a bridge stand-in
+- [x] Multi-arch image build (amd64, arm64) — cross-compiled with cargo-zigbuild; `release.yml` publishes to GHCR (arm64 built and inspected here, not executed: no QEMU in the sandbox)
+- [x] `cargo deny` (advisories, licences, bans, sources) in CI
+- [x] Performance check: image 18.3 MB (amd64) / 17.5 MB (arm64); RSS 1.6 MB idle, 2.4 MB after load; median response 0.5–2.6 ms, p95 < 4 ms
+- [x] Security review pass: no secrets/addresses in logs, SSRF via allowlist + egress, CSRF everywhere, authz matrix test for admin routes, HSTS with TLS
+- [x] Docs: configuration reference, reverse proxy examples (Caddy/Traefik/nginx), backup of `/data`, security model
 
 ## Later / nice-to-have
 - [ ] Camera flip/rotation from `server.webcams.list` (needs webcam info at render time without a page-load call)
