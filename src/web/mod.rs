@@ -85,6 +85,7 @@ pub fn router(state: AppState) -> Router {
         .route("/ui/audit", get(audit::list))
         .route("/ui/account", get(account::show))
         .route("/account/password", post(account::change_password))
+        .route("/account/theme", post(account::set_theme))
         .route("/logout", post(auth::logout))
         .route_layer(middleware::from_fn(csrf::verify))
         .route_layer(middleware::from_fn_with_state(

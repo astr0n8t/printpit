@@ -4,5 +4,12 @@
     <dt>user</dt><dd>{{ username }}</dd>
     <dt>role</dt><dd>{{ role }}</dd>
   </dl>
+  <label class="inline">theme
+    <select name="theme" hx-post="/account/theme" hx-trigger="change" hx-swap="none">
+      <option value="auto"{% if theme == "auto" %} selected{% endif %}>auto (follow system)</option>
+      <option value="dark"{% if theme == "dark" %} selected{% endif %}>dark</option>
+      <option value="light"{% if theme == "light" %} selected{% endif %}>light</option>
+    </select>
+  </label>
 </section>
 {{ password_form|safe }}

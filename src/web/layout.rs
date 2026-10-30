@@ -129,6 +129,8 @@ pub struct Layout {
     pub user: Option<UserBadge>,
     /// Session CSRF token; emitted on `<body hx-headers>` and in plain forms.
     pub csrf: Option<String>,
+    /// `dark`/`light` forces a theme via `<html data-theme>`; `None` follows the browser.
+    pub theme: Option<&'static str>,
 }
 
 impl Layout {
@@ -138,6 +140,7 @@ impl Layout {
             version: env!("CARGO_PKG_VERSION"),
             user: None,
             csrf: None,
+            theme: None,
         }
     }
 
@@ -148,6 +151,7 @@ impl Layout {
                 role: user.role.as_str(),
             }),
             csrf: Some(user.csrf_token.clone()),
+            theme: Some(user.theme.as_str()).filter(|t| *t != "auto"),
             ..Self::new(title)
         }
     }

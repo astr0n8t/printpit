@@ -10,7 +10,7 @@ pub mod setup;
 
 pub use crate::db::users::Role;
 pub use client_ip::ClientIp;
-pub use session::{Admin, CurrentUser, Operator, RequireRole};
+pub use session::{Admin, CurrentUser, Operator, RequireRole, Theme};
 
 /// Usernames: 1–32 chars of letters, digits, `.`, `_`, `-`.
 pub fn validate_username(name: &str) -> Result<(), &'static str> {

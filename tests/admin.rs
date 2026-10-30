@@ -336,3 +336,56 @@ async fn admin_tabs_are_hidden_from_others() {
     assert!(!strip.contains("/ui/users") && !strip.contains("/ui/audit"));
     assert_eq!(op.get("/ui/audit").await.status, StatusCode::FORBIDDEN);
 }
+
+// ── Preferences ──────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn theme_preference_is_remembered() {
+    let (_app, mut c, csrf) = admin().await;
+    assert!(
+        c.get("/ui/dashboard")
+            .await
+            .body
+            .starts_with("<!doctype html>\n<html lang=\"en\">"),
+        "auto by default"
+    );
+    let res = c.post_hx("/account/theme", &csrf, &[("theme", "light")]).await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT);
+    assert_eq!(res.header("hx-refresh"), "true");
+    assert!(
+        c.get("/ui/dashboard")
+            .await
+            .body
+            .contains(r#"<html lang="en" data-theme="light">"#)
+    );
+    assert!(
+        c.get("/ui/account")
+            .await
+            .body
+            .contains(r#"<option value="light" selected>"#)
+    );
+    c.post_hx("/account/theme", &csrf, &[("theme", "auto")]).await;
+    assert!(!c.get("/ui/dashboard").await.body.contains("data-theme"));
+    assert_eq!(
+        c.post_hx("/account/theme", &csrf, &[("theme", "neon")])
+            .await
+            .status,
+        StatusCode::BAD_REQUEST
+    );
+}
+
+#[tokio::test]
+async fn help_overlay_lists_role_appropriate_keys() {
+    let (app, mut c, _csrf) = admin().await;
+    let body = c.get("/ui/dashboard").await.body;
+    assert!(body.contains(r#"<dialog id="help""#) && body.contains("printers · users · audit log"));
+    app.create_user("vic", "viewer password", Role::Viewer).await;
+    let mut v = app.client();
+    v.login("vic", "viewer password").await;
+    assert!(
+        !v.get("/ui/dashboard")
+            .await
+            .body
+            .contains("printers · users · audit log")
+    );
+}

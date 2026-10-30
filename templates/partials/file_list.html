@@ -22,9 +22,9 @@
     <thead><tr>
       <th><a href="#" hx-get="{{ self.sort_link("name") }}" hx-target="#files">name{{ self.arrow("name") }}</a></th>
       <th class="num"><a href="#" hx-get="{{ self.sort_link("size") }}" hx-target="#files">size{{ self.arrow("size") }}</a></th>
-      <th><a href="#" hx-get="{{ self.sort_link("modified") }}" hx-target="#files">modified{{ self.arrow("modified") }}</a></th>
+      <th class="col-opt"><a href="#" hx-get="{{ self.sort_link("modified") }}" hx-target="#files">modified{{ self.arrow("modified") }}</a></th>
       <th class="num"><a href="#" hx-get="{{ self.sort_link("time") }}" hx-target="#files">time{{ self.arrow("time") }}</a></th>
-      <th class="num">filament</th>
+      <th class="num col-opt">filament</th>
     </tr></thead>
     <tbody>
 {%- for r in rows %}
@@ -35,9 +35,9 @@
         <td class="wrap"><a href="#" hx-get="{{ self.meta_url(r) }}" hx-target="#file-meta" hx-swap="outerHTML">{{ r.name }}</a></td>
 {%- endif %}
         <td class="num dim">{{ r.size }}</td>
-        <td class="dim">{{ r.modified }}</td>
+        <td class="dim col-opt">{{ r.modified }}</td>
         <td class="num">{{ r.time }}</td>
-        <td class="num dim">{{ r.filament }}</td>
+        <td class="num dim col-opt">{{ r.filament }}</td>
       </tr>
 {%- endfor %}
     </tbody>

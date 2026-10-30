@@ -19,6 +19,14 @@
     if (e.key === "/" || e.key === "j" || e.key === "k" || e.key === "Enter") {
       if (listKey(e)) return;
     }
+    if (e.key === "?") {
+      const help = document.getElementById("help");
+      if (help) {
+        e.preventDefault();
+        help.showModal();
+      }
+      return;
+    }
     if (e.key === "r") {
       const buttons = document.querySelectorAll("[data-refresh]");
       if (buttons.length) {
@@ -210,6 +218,8 @@
     document.querySelectorAll("img.cam-img:not([data-watched])").forEach((img) => {
       img.dataset.watched = "1";
       observer.observe(img);
+      // The snapshot may have failed before this script ran, so its error event was missed.
+      if (img.complete && img.naturalWidth === 0) img.closest(".cam")?.classList.add("cam-missing");
     });
   };
   document.addEventListener("htmx:afterSettle", watchCams);

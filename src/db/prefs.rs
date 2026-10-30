@@ -52,3 +52,15 @@ pub async fn set_selected_printer(db: &Db, user_id: i64, printer_id: i64) -> Res
     .await?;
     Ok(())
 }
+
+pub async fn set_theme(db: &Db, user_id: i64, theme: &str) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO user_prefs (user_id, theme) VALUES (?, ?)
+         ON CONFLICT (user_id) DO UPDATE SET theme = excluded.theme",
+    )
+    .bind(user_id)
+    .bind(theme)
+    .execute(db)
+    .await?;
+    Ok(())
+}

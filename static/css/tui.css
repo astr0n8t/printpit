@@ -261,6 +261,10 @@ dialog::backdrop { background: rgb(0 0 0 / 0.6); }
 
 @media (max-width: 600px) {
   :root { --fs: 13px; }
+  .topbar .tabs { order: 3; flex: 1 1 100%; gap: 0 0.5ch; }
+  .topbar .tab.secondary { margin-left: 0; }
+  .topbar .logout { margin-left: auto; }
+  .col-opt { display: none; }
   .main { padding: 1em 16px; }
   .topbar, .statusline { padding-left: 16px; padding-right: 16px; }
   .statusline .dim { display: none; }
@@ -327,7 +331,7 @@ tr[hidden] { display: none; }
 .actions form { display: inline; margin: 0; }
 
 @media (max-width: 900px) {
-  .files-layout { grid-template-columns: 1fr; }
+  .files-layout { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* ── Logs ─────────────────────────────────────────────────────────── */
@@ -356,7 +360,7 @@ pre.log > .dim { color: var(--dim); }
 .log-view:has(.wrap-toggle:checked) pre.log { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 @media (max-width: 900px) {
-  .logs-layout { grid-template-columns: 1fr; }
+  .logs-layout { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* ── System ───────────────────────────────────────────────────────── */
@@ -377,3 +381,7 @@ pre.log > .dim { color: var(--dim); }
 .inline-form input { max-width: 20ch; }
 .audit-filters { display: flex; flex-wrap: wrap; gap: 0.3em 3ch; margin-bottom: 0.6em; }
 .add-user { max-width: 60ch; }
+kbd { font: inherit; color: var(--accent); }
+kbd::before { content: "["; color: var(--dim); }
+kbd::after { content: "]"; color: var(--dim); }
+.keys td:first-child { padding-right: 3ch; }

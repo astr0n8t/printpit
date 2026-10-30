@@ -22,6 +22,8 @@ pub struct SessionUser {
     pub username: String,
     pub role: Role,
     pub disabled: bool,
+    /// `auto`, `dark` or `light` from `user_prefs` (NULL = auto).
+    pub theme: Option<String>,
 }
 
 pub fn hash_token(token: &str) -> Vec<u8> {
@@ -63,8 +65,9 @@ pub async fn create(
 pub async fn lookup(db: &Db, id_hash: &[u8]) -> Result<Option<SessionUser>, sqlx::Error> {
     sqlx::query_as(
         "SELECT s.id_hash, s.csrf_token, s.last_seen_at, s.expires_at,
-                u.id AS user_id, u.username, u.role, u.disabled
+                u.id AS user_id, u.username, u.role, u.disabled, p.theme
          FROM sessions s JOIN users u ON u.id = s.user_id
+         LEFT JOIN user_prefs p ON p.user_id = u.id
          WHERE s.id_hash = ?",
     )
     .bind(id_hash)

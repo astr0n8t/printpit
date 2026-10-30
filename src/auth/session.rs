@@ -59,6 +59,33 @@ pub fn removal(config: &Config, name: &'static str) -> Cookie<'static> {
     c
 }
 
+/// Colour scheme preference. `Auto` follows the browser's `prefers-color-scheme`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Theme {
+    #[default]
+    Auto,
+    Dark,
+    Light,
+}
+
+impl Theme {
+    pub fn parse(s: Option<&str>) -> Self {
+        match s {
+            Some("dark") => Theme::Dark,
+            Some("light") => Theme::Light,
+            _ => Theme::Auto,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Theme::Auto => "auto",
+            Theme::Dark => "dark",
+            Theme::Light => "light",
+        }
+    }
+}
+
 /// The authenticated user for this request. Inserted by [`require_auth`].
 #[derive(Debug, Clone)]
 pub struct CurrentUser {
@@ -67,6 +94,7 @@ pub struct CurrentUser {
     pub role: Role,
     pub csrf_token: String,
     pub session_hash: Vec<u8>,
+    pub theme: Theme,
 }
 
 impl CurrentUser {
@@ -162,6 +190,7 @@ pub async fn check(state: &AppState, jar: &CookieJar) -> Result<SessionCheck, sq
         role: s.role,
         csrf_token: s.csrf_token,
         session_hash: hash,
+        theme: Theme::parse(s.theme.as_deref()),
     })))
 }
 

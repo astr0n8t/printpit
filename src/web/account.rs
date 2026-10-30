@@ -19,6 +19,7 @@ use crate::web::layout::{HxRequest, Tab, page};
 struct AccountTemplate<'a> {
     username: &'a str,
     role: &'static str,
+    theme: &'static str,
     password_form: String,
 }
 
@@ -44,6 +45,7 @@ pub async fn show(hx: HxRequest, user: CurrentUser) -> Result<Response, AppError
     let content = AccountTemplate {
         username: &user.username,
         role: user.role.as_str(),
+        theme: user.theme.as_str(),
         password_form: PasswordForm {
             csrf: &user.csrf_token,
             error: None,
@@ -117,4 +119,24 @@ pub async fn change_password(
         None,
         Some("Password changed. Your other sessions were signed out."),
     )
+}
+
+#[derive(Deserialize)]
+pub struct ThemeForm {
+    #[serde(default)]
+    theme: String,
+}
+
+/// Saves the theme and asks htmx to reload the page so `<html data-theme>` applies everywhere.
+pub async fn set_theme(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    form: Result<Form<ThemeForm>, FormRejection>,
+) -> Result<Response, AppError> {
+    let theme = form.ok().map(|Form(f)| f.theme).unwrap_or_default();
+    if !matches!(theme.as_str(), "auto" | "dark" | "light") {
+        return Err(AppError::BadRequest("Pick auto, dark or light.".into()));
+    }
+    crate::db::prefs::set_theme(&state.db, user.id, &theme).await?;
+    Ok(([("hx-refresh", "true")], StatusCode::NO_CONTENT).into_response())
 }

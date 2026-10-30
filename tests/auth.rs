@@ -40,6 +40,7 @@ const PROTECTED_GET: &[&str] = &[
 const PROTECTED_POST: &[&str] = &[
     "/logout",
     "/account/password",
+    "/account/theme",
     "/printers",
     "/printers/1",
     "/printers/1/toggle",
