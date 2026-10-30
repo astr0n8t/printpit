@@ -94,12 +94,12 @@ See `PLAN.md` for design details and `CLAUDE.md` for rules.
 - [x] Keyboard shortcuts work while a checkbox/button has focus (only text inputs swallow keys)
 
 ## M6 — System tab
-- [ ] Lazy-loaded `/ui/system` partial
-- [ ] `machine.system_info`: CPU, distribution, memory, network interfaces, SD card / disk, services, virtualization
-- [ ] `machine.proc_stats`: CPU usage, memory, Moonraker process stats, system load, throttled state (Pi), network throughput, CPU temp
-- [ ] Moonraker/Klipper versions (`server.info`, `machine.update.status` read-only)
-- [ ] Manual `[r] refresh` always available; auto-refresh every `PRINTPIT_SYSTEM_REFRESH_SECS` only when the user's `auto_refresh` pref is on; timer stops when the tab is left
-- [ ] TUI meters (`CPU [████░░░░] 41%`)
+- [x] Lazy-loaded `/ui/system`: two halves load on open (`/p/{id}/system/info`, `/p/{id}/system/stats`)
+- [x] `machine.system_info`: model, CPU, distribution, memory, storage, python, services (state badges), virtualization; interface addresses + hostname admin-only, serial numbers never shown
+- [x] `machine.proc_stats`: CPU usage (overall + per core), memory, Moonraker process stats, throttled flags (Pi), network throughput, CPU temp, uptime, websocket count; disk from the gcodes root
+- [x] Moonraker/Klipper versions (`server.info`, `printer.info`) and read-only `machine.update.status?refresh=false`
+- [x] Manual `[r] refresh` always available; only the stats half auto-refreshes every `PRINTPIT_SYSTEM_REFRESH_SECS`, only when the user's `auto_refresh` pref is on; the timer dies with the tab
+- [x] TUI meters (`cpu [████░░░░] 41%`), amber ≥ 75 %, red ≥ 90 %
 
 ## M7 — Admin, hardening and polish
 - [ ] User management (admin): create, disable, change role, reset password, delete

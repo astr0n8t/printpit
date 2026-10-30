@@ -116,7 +116,12 @@
 
   // ── Timed refresh ─────────────────────────────────────────────────
   // A button with data-every="<ms>" clicks itself on that interval while the page is visible.
-  // The server only renders data-every when the user's auto-refresh pref is on.
+  // The server only renders data-every when the user's auto-refresh pref is on. The clock
+  // starts when htmx inserts the button, so the cadence doesn't drift by the tick.
+  document.addEventListener("htmx:load", (e) => {
+    const now = String(Date.now());
+    e.detail.elt.querySelectorAll?.("button[data-every]").forEach((b) => (b.dataset.since = now));
+  });
   setInterval(() => {
     if (document.visibilityState !== "visible") return;
     const now = Date.now();
@@ -127,7 +132,7 @@
         b.click();
       }
     });
-  }, 1000);
+  }, 250);
 
   // ── Dialogs ───────────────────────────────────────────────────────
   // TUI confirm for hx-confirm: "Delete printer X? [y/N]".

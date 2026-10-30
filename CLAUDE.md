@@ -43,6 +43,8 @@ printpit is a Rust web app, shipped as a Docker image, for controlling several M
 - Per-printer tabs (Files, Logs, System) use `web::select::select()` for the remembered printer selector, and `select::enabled_printer()` for `/p/{id}/...` routes. `web::files::attachment()` streams any upstream file as a download.
 - Log tails: `MoonrakerClient::tail()` sends `Range: bytes=-N` (Tornado honours it) and falls back to streaming with a bounded ring buffer. `Tail::last_lines()` drops the partial first line when the window starts mid-file.
 - Uploads: `files::upload` pipes the browser's multipart field into a `reqwest::Body` through an mpsc channel, joined with the upstream request, so nothing is buffered. Form fields must precede the file input. The route has its own `DefaultBodyLimit` (max upload + 1 MB).
+- Timed refresh: render `data-every="<ms>"` on a refresh button (only when the user's auto-refresh pref is on) and `app.js` clicks it on that interval while the page is visible. The clock starts on `htmx:load`. Don't add other timers.
+- Host identifiers (interface IPs, MACs, hostname) count as printer addresses under rule 1: admin-only on the System tab.
 - `/printer/*` endpoints fail with an error when Klippy isn't ready. Show that state instead of treating it as offline.
 
 ## Commands
