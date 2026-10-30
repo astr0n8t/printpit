@@ -1,0 +1,50 @@
+# cargo-deny: run `cargo deny check` (CI runs it on every push).
+
+[graph]
+# Check what we actually ship and test.
+all-features = false
+
+[advisories]
+# RustSec vulnerabilities fail the build; yanked crates too.
+yanked = "deny"
+ignore = [
+    # basic-toml is unmaintained (not vulnerable). It's only used at compile time by
+    # askama's template macro to read an optional askama.toml, which printpit doesn't have;
+    # nothing from it ends up in the binary. Revisit when askama drops it.
+    { id = "RUSTSEC-2026-0374", reason = "compile-time only, via askama_derive" },
+]
+
+[licenses]
+# Everything must be compatible with printpit's GPL-3.0.
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CDLA-Permissive-2.0", # webpki root certificate data
+    "GPL-3.0-or-later",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+confidence-threshold = 0.9
+
+[licenses.private]
+# printpit itself (publish = false); its licence is the LICENSE file.
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+deny = [
+    { crate = "openssl-sys", reason = "TLS is rustls only" },
+    { crate = "aws-lc-sys", reason = "C/CMake build, painful on musl; rustls uses ring" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

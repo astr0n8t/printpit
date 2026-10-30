@@ -113,6 +113,6 @@ pub fn router(state: AppState) -> Router {
         )
         // Added after the trace layer so Docker's 30 s health probes don't flood the log.
         .route("/healthz", get(|| async { "ok" }))
-        .layer(middleware::from_fn(security::headers))
+        .layer(middleware::from_fn_with_state(state.clone(), security::headers))
         .with_state(state)
 }

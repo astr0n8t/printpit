@@ -623,3 +623,66 @@ async fn database_file_is_owner_only() {
         assert_eq!(mode & 0o777, 0o600, "{name}");
     }
 }
+
+// ── Authorization matrix ─────────────────────────────────────────────
+
+/// Routes only admins may use. Operators (and so viewers) must get 403 from every one.
+const ADMIN_GET: &[&str] = &[
+    "/ui/printers",
+    "/ui/printers/new",
+    "/ui/printers/1",
+    "/ui/users",
+    "/ui/audit",
+];
+const ADMIN_POST: &[&str] = &[
+    "/printers",
+    "/printers/1",
+    "/printers/1/toggle",
+    "/printers/1/move/up",
+    "/printers/1/test",
+    "/users",
+    "/users/1/role",
+    "/users/1/toggle",
+    "/users/1/password",
+];
+const ADMIN_DELETE: &[&str] = &["/printers/1", "/users/1"];
+
+#[tokio::test]
+async fn admin_routes_reject_operators() {
+    let (app, _admin) = TestApp::with_admin().await;
+    app.create_user("op", "operator password", Role::Operator).await;
+    let mut op = app.client();
+    op.login("op", "operator password").await;
+    let csrf = op.session_csrf().await;
+    for path in ADMIN_GET {
+        assert_eq!(op.get(path).await.status, StatusCode::FORBIDDEN, "GET {path}");
+    }
+    for path in ADMIN_POST {
+        let res = op.post_with(path, &[], &[("x-csrf-token", &csrf)]).await;
+        assert_eq!(res.status, StatusCode::FORBIDDEN, "POST {path}");
+    }
+    for path in ADMIN_DELETE {
+        assert_eq!(
+            op.delete_hx(path, &csrf).await.status,
+            StatusCode::FORBIDDEN,
+            "DELETE {path}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn hsts_only_when_serving_tls() {
+    let tls = TestApp::with_env(&[]).await;
+    let res = tls.client().get("/healthz").await;
+    assert_eq!(res.header("strict-transport-security"), "max-age=31536000");
+    let plain = TestApp::new().await;
+    assert!(
+        plain
+            .client()
+            .get("/healthz")
+            .await
+            .headers
+            .get("strict-transport-security")
+            .is_none()
+    );
+}
