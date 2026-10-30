@@ -9,6 +9,7 @@ use crate::config::Config;
 use crate::crypto::Cipher;
 use crate::db::printers::Printer;
 use crate::db::{self, Db, sessions};
+use crate::moonraker::files::DirCache;
 use crate::moonraker::hub::{HubConfig, HubDeps, PrinterHub};
 use crate::moonraker::webcam::WebcamCache;
 use crate::moonraker::{self, Egress, MoonrakerClient, MoonrakerError};
@@ -35,6 +36,7 @@ pub struct AppState {
     /// Live, viewer-gated printer connections for the dashboard.
     pub hub: Arc<PrinterHub>,
     pub webcams: Arc<WebcamCache>,
+    pub dirs: Arc<DirCache>,
 }
 
 impl AppState {
@@ -68,6 +70,7 @@ impl AppState {
             cipher,
             hub,
             webcams: Arc::default(),
+            dirs: Arc::default(),
         })
     }
 
@@ -84,6 +87,7 @@ impl AppState {
     pub fn printer_changed(&self, printer_id: i64) {
         self.hub.reset(printer_id);
         self.webcams.invalidate(printer_id);
+        self.dirs.invalidate(printer_id);
     }
 
     /// Periodically purges expired sessions and stale rate-limit windows.

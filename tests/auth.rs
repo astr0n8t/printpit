@@ -24,6 +24,10 @@ const PROTECTED_GET: &[&str] = &[
     "/p/1/start",
     "/p/1/camera/snapshot",
     "/p/1/camera/stream",
+    "/p/1/files",
+    "/p/1/files/meta?path=a.gcode",
+    "/p/1/files/thumb?path=a.png",
+    "/p/1/files/download?path=a.gcode",
 ];
 const PROTECTED_POST: &[&str] = &[
     "/logout",
@@ -36,8 +40,11 @@ const PROTECTED_POST: &[&str] = &[
     "/account/prefs",
     "/p/1/print/pause",
     "/p/1/estop",
+    "/p/1/files/mkdir",
+    "/p/1/files/move",
+    "/p/1/files/upload",
 ];
-const PROTECTED_DELETE: &[&str] = &["/printers/1"];
+const PROTECTED_DELETE: &[&str] = &["/printers/1", "/p/1/files?path=a.gcode"];
 
 // ── First-run setup ──────────────────────────────────────────────────
 

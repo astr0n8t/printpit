@@ -1,0 +1,7 @@
+<label class="printer-select">printer
+  <select name="printer" hx-get="{{ tab_path }}" hx-target="#main" hx-push-url="true">
+{%- for (id, name) in options %}
+    <option value="{{ id }}"{% if self.is_selected(id) %} selected{% endif %}>{{ name }}</option>
+{%- endfor %}
+  </select>
+</label>

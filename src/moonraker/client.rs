@@ -54,7 +54,7 @@ impl MoonrakerClient {
         })
     }
 
-    fn request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
+    pub(crate) fn request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
         let mut req = self.http.request(method, format!("{}{}", self.base, path));
         if let Some(key) = &self.api_key {
             req = req.header("X-Api-Key", key);
@@ -62,7 +62,7 @@ impl MoonrakerClient {
         req
     }
 
-    async fn get_json<T: DeserializeOwned>(&self, path: &str) -> Result<T, MoonrakerError> {
+    pub(crate) async fn get_json<T: DeserializeOwned>(&self, path: &str) -> Result<T, MoonrakerError> {
         let res = self
             .request(reqwest::Method::GET, path)
             .timeout(REQUEST_TIMEOUT)
@@ -199,7 +199,7 @@ impl MoonrakerClient {
 }
 
 /// Maps a Moonraker response to `T` or a typed error.
-async fn decode<T: DeserializeOwned>(res: reqwest::Response) -> Result<T, MoonrakerError> {
+pub(crate) async fn decode<T: DeserializeOwned>(res: reqwest::Response) -> Result<T, MoonrakerError> {
     let status = res.status();
     let body = res.bytes().await.map_err(MoonrakerError::from_reqwest)?;
     if status.is_success() {

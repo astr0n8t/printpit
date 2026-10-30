@@ -20,19 +20,6 @@ fn placeholder(hx: HxRequest, user: &CurrentUser, tab: Tab, p: Placeholder) -> R
     page(hx, user, tab, p.render()?)
 }
 
-pub async fn files(hx: HxRequest, user: CurrentUser) -> Result<Response, AppError> {
-    placeholder(
-        hx,
-        &user,
-        Tab::Files,
-        Placeholder {
-            title: "files",
-            milestone: "M4",
-            lines: &["Browse, upload, move and delete G-code files on a printer."],
-        },
-    )
-}
-
 pub async fn logs(hx: HxRequest, user: CurrentUser) -> Result<Response, AppError> {
     placeholder(
         hx,

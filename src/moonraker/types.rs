@@ -84,3 +84,76 @@ pub struct FileEntry {
     pub modified: f64,
     pub size: u64,
 }
+
+/// `GET /server/files/directory?extended=true`
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct DirListing {
+    pub dirs: Vec<DirEntry>,
+    pub files: Vec<DirFile>,
+    pub disk_usage: Option<DiskUsage>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct DirEntry {
+    pub dirname: String,
+    pub modified: f64,
+    pub size: u64,
+}
+
+/// A file in a directory listing; slicer metadata is present when Moonraker has parsed it.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct DirFile {
+    pub filename: String,
+    pub modified: f64,
+    pub size: u64,
+    pub estimated_time: Option<f64>,
+    pub filament_total: Option<f64>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[serde(default)]
+pub struct DiskUsage {
+    pub total: u64,
+    pub used: u64,
+    pub free: u64,
+}
+
+/// `GET /server/files/metadata`
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct FileMetadata {
+    pub size: u64,
+    pub modified: f64,
+    pub slicer: Option<String>,
+    pub slicer_version: Option<String>,
+    pub estimated_time: Option<f64>,
+    pub filament_total: Option<f64>,
+    pub filament_weight_total: Option<f64>,
+    pub layer_height: Option<f64>,
+    pub first_layer_height: Option<f64>,
+    pub object_height: Option<f64>,
+    pub nozzle_diameter: Option<f64>,
+    pub first_layer_extr_temp: Option<f64>,
+    pub first_layer_bed_temp: Option<f64>,
+    pub thumbnails: Vec<Thumbnail>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct Thumbnail {
+    pub width: u32,
+    pub height: u32,
+    pub size: u64,
+    /// Relative to the G-code file's directory.
+    pub relative_path: String,
+}
+
+/// `POST /server/files/upload`
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct UploadResult {
+    pub print_started: bool,
+}

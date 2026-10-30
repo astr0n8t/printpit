@@ -2,6 +2,7 @@
 //! `notify_status_update` pushes, webcam snapshot/MJPEG, and print actions. It records every
 //! request and counts open WebSockets and camera streams.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -9,10 +10,10 @@ use std::time::Duration;
 use axum::Router;
 use axum::body::Body;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Query, Request, State};
+use axum::extract::{Multipart, Path, Query, Request, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use serde_json::{Value, json};
 
 #[derive(Debug, Clone)]
@@ -54,6 +55,30 @@ struct Inner {
     ws_open: AtomicUsize,
     ws_total: AtomicUsize,
     streams_open: AtomicUsize,
+    fs: Mutex<MockFs>,
+}
+
+/// In-memory `gcodes` root: file path → (bytes, modified), plus directories.
+pub struct MockFs {
+    pub files: BTreeMap<String, (Vec<u8>, f64)>,
+    pub dirs: BTreeSet<String>,
+}
+
+impl Default for MockFs {
+    fn default() -> Self {
+        let mut files = BTreeMap::new();
+        files.insert("old.gcode".to_string(), (vec![b'G'; 1000], 1_600_000_000.0));
+        files.insert(
+            "parts/clip.gcode".to_string(),
+            (vec![b'G'; 2_500_000], 1_700_000_000.0),
+        );
+        files.insert(
+            "parts/.thumbs/clip-300x300.png".to_string(),
+            (TESTCARD.to_vec(), 1_700_000_000.0),
+        );
+        let dirs = ["parts", "parts/.thumbs"].into_iter().map(String::from).collect();
+        Self { files, dirs }
+    }
 }
 
 type Mock = Arc<Inner>;
@@ -85,6 +110,7 @@ impl MockMoonraker {
             ws_open: AtomicUsize::new(0),
             ws_total: AtomicUsize::new(0),
             streams_open: AtomicUsize::new(0),
+            fs: Mutex::new(MockFs::default()),
         });
         let app = Router::new()
             .route("/server/info", get(server_info))
@@ -93,6 +119,18 @@ impl MockMoonraker {
             .route("/printer/objects/query", get(objects_query))
             .route("/server/webcams/list", get(webcams))
             .route("/server/files/list", get(files))
+            .route(
+                "/server/files/directory",
+                get(directory).post(mkdir).delete(rmdir),
+            )
+            .route("/server/files/metadata", get(metadata))
+            .route("/server/files/move", post(move_item))
+            .route("/server/files/copy", post(copy_item))
+            .route("/server/files/upload", post(upload))
+            .route(
+                "/server/files/gcodes/{*path}",
+                get(download).merge(delete(delete_file)),
+            )
             .route("/printer/print/{action}", post(print_action))
             .route("/printer/emergency_stop", post(estop))
             .route("/webcam/", get(webcam))
@@ -130,6 +168,24 @@ impl MockMoonraker {
 
     pub fn streams_open(&self) -> usize {
         self.inner.streams_open.load(Ordering::SeqCst)
+    }
+
+    pub fn has_file(&self, path: &str) -> bool {
+        self.inner.fs.lock().unwrap().files.contains_key(path)
+    }
+
+    pub fn file_len(&self, path: &str) -> Option<usize> {
+        self.inner
+            .fs
+            .lock()
+            .unwrap()
+            .files
+            .get(path)
+            .map(|(d, _)| d.len())
+    }
+
+    pub fn has_dir(&self, path: &str) -> bool {
+        self.inner.fs.lock().unwrap().dirs.contains(path)
     }
 
     pub fn print_state(&self) -> String {
@@ -237,11 +293,187 @@ async fn webcams(State(mock): State<Mock>) -> impl IntoResponse {
     axum::Json(json!({"result": {"webcams": cams}}))
 }
 
-async fn files() -> impl IntoResponse {
-    axum::Json(json!({"result": [
-        {"path": "old.gcode", "modified": 1_600_000_000.0, "size": 1000},
-        {"path": "parts/clip.gcode", "modified": 1_700_000_000.0, "size": 2_500_000},
-    ]}))
+async fn files(State(mock): State<Mock>) -> impl IntoResponse {
+    let fs = mock.fs.lock().unwrap();
+    let list: Vec<Value> = fs
+        .files
+        .iter()
+        .filter(|(p, _)| !p.contains("/."))
+        .map(|(p, (d, m))| json!({"path": p, "modified": m, "size": d.len()}))
+        .collect();
+    axum::Json(json!({"result": list}))
+}
+
+fn not_found(msg: &str) -> Response {
+    let body = json!({"error": {"code": 404, "message": msg}});
+    (StatusCode::NOT_FOUND, axum::Json(body)).into_response()
+}
+
+fn ok(result: Value) -> Response {
+    axum::Json(json!({"result": result})).into_response()
+}
+
+/// Strips the `gcodes/` root prefix Moonraker's directory endpoints use.
+fn rel(path: &str) -> String {
+    path.trim_start_matches("gcodes").trim_matches('/').to_string()
+}
+
+fn child_of(dir: &str, path: &str) -> Option<String> {
+    let rest = if dir.is_empty() {
+        path
+    } else {
+        path.strip_prefix(&format!("{dir}/"))?
+    };
+    (!rest.contains('/')).then(|| rest.to_string())
+}
+
+async fn directory(State(mock): State<Mock>, Query(q): Query<BTreeMap<String, String>>) -> Response {
+    let dir = rel(q.get("path").map(String::as_str).unwrap_or("gcodes"));
+    let fs = mock.fs.lock().unwrap();
+    if !dir.is_empty() && !fs.dirs.contains(&dir) {
+        return not_found(&format!("Directory does not exist ({dir})"));
+    }
+    let dirs: Vec<Value> = fs
+        .dirs
+        .iter()
+        .filter_map(|d| child_of(&dir, d))
+        .map(|name| json!({"dirname": name, "modified": 1_700_000_000.0, "size": 4096}))
+        .collect();
+    let files: Vec<Value> = fs
+        .files
+        .iter()
+        .filter_map(|(p, (d, m))| child_of(&dir, p).map(|name| (name, d.len(), *m)))
+        .map(|(name, size, m)| {
+            let mut f = json!({"filename": name, "modified": m, "size": size});
+            if name.ends_with(".gcode") {
+                f["estimated_time"] = json!(3725.0);
+                f["filament_total"] = json!(1520.5);
+            }
+            f
+        })
+        .collect();
+    ok(json!({"dirs": dirs, "files": files,
+              "disk_usage": {"total": 30_000_000_000u64, "used": 10_000_000_000u64, "free": 20_000_000_000u64}}))
+}
+
+async fn metadata(State(mock): State<Mock>, Query(q): Query<BTreeMap<String, String>>) -> Response {
+    let name = q.get("filename").cloned().unwrap_or_default();
+    let fs = mock.fs.lock().unwrap();
+    let Some((data, modified)) = fs.files.get(&name) else {
+        return not_found("Metadata not available");
+    };
+    let thumbs = if name == "parts/clip.gcode" {
+        json!([{"width": 32, "height": 32, "size": 900, "relative_path": ".thumbs/clip-32x32.png"},
+               {"width": 300, "height": 300, "size": 1768, "relative_path": ".thumbs/clip-300x300.png"}])
+    } else {
+        json!([])
+    };
+    ok(
+        json!({"size": data.len(), "modified": modified, "slicer": "PrusaSlicer", "slicer_version": "2.8.1",
+              "estimated_time": 3725.0, "filament_total": 1520.5, "filament_weight_total": 4.6,
+              "layer_height": 0.2, "object_height": 12.4, "nozzle_diameter": 0.4,
+              "first_layer_extr_temp": 215.0, "first_layer_bed_temp": 60.0, "thumbnails": thumbs}),
+    )
+}
+
+async fn download(State(mock): State<Mock>, Path(path): Path<String>) -> Response {
+    match mock.fs.lock().unwrap().files.get(&path) {
+        Some((data, _)) => {
+            ([(header::CONTENT_TYPE, "application/octet-stream")], data.clone()).into_response()
+        }
+        None => not_found("File does not exist"),
+    }
+}
+
+async fn delete_file(State(mock): State<Mock>, Path(path): Path<String>) -> Response {
+    match mock.fs.lock().unwrap().files.remove(&path) {
+        Some(_) => ok(json!({"item": {"path": path, "root": "gcodes"}, "action": "delete_file"})),
+        None => not_found("File does not exist"),
+    }
+}
+
+async fn mkdir(State(mock): State<Mock>, Query(q): Query<BTreeMap<String, String>>) -> Response {
+    let dir = rel(q.get("path").map(String::as_str).unwrap_or_default());
+    mock.fs.lock().unwrap().dirs.insert(dir.clone());
+    ok(json!({"item": {"path": dir, "root": "gcodes"}, "action": "create_dir"}))
+}
+
+async fn rmdir(State(mock): State<Mock>, Query(q): Query<BTreeMap<String, String>>) -> Response {
+    let dir = rel(q.get("path").map(String::as_str).unwrap_or_default());
+    let mut fs = mock.fs.lock().unwrap();
+    if !fs.dirs.remove(&dir) {
+        return not_found("Directory does not exist");
+    }
+    let prefix = format!("{dir}/");
+    fs.files.retain(|p, _| !p.starts_with(&prefix));
+    fs.dirs.retain(|d| !d.starts_with(&prefix));
+    ok(json!({"item": {"path": dir, "root": "gcodes"}, "action": "delete_dir"}))
+}
+
+fn transfer(mock: &Mock, q: &BTreeMap<String, String>, keep_source: bool) -> Response {
+    let (src, dst) = (
+        rel(q.get("source").map(String::as_str).unwrap_or_default()),
+        rel(q.get("dest").map(String::as_str).unwrap_or_default()),
+    );
+    let mut fs = mock.fs.lock().unwrap();
+    let Some(entry) = (if keep_source {
+        fs.files.get(&src).cloned()
+    } else {
+        fs.files.remove(&src)
+    }) else {
+        return not_found("File does not exist");
+    };
+    fs.files.insert(dst.clone(), entry);
+    ok(json!({"item": {"path": dst, "root": "gcodes"}}))
+}
+
+async fn move_item(State(mock): State<Mock>, Query(q): Query<BTreeMap<String, String>>) -> Response {
+    transfer(&mock, &q, false)
+}
+
+async fn copy_item(State(mock): State<Mock>, Query(q): Query<BTreeMap<String, String>>) -> Response {
+    transfer(&mock, &q, true)
+}
+
+async fn upload(State(mock): State<Mock>, mut form: Multipart) -> Response {
+    let (mut dir, mut print, mut file) = (String::new(), false, None);
+    while let Ok(Some(field)) = form.next_field().await {
+        match field.name() {
+            Some("path") => dir = field.text().await.unwrap_or_default(),
+            Some("print") => print = field.text().await.unwrap_or_default() == "true",
+            Some("file") => {
+                let name = field.file_name().unwrap_or("upload.gcode").to_string();
+                match field.bytes().await {
+                    Ok(bytes) => file = Some((name, bytes.to_vec())),
+                    Err(_) => return (StatusCode::BAD_REQUEST, "upload aborted").into_response(),
+                }
+            }
+            _ => {}
+        }
+    }
+    let Some((name, data)) = file else {
+        return (StatusCode::BAD_REQUEST, "no file").into_response();
+    };
+    let path = if dir.is_empty() {
+        name
+    } else {
+        format!("{dir}/{name}")
+    };
+    mock.fs
+        .lock()
+        .unwrap()
+        .files
+        .insert(path.clone(), (data, 1_800_000_000.0));
+    if print {
+        *mock.print_state.lock().unwrap() = "printing".into();
+    }
+    // Real Moonraker answers 201 with an unwrapped body on some versions.
+    (
+        StatusCode::CREATED,
+        axum::Json(json!({"item": {"path": path, "root": "gcodes"},
+        "print_started": print, "action": "create_file"})),
+    )
+        .into_response()
 }
 
 async fn print_action(

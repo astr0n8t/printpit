@@ -3,6 +3,7 @@
 
 pub mod client;
 pub mod error;
+pub mod files;
 pub mod hub;
 pub mod net;
 pub mod rpc;

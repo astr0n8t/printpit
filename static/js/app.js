@@ -12,6 +12,9 @@
   document.addEventListener("keydown", (e) => {
     if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || typing(e.target)) return;
     if (document.querySelector("dialog[open]")) return;
+    if (e.key === "/" || e.key === "j" || e.key === "k" || e.key === "Enter") {
+      if (listKey(e)) return;
+    }
     if (e.key === "r") {
       const buttons = document.querySelectorAll("[data-refresh]");
       if (buttons.length) {
@@ -25,6 +28,60 @@
       e.preventDefault();
       link.click();
     }
+  });
+
+  // ── Lists ([data-list] tables, e.g. files) ────────────────────────
+  // "/" focuses the [data-filter] box, typing filters rows by data-name, j/k move the
+  // selection and Enter opens the selected row's link.
+  const rows = () =>
+    [...document.querySelectorAll("table[data-list] tbody tr[data-name]")].filter((r) => !r.hidden);
+  const listKey = (e) => {
+    const all = rows();
+    if (e.key === "/") {
+      const box = document.querySelector("input[data-filter]");
+      if (!box) return false;
+      e.preventDefault();
+      box.focus();
+      return true;
+    }
+    if (!all.length) return false;
+    const current = all.findIndex((r) => r.classList.contains("selected"));
+    if (e.key === "Enter") {
+      if (current < 0) return false;
+      e.preventDefault();
+      all[current].querySelector("a")?.click();
+      return true;
+    }
+    const next = e.key === "j" ? Math.min(current + 1, all.length - 1) : Math.max(current - 1, 0);
+    all.forEach((r) => r.classList.remove("selected"));
+    all[next].classList.add("selected");
+    all[next].scrollIntoView({ block: "nearest" });
+    e.preventDefault();
+    return true;
+  };
+  document.addEventListener("input", (e) => {
+    if (!(e.target instanceof HTMLInputElement) || !e.target.matches("input[data-filter]")) return;
+    const q = e.target.value.trim().toLowerCase();
+    document.querySelectorAll("table[data-list] tbody tr[data-name]").forEach((r) => {
+      r.hidden = q !== "" && !r.dataset.name.includes(q);
+    });
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.target instanceof HTMLInputElement && e.target.matches("input[data-filter]") && e.key === "Escape") {
+      e.target.value = "";
+      e.target.dispatchEvent(new Event("input", { bubbles: true }));
+      e.target.blur();
+    }
+  });
+
+  // Upload progress as a text bar: [█████░░░░░] 52%
+  document.addEventListener("htmx:xhr:progress", (e) => {
+    const form = e.target instanceof Element && e.target.closest("form[data-upload]");
+    const out = form?.querySelector(".upload-progress");
+    if (!out || !e.detail.lengthComputable) return;
+    const frac = e.detail.loaded / e.detail.total;
+    const filled = Math.round(frac * 20);
+    out.textContent = `[${"█".repeat(filled)}${"░".repeat(20 - filled)}] ${Math.round(frac * 100)}%`;
   });
 
   // ── Dialogs ───────────────────────────────────────────────────────

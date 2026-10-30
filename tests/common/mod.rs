@@ -226,6 +226,58 @@ impl Client {
         resp
     }
 
+    /// A multipart/form-data POST (htmx-style, with the CSRF header). `file` is
+    /// `(filename, bytes)` and is sent last, like the upload form.
+    pub async fn post_multipart(
+        &mut self,
+        uri: &str,
+        csrf: &str,
+        fields: &[(&str, &str)],
+        file: Option<(&str, &[u8])>,
+    ) -> Resp {
+        const B: &str = "printpit-test-boundary";
+        let mut body = Vec::new();
+        for (k, v) in fields {
+            body.extend_from_slice(
+                format!("--{B}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n").as_bytes(),
+            );
+        }
+        if let Some((name, data)) = file {
+            body.extend_from_slice(
+                format!("--{B}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{name}\"\r\nContent-Type: application/octet-stream\r\n\r\n").as_bytes(),
+            );
+            body.extend_from_slice(data);
+            body.extend_from_slice(b"\r\n");
+        }
+        body.extend_from_slice(format!("--{B}--\r\n").as_bytes());
+        let mut req = Request::builder()
+            .method(Method::POST)
+            .uri(uri)
+            .header(header::CONTENT_TYPE, format!("multipart/form-data; boundary={B}"))
+            .header("hx-request", "true")
+            .header("x-csrf-token", csrf);
+        if !self.cookies.is_empty() {
+            let cookie = self
+                .cookies
+                .iter()
+                .map(|(k, v)| format!("{k}={v}"))
+                .collect::<Vec<_>>()
+                .join("; ");
+            req = req.header(header::COOKIE, cookie);
+        }
+        let res = self
+            .router
+            .clone()
+            .oneshot(req.body(Body::from(body)).unwrap())
+            .await
+            .unwrap();
+        Resp {
+            status: res.status(),
+            headers: res.headers().clone(),
+            body: String::from_utf8_lossy(&res.into_body().collect().await.unwrap().to_bytes()).into_owned(),
+        }
+    }
+
     /// Opens a streaming response (SSE) without reading it to the end.
     pub async fn open_stream(&mut self, uri: &str) -> SseStream {
         let mut req = Request::builder()

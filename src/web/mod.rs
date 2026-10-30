@@ -5,9 +5,11 @@ pub mod assets;
 mod auth;
 pub mod card;
 mod dashboard;
+mod files;
 pub mod layout;
 mod printers;
 pub mod security;
+mod select;
 mod tabs;
 pub mod widgets;
 
@@ -27,6 +29,10 @@ use crate::state::AppState;
 const BODY_LIMIT: usize = 64 * 1024;
 
 pub fn router(state: AppState) -> Router {
+    // Multipart framing on top of the file itself.
+    let upload_limit = usize::try_from(state.config.max_upload_bytes)
+        .unwrap_or(usize::MAX)
+        .saturating_add(1 << 20);
     // Everything here needs a session; non-GET requests also need the CSRF token.
     let protected = Router::new()
         .route("/", get(|| async { Redirect::to("/ui/dashboard") }))
@@ -39,7 +45,17 @@ pub fn router(state: AppState) -> Router {
         .route("/p/{id}/estop", post(dashboard::estop))
         .route("/p/{id}/camera/snapshot", get(dashboard::camera_snapshot))
         .route("/p/{id}/camera/stream", get(dashboard::camera_stream))
-        .route("/ui/files", get(tabs::files))
+        .route("/ui/files", get(files::tab))
+        .route("/p/{id}/files", get(files::list).delete(files::delete))
+        .route("/p/{id}/files/meta", get(files::meta))
+        .route("/p/{id}/files/thumb", get(files::thumb))
+        .route("/p/{id}/files/download", get(files::download))
+        .route("/p/{id}/files/mkdir", post(files::mkdir))
+        .route("/p/{id}/files/move", post(files::move_or_copy))
+        .route(
+            "/p/{id}/files/upload",
+            post(files::upload).layer(axum::extract::DefaultBodyLimit::max(upload_limit)),
+        )
         .route("/ui/logs", get(tabs::logs))
         .route("/ui/system", get(tabs::system))
         .route("/ui/printers", get(printers::list))

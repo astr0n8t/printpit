@@ -33,6 +33,8 @@ use crate::moonraker::{MoonrakerClient, MoonrakerError};
 use crate::state::AppState;
 use crate::web::card;
 use crate::web::layout::{HxRequest, Tab, page};
+use crate::web::select::enabled_printer;
+use crate::web::widgets;
 
 /// How often an open stream re-checks that its session is still valid.
 const SESSION_RECHECK: Duration = Duration::from_secs(60);
@@ -50,14 +52,14 @@ struct DashboardTemplate {
 
 #[derive(Template)]
 #[template(path = "partials/printer_test.html")]
-struct Flash {
+pub(crate) struct Flash {
     label: String,
     class: &'static str,
     detail: String,
 }
 
 impl Flash {
-    fn ok(detail: impl Into<String>) -> Self {
+    pub(crate) fn ok(detail: impl Into<String>) -> Self {
         Self {
             label: "OK".into(),
             class: "badge-ok",
@@ -65,7 +67,7 @@ impl Flash {
         }
     }
 
-    fn error(e: &MoonrakerError) -> Self {
+    pub(crate) fn error(e: &MoonrakerError) -> Self {
         Self {
             label: e.label().into(),
             class: e.class(),
@@ -202,14 +204,6 @@ pub async fn stream(State(state): State<AppState>, user: CurrentUser) -> Result<
     Ok(Sse::new(events).keep_alive(KeepAlive::default()).into_response())
 }
 
-async fn enabled_printer(state: &AppState, id: i64) -> Result<Printer, AppError> {
-    let p = printers::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
-    if !p.enabled {
-        return Err(AppError::BadRequest("That printer is disabled.".into()));
-    }
-    Ok(p)
-}
-
 /// Manual refresh: one HTTP snapshot, rendered as the live part plus the controls (out of band).
 pub async fn status(
     State(state): State<AppState>,
@@ -237,30 +231,6 @@ pub async fn status(
     Ok(Html(html).into_response())
 }
 
-fn human_size(bytes: u64) -> String {
-    const UNITS: [&str; 4] = ["B", "KB", "MB", "GB"];
-    let mut v = bytes as f64;
-    let mut unit = 0;
-    while v >= 1024.0 && unit < UNITS.len() - 1 {
-        v /= 1024.0;
-        unit += 1;
-    }
-    if unit == 0 {
-        format!("{bytes} B")
-    } else {
-        format!("{v:.1} {}", UNITS[unit])
-    }
-}
-
-fn age(modified: f64) -> String {
-    let secs = (crate::db::now() as f64 - modified).max(0.0) as i64;
-    match secs {
-        s if s < 3600 => format!("{}m ago", s / 60),
-        s if s < 86_400 => format!("{}h ago", s / 3600),
-        s => format!("{}d ago", s / 86_400),
-    }
-}
-
 /// The start-print picker: most recently modified G-code files, rendered into the modal.
 pub async fn start_picker(
     State(state): State<AppState>,
@@ -279,8 +249,8 @@ pub async fn start_picker(
                 .into_iter()
                 .take(PICKER_FILES)
                 .map(|f| PickerFile {
-                    size: human_size(f.size),
-                    age: age(f.modified),
+                    size: widgets::human_size(f.size),
+                    age: widgets::age(f.modified),
                     path: f.path,
                 })
                 .collect();
@@ -533,12 +503,5 @@ mod tests {
         assert!(!valid_filename("../x.gcode"));
         assert!(!valid_filename("a//b.gcode"));
         assert!(!valid_filename("a\nb"));
-    }
-
-    #[test]
-    fn sizes() {
-        assert_eq!(human_size(512), "512 B");
-        assert_eq!(human_size(1536), "1.5 KB");
-        assert_eq!(human_size(5 * 1024 * 1024), "5.0 MB");
     }
 }

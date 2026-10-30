@@ -40,6 +40,33 @@ pub fn duration(secs: f64) -> String {
     }
 }
 
+/// `512 B`, `1.5 KB`, `2.4 MB`…
+pub fn human_size(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut v = bytes as f64;
+    let mut unit = 0;
+    while v >= 1024.0 && unit < UNITS.len() - 1 {
+        v /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{v:.1} {}", UNITS[unit])
+    }
+}
+
+/// Coarse age of a unix timestamp: `just now`, `5m ago`, `3h ago`, `12d ago`.
+pub fn age(unix: f64) -> String {
+    let secs = (crate::db::now() as f64 - unix).max(0.0) as i64;
+    match secs {
+        s if s < 60 => "just now".into(),
+        s if s < 3600 => format!("{}m ago", s / 60),
+        s if s < 86_400 => format!("{}h ago", s / 3600),
+        s => format!("{}d ago", s / 86_400),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -59,6 +86,17 @@ mod tests {
         // Flat or jittery readings stay mid-height instead of swinging the full range.
         let flat = sparkline(&[215.0, 215.1, 214.9]);
         assert!(flat.chars().all(|c| "▃▄▅".contains(c)), "{flat}");
+    }
+
+    #[test]
+    fn sizes_and_ages() {
+        assert_eq!(human_size(512), "512 B");
+        assert_eq!(human_size(1536), "1.5 KB");
+        assert_eq!(human_size(5 * 1024 * 1024), "5.0 MB");
+        let now = crate::db::now() as f64;
+        assert_eq!(age(now), "just now");
+        assert_eq!(age(now - 7200.0), "2h ago");
+        assert_eq!(age(now - 3.0 * 86_400.0), "3d ago");
     }
 
     #[test]

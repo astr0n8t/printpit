@@ -307,3 +307,25 @@ code { font: inherit; color: var(--info); }
 #modal { width: min(90ch, calc(100vw - 4ch)); }
 .modal-title { margin-bottom: 0.6em; }
 .scroll-y { max-height: 60vh; overflow-y: auto; }
+
+/* ── Files ────────────────────────────────────────────────────────── */
+
+.tab-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3em 3ch; margin-bottom: 0.4em; }
+.printer-select { display: inline-flex; gap: 1ch; align-items: center; color: var(--dim); }
+.printer-select select { width: auto; }
+.files-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 36ch); gap: 0 2ch; align-items: start; }
+.crumbs { margin-bottom: 0.5em; }
+.files-tools { display: flex; flex-wrap: wrap; gap: 0.3em 2ch; align-items: center; margin-bottom: 0.5em; }
+.files-tools input { max-width: 30ch; }
+tr[hidden] { display: none; }
+.file-ops { margin-top: 0.8em; }
+.file-ops summary { cursor: pointer; color: var(--info); }
+.file-ops form { margin-top: 0.6em; }
+.meta-name { overflow-wrap: anywhere; color: var(--accent); }
+.thumb { display: block; max-width: 100%; margin: 0.4em 0; border: 1px solid var(--border); background: var(--bg-alt); }
+.move { margin-top: 0.8em; }
+.actions form { display: inline; margin: 0; }
+
+@media (max-width: 900px) {
+  .files-layout { grid-template-columns: 1fr; }
+}
