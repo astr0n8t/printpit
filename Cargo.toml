@@ -39,9 +39,17 @@ tempfile = "3.27.0"
 tower = { version = "0.5.3", features = ["util"] }
 
 [profile.release]
-lto = "thin"
+lto = true
 codegen-units = 1
 strip = true
+opt-level = "s"
+
+# Password hashing is the one CPU-bound hot path; keep it fully optimised.
+[profile.release.package.argon2]
+opt-level = 3
+
+[profile.release.package.blake2]
+opt-level = 3
 
 # Argon2 is unbearably slow unoptimised; keep debug builds and tests snappy.
 [profile.dev.package.argon2]
