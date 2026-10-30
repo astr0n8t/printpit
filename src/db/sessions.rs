@@ -109,3 +109,12 @@ pub async fn delete_expired(db: &Db, idle: Duration) -> Result<u64, sqlx::Error>
         .await?;
     Ok(res.rows_affected())
 }
+
+/// Revokes every session of a user (password reset by an admin, disable).
+pub async fn delete_all_for_user(db: &Db, user_id: i64) -> Result<u64, sqlx::Error> {
+    let res = sqlx::query("DELETE FROM sessions WHERE user_id = ?")
+        .bind(user_id)
+        .execute(db)
+        .await?;
+    Ok(res.rows_affected())
+}

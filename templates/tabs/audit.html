@@ -1,0 +1,46 @@
+<section class="panel">
+  <h2 class="panel-title">audit log</h2>
+  <form class="audit-filters" hx-get="/ui/audit" hx-target="#main" hx-push-url="true" hx-trigger="change">
+    <label class="inline">action
+      <select name="action">
+        <option value="">any</option>
+{%- for a in actions %}
+        <option value="{{ a }}"{% if self.action_selected(a) %} selected{% endif %}>{{ a }}</option>
+{%- endfor %}
+      </select>
+    </label>
+    <label class="inline">user
+      <select name="user">
+        <option value="">any</option>
+{%- for (id, name) in users %}
+        <option value="{{ id }}"{% if self.user_selected(id) %} selected{% endif %}>{{ name }}</option>
+{%- endfor %}
+      </select>
+    </label>
+    <label class="inline">printer
+      <select name="printer">
+        <option value="">any</option>
+{%- for (id, name) in printers %}
+        <option value="{{ id }}"{% if self.printer_selected(id) %} selected{% endif %}>{{ name }}</option>
+{%- endfor %}
+      </select>
+    </label>
+  </form>
+{%- if entries.is_empty() %}
+  <p class="dim">Nothing recorded{% if !action.is_empty() || user_id.is_some() || printer_id.is_some() %} for these filters{% endif %}.</p>
+{%- else %}
+  <div class="scroll-x">
+  <table>
+    <thead><tr><th>time (UTC)</th><th>user</th><th>action</th><th>printer</th><th>detail</th><th>ip</th></tr></thead>
+    <tbody>
+{%- for e in entries %}
+      <tr><td class="dim">{{ e.time }}</td><td>{{ e.user }}</td><td>{{ e.action }}</td><td>{{ e.printer }}</td><td class="wrap dim">{{ e.detail }}</td><td class="dim">{{ e.ip }}</td></tr>
+{%- endfor %}
+    </tbody>
+  </table>
+  </div>
+{%- endif %}
+{%- if let Some(url) = older %}
+  <div class="actions"><a class="btn" href="{{ url }}" hx-get="{{ url }}" hx-target="#main" hx-push-url="true">older →</a></div>
+{%- endif %}
+</section>

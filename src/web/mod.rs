@@ -2,6 +2,7 @@
 
 mod account;
 pub mod assets;
+mod audit;
 mod auth;
 pub mod card;
 mod dashboard;
@@ -12,6 +13,7 @@ mod printers;
 pub mod security;
 mod select;
 mod system;
+mod users;
 pub mod widgets;
 
 use axum::Router;
@@ -74,6 +76,13 @@ pub fn router(state: AppState) -> Router {
         .route("/printers/{id}/toggle", post(printers::toggle))
         .route("/printers/{id}/move/{dir}", post(printers::reorder))
         .route("/printers/{id}/test", post(printers::test))
+        .route("/ui/users", get(users::list))
+        .route("/users", post(users::create))
+        .route("/users/{id}", delete(users::delete))
+        .route("/users/{id}/role", post(users::set_role))
+        .route("/users/{id}/toggle", post(users::toggle))
+        .route("/users/{id}/password", post(users::reset_password))
+        .route("/ui/audit", get(audit::list))
         .route("/ui/account", get(account::show))
         .route("/account/password", post(account::change_password))
         .route("/logout", post(auth::logout))

@@ -34,6 +34,8 @@ const PROTECTED_GET: &[&str] = &[
     "/p/1/logs/download?name=klippy.log",
     "/p/1/system/info",
     "/p/1/system/stats",
+    "/ui/users",
+    "/ui/audit",
 ];
 const PROTECTED_POST: &[&str] = &[
     "/logout",
@@ -49,8 +51,12 @@ const PROTECTED_POST: &[&str] = &[
     "/p/1/files/mkdir",
     "/p/1/files/move",
     "/p/1/files/upload",
+    "/users",
+    "/users/2/role",
+    "/users/2/toggle",
+    "/users/2/password",
 ];
-const PROTECTED_DELETE: &[&str] = &["/printers/1", "/p/1/files?path=a.gcode"];
+const PROTECTED_DELETE: &[&str] = &["/printers/1", "/p/1/files?path=a.gcode", "/users/2"];
 
 // ── First-run setup ──────────────────────────────────────────────────
 

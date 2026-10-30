@@ -33,16 +33,20 @@ pub enum Tab {
     Logs,
     System,
     Printers,
+    Users,
+    Audit,
     Account,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 6] = [
+    pub const ALL: [Tab; 8] = [
         Tab::Dashboard,
         Tab::Files,
         Tab::Logs,
         Tab::System,
         Tab::Printers,
+        Tab::Users,
+        Tab::Audit,
         Tab::Account,
     ];
 
@@ -53,6 +57,8 @@ impl Tab {
             Tab::Logs => "/ui/logs",
             Tab::System => "/ui/system",
             Tab::Printers => "/ui/printers",
+            Tab::Users => "/ui/users",
+            Tab::Audit => "/ui/audit",
             Tab::Account => "/ui/account",
         }
     }
@@ -64,6 +70,8 @@ impl Tab {
             Tab::Logs => "Logs",
             Tab::System => "System",
             Tab::Printers => "Printers",
+            Tab::Users => "Users",
+            Tab::Audit => "Audit",
             Tab::Account => "Account",
         }
     }
@@ -75,6 +83,8 @@ impl Tab {
             Tab::Logs => "logs",
             Tab::System => "system",
             Tab::Printers => "printers",
+            Tab::Users => "users",
+            Tab::Audit => "audit",
             Tab::Account => "account",
         }
     }
@@ -86,6 +96,8 @@ impl Tab {
             Tab::Logs => "3",
             Tab::System => "4",
             Tab::Printers => "p",
+            Tab::Users => "u",
+            Tab::Audit => "l",
             Tab::Account => "a",
         }
     }
@@ -93,7 +105,7 @@ impl Tab {
     /// Lowest role that sees this tab in the strip.
     pub fn min_role(self) -> Role {
         match self {
-            Tab::Printers => Role::Admin,
+            Tab::Printers | Tab::Users | Tab::Audit => Role::Admin,
             _ => Role::Viewer,
         }
     }

@@ -108,3 +108,50 @@ pub async fn set_disabled(db: &Db, id: i64, disabled: bool) -> Result<(), sqlx::
         .await?;
     Ok(())
 }
+
+/// A user row for the admin list, with their live session count.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct UserSummary {
+    pub id: i64,
+    pub username: String,
+    pub role: Role,
+    pub disabled: bool,
+    pub created_at: i64,
+    pub sessions: i64,
+}
+
+pub async fn list(db: &Db) -> Result<Vec<UserSummary>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT u.id, u.username, u.role, u.disabled, u.created_at,
+                (SELECT COUNT(*) FROM sessions s WHERE s.user_id = u.id) AS sessions
+         FROM users u ORDER BY u.username COLLATE NOCASE",
+    )
+    .fetch_all(db)
+    .await
+}
+
+/// Enabled admins other than `except`, to stop the last admin locking everyone out.
+pub async fn other_active_admins(db: &Db, except: i64) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE role = 'admin' AND disabled = 0 AND id != ?")
+        .bind(except)
+        .fetch_one(db)
+        .await
+}
+
+pub async fn set_role(db: &Db, id: i64, role: Role) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE users SET role = ?, updated_at = ? WHERE id = ?")
+        .bind(role)
+        .bind(now())
+        .bind(id)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+pub async fn delete(db: &Db, id: i64) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(id)
+        .execute(db)
+        .await?;
+    Ok(())
+}

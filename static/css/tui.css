@@ -367,3 +367,13 @@ pre.log > .dim { color: var(--dim); }
 .meter-value { overflow: hidden; text-overflow: ellipsis; }
 .cores { margin: 0.2em 0 0.4em; }
 .cores summary { cursor: pointer; }
+
+/* ── Users and audit ──────────────────────────────────────────────── */
+
+.inline-form { display: inline-block; }
+.inline-form summary { cursor: pointer; color: var(--info); }
+.inline-form summary::marker { content: ""; }
+.inline-form form { display: flex; flex-wrap: wrap; gap: 0.3em 1ch; margin-top: 0.3em; }
+.inline-form input { max-width: 20ch; }
+.audit-filters { display: flex; flex-wrap: wrap; gap: 0.3em 3ch; margin-bottom: 0.6em; }
+.add-user { max-width: 60ch; }
