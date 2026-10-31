@@ -401,3 +401,13 @@ kbd { font: inherit; color: var(--accent); }
 kbd::before { content: "["; color: var(--dim); }
 kbd::after { content: "]"; color: var(--dim); }
 .keys td:first-child { padding-right: 3ch; }
+
+/* ── Temperatures ─────────────────────────────────────────────────── */
+
+.temp-forms { display: flex; gap: 1ch; flex-wrap: wrap; }
+.temp-forms form { display: flex; gap: 1ch; }
+.temp-set input[type="number"] { width: 8ch; }
+.preset-row { display: flex; flex-wrap: wrap; gap: 0.4em 1ch; align-items: center; margin: 0.4em 0; }
+.preset-row > input[name="name"] { width: 18ch; }
+.preset-row label { display: inline-flex; gap: 1ch; align-items: center; }
+.preset-row input[type="number"] { width: 8ch; }

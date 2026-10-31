@@ -9,10 +9,12 @@ mod dashboard;
 pub(crate) mod files;
 pub mod layout;
 mod logs;
+mod presets;
 mod printers;
 pub mod security;
 mod select;
 mod system;
+mod temps;
 mod users;
 pub mod widgets;
 
@@ -46,6 +48,10 @@ pub fn router(state: AppState) -> Router {
         .route("/p/{id}/start", get(dashboard::start_picker))
         .route("/p/{id}/print/{action}", post(dashboard::print_action))
         .route("/p/{id}/estop", post(dashboard::estop))
+        .route("/p/{id}/temps", get(temps::modal))
+        .route("/p/{id}/temp", post(temps::set_target))
+        .route("/p/{id}/preset/{preset_id}", post(temps::apply_preset))
+        .route("/p/{id}/cooldown", post(temps::cooldown))
         .route("/p/{id}/camera/tile", get(dashboard::camera_tile))
         .route("/p/{id}/camera/snapshot", get(dashboard::camera_snapshot))
         .route("/p/{id}/camera/stream", get(dashboard::camera_stream))
@@ -77,6 +83,8 @@ pub fn router(state: AppState) -> Router {
         .route("/printers/{id}/toggle", post(printers::toggle))
         .route("/printers/{id}/move/{dir}", post(printers::reorder))
         .route("/printers/{id}/test", post(printers::test))
+        .route("/presets", post(presets::create))
+        .route("/presets/{id}", post(presets::update).delete(presets::delete))
         .route("/ui/users", get(users::list))
         .route("/users", post(users::create))
         .route("/users/{id}", delete(users::delete))

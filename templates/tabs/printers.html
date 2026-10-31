@@ -35,3 +35,27 @@
   </div>
   <p class="dim">Printer addresses must be inside PRINTPIT_PRINTER_CIDRS: {{ cidrs }}</p>
 </section>
+<section class="panel" id="presets">
+  <h2 class="panel-title">temperature presets</h2>
+  <p class="dim">Operators apply these from a printer card's <code>temps</code> dialog. Leave a temperature blank to leave that heater alone.</p>
+{%- if let Some(e) = preset_error %}
+  <p class="err" role="alert">! {{ e }}</p>
+{%- endif %}
+{%- for p in presets %}
+  <form class="preset-row" method="post" action="/presets/{{ p.id }}" hx-post="/presets/{{ p.id }}" hx-target="#main">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <input name="name" value="{{ p.name }}" maxlength="32" aria-label="preset name" required>
+    <label>hotend <input name="extruder" type="number" min="0" max="500" step="any" value="{{ p.extruder }}"></label>
+    <label>bed <input name="bed" type="number" min="0" max="500" step="any" value="{{ p.bed }}"></label>
+    <button>save</button>
+    <button type="button" class="danger" hx-delete="/presets/{{ p.id }}" hx-target="#main" hx-confirm="Delete preset {{ p.name }}?">delete</button>
+  </form>
+{%- endfor %}
+  <form class="preset-row" method="post" action="/presets" hx-post="/presets" hx-target="#main">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <input name="name" maxlength="32" placeholder="PLA" aria-label="new preset name" required>
+    <label>hotend <input name="extruder" type="number" min="0" max="500" step="any" placeholder="215"></label>
+    <label>bed <input name="bed" type="number" min="0" max="500" step="any" placeholder="60"></label>
+    <button class="primary">add preset</button>
+  </form>
+</section>

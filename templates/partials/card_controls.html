@@ -12,6 +12,9 @@
 {%- if cancel %}
   <button type="button" class="danger" hx-post="/p/{{ id }}/print/cancel" hx-target="#msg-{{ id }}" hx-confirm="Cancel the print on {{ name }}?">cancel</button>
 {%- endif %}
+{%- if temps %}
+  <button type="button" hx-get="/p/{{ id }}/temps" hx-target="#modal-body">temps</button>
+{%- endif %}
 {%- if estop %}
   <button type="button" class="danger estop" hx-post="/p/{{ id }}/estop" hx-target="#msg-{{ id }}" hx-confirm="EMERGENCY STOP {{ name }}? Klipper halts immediately and needs a firmware restart.">E-STOP</button>
 {%- endif %}

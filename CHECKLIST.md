@@ -136,13 +136,14 @@ New mock endpoints go in both `tests/common/moonraker.rs` and `examples/mock_moo
 - [x] Tests: tile HTML has the classes; dashboard page load still makes zero printer calls; mock webcam with flip/rotation
 
 ### 8.3 Temperature targets and presets
-- [ ] Migration: `temp_presets(id, name UNIQUE NOCASE, extruder REAL, bed REAL, sort_order, created_at, updated_at)`
-- [ ] `db::presets`: list/create/update/delete/reorder; admin UI section on the Printers page (`/ui/presets…` or inline panel), audit `preset_create/update/delete`
-- [ ] `MoonrakerClient::gcode_script()` → `POST /printer/gcode/script?script=…`
-- [ ] Heater set from Klipper objects: `extruder*`, `heater_bed`, `heater_generic X` → `SET_HEATER_TEMPERATURE HEATER=… TARGET=…`; `temperature_fan X` → `SET_TEMPERATURE_FAN_TARGET`. Validate the heater name against `printer.objects.list` and a strict charset (no G-code injection: `[A-Za-z0-9_ ]`, no newlines); target finite, 0–500 (Klipper enforces `max_temp`)
-- [ ] Card control `temps` (operator+, ready printers) opens a modal `GET /p/{id}/temps` (like the start picker; inputs aren't replaced by live updates): per-heater current/target, set-target form, `off`; preset buttons; `cooldown` (all heaters 0)
-- [ ] `POST /p/{id}/temp` (heater, target), `POST /p/{id}/preset/{preset_id}`, `POST /p/{id}/cooldown`; audit `temp_set`, `temp_preset`, `temp_cooldown`
-- [ ] Mock: `/printer/gcode/script` records scripts; tests for validation (bad heater, injection attempt, out of range), role gating, audit, CSRF
+- [x] Migration `0004`: `temp_presets(id, name UNIQUE NOCASE, extruder REAL NULL, bed REAL NULL, …)`; NULL = leave that heater alone, at least one set. No manual reordering: listed coolest hotend first (PLA → PETG → ABS), bed-only last
+- [x] `db::presets`: list/get/create/update/delete; "temperature presets" panel on the Printers page (inline edit rows + add row, plain-form fallback), audit `preset_create/update/delete`
+- [x] G-code goes through the existing `run_action` (now `pub(crate)`) to `POST /printer/gcode/script?script=…`; no new client method needed
+- [x] Heater set from Klipper objects: `extruder*`, `heater_bed`, `heater_generic X` → `SET_HEATER_TEMPERATURE HEATER=… TARGET=…`; `temperature_fan X` → `SET_TEMPERATURE_FAN_TARGET`. Validate the heater name against `printer.objects.list` and a strict charset (no G-code injection: `[A-Za-z0-9_ ]`, no newlines); target finite, 0–500 (Klipper enforces `max_temp`)
+- [x] Card control `temps` (operator+, ready printers) opens a modal `GET /p/{id}/temps` (like the start picker; inputs aren't replaced by live updates): per-heater current/target, set-target form, `off`; preset buttons; `cooldown` (`TURN_OFF_HEATERS`). Heater status comes from `hub.peek()` when the dashboard already has a live connection, else one HTTP snapshot; a preset's hotend temperature goes to `extruder` only
+- [x] `POST /p/{id}/temp` (heater, target), `POST /p/{id}/preset/{preset_id}`, `POST /p/{id}/cooldown`; audit `temp_set`, `temp_preset`, `temp_cooldown`
+- [x] Checked in Chromium at 1280 px and 390 px: modal fits, set → flash + modal closes, no console errors
+- [x] Mock: `/printer/gcode/script` records scripts (and refuses targets > 300 like Klipper's `max_temp`), mock gained `heater_generic chamber`; `tests/temps.rs` covers validation (bad heater, injection attempt, out of range), role gating, audit, CSRF
 
 ### 8.4 Job history tab
 - [ ] `Tab::History` (`[5]History`, key `5`), `/ui/history` renders the printer selector instantly (no printer calls)

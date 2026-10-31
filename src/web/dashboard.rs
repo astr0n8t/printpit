@@ -312,15 +312,17 @@ fn valid_filename(name: &str) -> bool {
 }
 
 /// A printer action: the Moonraker endpoint, its audit record and the success message.
-struct Action<'a> {
-    path: &'static str,
-    query: Vec<(&'static str, &'a str)>,
-    audit: &'static str,
-    detail: Option<String>,
-    done: &'static str,
+pub(crate) struct Action<'a> {
+    pub path: &'static str,
+    pub query: Vec<(&'static str, &'a str)>,
+    pub audit: &'static str,
+    pub detail: Option<String>,
+    pub done: String,
 }
 
-async fn run_action(
+/// Sends the action, audits it on success, and answers with a flash for `#msg-{id}`. A
+/// success also closes the modal it came from.
+pub(crate) async fn run_action(
     state: &AppState,
     ip: ClientIp,
     user: &CurrentUser,
@@ -389,7 +391,7 @@ pub async fn print_action(
         query,
         audit,
         detail,
-        done,
+        done: done.into(),
     };
     run_action(&state, ip, &user, &p, action).await
 }
@@ -406,7 +408,7 @@ pub async fn estop(
         query: Vec::new(),
         audit: "emergency_stop",
         detail: None,
-        done: "Emergency stop sent. Klipper needs a FIRMWARE_RESTART.",
+        done: "Emergency stop sent. Klipper needs a FIRMWARE_RESTART.".into(),
     };
     run_action(&state, ip, &user, &p, action).await
 }

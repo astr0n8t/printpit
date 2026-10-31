@@ -12,14 +12,15 @@ use axum::response::{Html, IntoResponse, Redirect, Response};
 use serde::Deserialize;
 
 use crate::auth::{Admin, ClientIp, RequireRole};
-use crate::db::audit;
 use crate::db::printers::{self, API_KEY_CONTEXT, KeyChange, NewPrinter, Printer};
+use crate::db::{audit, presets};
 use crate::error::AppError;
 use crate::moonraker::MoonrakerError;
 use crate::moonraker::net::{base_string, parse_base_url};
 use crate::moonraker::webcam::Transform;
 use crate::state::AppState;
 use crate::web::layout::{HxRequest, Tab, page};
+use crate::web::temps::fmt_temp;
 
 const MAX_NAME: usize = 64;
 const MAX_KEY: usize = 256;
@@ -33,10 +34,20 @@ struct Row {
     enabled: bool,
 }
 
+struct PresetRow {
+    id: i64,
+    name: String,
+    extruder: String,
+    bed: String,
+}
+
 #[derive(Template)]
 #[template(path = "tabs/printers.html")]
 struct ListTemplate {
     rows: Vec<Row>,
+    presets: Vec<PresetRow>,
+    preset_error: Option<String>,
+    csrf: String,
     notice: Option<String>,
     cidrs: String,
 }
@@ -113,11 +124,23 @@ async fn list_page(
     hx: HxRequest,
     user: &RequireRole<Admin>,
     notice: Option<String>,
+    preset_error: Option<String>,
 ) -> Result<Response, AppError> {
     let rows = printers::list(&state.db)
         .await?
         .into_iter()
         .map(|p| row(state, p))
+        .collect();
+    let temp = |t: Option<f64>| t.map(fmt_temp).unwrap_or_default();
+    let presets = presets::list(&state.db)
+        .await?
+        .into_iter()
+        .map(|p| PresetRow {
+            id: p.id,
+            name: p.name,
+            extruder: temp(p.extruder),
+            bed: temp(p.bed),
+        })
         .collect();
     let cidrs = state
         .config
@@ -126,12 +149,31 @@ async fn list_page(
         .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join(", ");
-    let html = ListTemplate { rows, notice, cidrs }.render()?;
+    let html = ListTemplate {
+        rows,
+        presets,
+        preset_error,
+        csrf: user.csrf_token.clone(),
+        notice,
+        cidrs,
+    }
+    .render()?;
     page(hx, user, Tab::Printers, html)
 }
 
+/// A rejected preset form: the page again, with the error in the presets panel.
+pub(crate) async fn preset_error(
+    state: &AppState,
+    hx: HxRequest,
+    user: &RequireRole<Admin>,
+    error: String,
+) -> Result<Response, AppError> {
+    let res = list_page(state, hx, user, None, Some(error)).await?;
+    Ok((StatusCode::UNPROCESSABLE_ENTITY, res).into_response())
+}
+
 /// After a successful change: htmx gets the list (and the URL bar fixed); browsers a redirect.
-async fn after_change(
+pub(crate) async fn after_change(
     state: &AppState,
     hx: HxRequest,
     user: &RequireRole<Admin>,
@@ -140,7 +182,7 @@ async fn after_change(
     if !hx.0 {
         return Ok(Redirect::to("/ui/printers").into_response());
     }
-    let mut res = list_page(state, hx, user, Some(notice)).await?;
+    let mut res = list_page(state, hx, user, Some(notice), None).await?;
     res.headers_mut().insert(
         "hx-push-url",
         axum::http::HeaderValue::from_static("/ui/printers"),
@@ -153,7 +195,7 @@ pub async fn list(
     hx: HxRequest,
     user: RequireRole<Admin>,
 ) -> Result<Response, AppError> {
-    list_page(&state, hx, &user, None).await
+    list_page(&state, hx, &user, None, None).await
 }
 
 pub async fn new_form(hx: HxRequest, user: RequireRole<Admin>) -> Result<Response, AppError> {

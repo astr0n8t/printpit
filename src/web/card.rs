@@ -35,11 +35,13 @@ pub struct Controls {
     pub resume: bool,
     pub cancel: bool,
     pub estop: bool,
+    /// Heater targets and presets.
+    pub temps: bool,
 }
 
 impl Controls {
     pub fn any(&self) -> bool {
-        self.start || self.pause || self.resume || self.cancel || self.estop
+        self.start || self.pause || self.resume || self.cancel || self.estop || self.temps
     }
 }
 
@@ -77,7 +79,7 @@ fn text<'a>(obj: Option<&'a Value>, field: &str) -> Option<&'a str> {
 }
 
 /// Display name for a Klipper object: `temperature_sensor chamber` → `chamber`.
-fn display_name(object: &str) -> String {
+pub(crate) fn display_name(object: &str) -> String {
     match object.split_once(' ') {
         Some((_, name)) => name.to_string(),
         None => match object {
@@ -89,7 +91,7 @@ fn display_name(object: &str) -> String {
 }
 
 /// Sort key so hotends come first, then the bed, then everything else by name.
-fn sensor_rank(object: &str) -> (u8, &str) {
+pub(crate) fn sensor_rank(object: &str) -> (u8, &str) {
     let kind = object.split(' ').next().unwrap_or(object);
     let rank = match kind {
         k if k.starts_with("extruder") => 0,
@@ -153,6 +155,7 @@ pub fn build(id: i64, name: &str, snap: &Snapshot, can_control: bool, manual: bo
             pause: can && print_state == "printing",
             resume: can && print_state == "paused",
             cancel: can && active,
+            temps: can,
             // E-stop stays available whenever Klipper is reachable, even if not "ready".
             estop: can_control && matches!(snap.link, Link::Live | Link::Polling | Link::NotReady { .. }),
         },
@@ -295,7 +298,7 @@ mod tests {
             ]
         );
         let c = card.controls;
-        assert!(c.pause && c.cancel && c.estop && !c.start && !c.resume);
+        assert!(c.pause && c.cancel && c.estop && c.temps && !c.start && !c.resume);
     }
 
     #[test]
@@ -381,6 +384,6 @@ mod tests {
         let nr = build(1, "P", &snap(link, json!({})), true, false);
         assert_eq!(nr.live.label, "SHUTDOWN");
         assert_eq!(nr.live.message.as_deref(), Some("MCU shutdown"));
-        assert!(nr.controls.estop && !nr.controls.start);
+        assert!(nr.controls.estop && !nr.controls.start && !nr.controls.temps);
     }
 }

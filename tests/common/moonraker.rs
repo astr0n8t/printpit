@@ -68,6 +68,7 @@ struct Inner {
     streams_open: AtomicUsize,
     log_bytes_sent: AtomicUsize,
     fs: Mutex<MockFs>,
+    scripts: Mutex<Vec<String>>,
 }
 
 /// In-memory `gcodes` root: file path → (bytes, modified), plus directories.
@@ -148,6 +149,7 @@ impl MockMoonraker {
             streams_open: AtomicUsize::new(0),
             log_bytes_sent: AtomicUsize::new(0),
             fs: Mutex::new(MockFs::default()),
+            scripts: Mutex::new(Vec::new()),
         });
         let app = Router::new()
             .route("/server/info", get(server_info))
@@ -174,6 +176,7 @@ impl MockMoonraker {
             .route("/machine/update/status", get(update_status))
             .route("/printer/print/{action}", post(print_action))
             .route("/printer/emergency_stop", post(estop))
+            .route("/printer/gcode/script", post(gcode_script))
             .route("/webcam/", get(webcam))
             .route("/websocket", get(websocket))
             .layer(axum::middleware::from_fn_with_state(
@@ -231,6 +234,11 @@ impl MockMoonraker {
 
     pub fn has_dir(&self, path: &str) -> bool {
         self.inner.fs.lock().unwrap().dirs.contains(path)
+    }
+
+    /// G-code scripts received on `/printer/gcode/script`, in order.
+    pub fn scripts(&self) -> Vec<String> {
+        self.inner.scripts.lock().unwrap().clone()
     }
 
     pub fn print_state(&self) -> String {
@@ -291,6 +299,7 @@ const OBJECTS: &[&str] = &[
     "virtual_sdcard",
     "extruder",
     "heater_bed",
+    "heater_generic chamber",
     "fan",
     "toolhead",
     "gcode_macro PRINT_START",
@@ -304,6 +313,7 @@ fn status_json(mock: &Mock, temperature: f64) -> Value {
         "virtual_sdcard": {"progress": 0.25, "is_active": true, "file_position": 1000},
         "extruder": {"temperature": temperature, "target": 215.0, "power": 0.42},
         "heater_bed": {"temperature": 60.0, "target": 60.0, "power": 0.18},
+        "heater_generic chamber": {"temperature": 38.0, "target": 0.0, "power": 0.0},
         "fan": {"speed": 0.5},
     })
 }
@@ -696,6 +706,22 @@ async fn webcam(
         }
         _ => StatusCode::NOT_FOUND.into_response(),
     }
+}
+
+/// Records the script; like Klipper, refuses targets above the heater's `max_temp` (300 here).
+async fn gcode_script(State(mock): State<Mock>, Query(q): Query<BTreeMap<String, String>>) -> Response {
+    let script = q.get("script").cloned().unwrap_or_default();
+    for line in script.lines() {
+        if let Some(t) = line.split("TARGET=").nth(1).and_then(|t| t.parse::<f64>().ok())
+            && t > 300.0
+        {
+            let msg = format!("Requested temperature ({t:.1}) out of range (0.0:300.0)");
+            let body = json!({"error": {"code": 400, "message": msg}});
+            return (StatusCode::BAD_REQUEST, axum::Json(body)).into_response();
+        }
+    }
+    mock.scripts.lock().unwrap().push(script);
+    ok(json!("ok"))
 }
 
 async fn websocket(State(mock): State<Mock>, ws: WebSocketUpgrade) -> Response {

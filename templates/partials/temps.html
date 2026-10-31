@@ -1,0 +1,44 @@
+<h2 class="modal-title">temperatures · {{ name }}</h2>
+{%- if let Some(e) = error %}
+<p class="err" role="alert">! {{ e }}</p>
+{%- else %}
+{%- if heaters.is_empty() %}
+<p class="dim">No heaters found.</p>
+{%- else %}
+<table class="temps">
+  <thead><tr><th>heater</th><th class="num">now</th><th class="num">target</th><th>set target °C</th></tr></thead>
+  <tbody>
+{%- for h in heaters %}
+    <tr>
+      <td>{{ h.label }}</td><td class="num">{{ h.temp }}</td><td class="num">{{ h.target }}</td>
+      <td class="temp-forms">
+        <form class="temp-set" hx-post="/p/{{ id }}/temp" hx-target="#msg-{{ id }}">
+          <input type="hidden" name="heater" value="{{ h.object }}">
+          <input name="target" type="number" min="0" max="500" step="any" inputmode="decimal" value="{{ h.target }}" aria-label="target for {{ h.label }}" required>
+          <button class="primary">set</button>
+        </form>
+        <form hx-post="/p/{{ id }}/temp" hx-target="#msg-{{ id }}">
+          <input type="hidden" name="heater" value="{{ h.object }}"><input type="hidden" name="target" value="0">
+          <button>off</button>
+        </form>
+      </td>
+    </tr>
+{%- endfor %}
+  </tbody>
+</table>
+{%- endif %}
+<h3 class="dim">presets</h3>
+{%- if presets.is_empty() %}
+<p class="dim">No presets yet.{% if is_admin %} Add them on the Printers page.{% endif %}</p>
+{%- else %}
+<div class="actions">
+{%- for pr in presets %}
+  <button type="button" hx-post="/p/{{ id }}/preset/{{ pr.id }}" hx-target="#msg-{{ id }}">{{ pr.name }} <span class="dim">{{ pr.summary }}</span></button>
+{%- endfor %}
+</div>
+{%- endif %}
+<div class="actions">
+  <button type="button" class="danger" hx-post="/p/{{ id }}/cooldown" hx-target="#msg-{{ id }}">cooldown · all heaters off</button>
+</div>
+{%- endif %}
+<form method="dialog" class="actions"><button>close [esc]</button></form>

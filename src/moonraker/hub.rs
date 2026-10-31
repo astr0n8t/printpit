@@ -124,6 +124,12 @@ impl PrinterHub {
         entry.task = self.spawn(printer_id, entry.tx.clone());
     }
 
+    /// The latest snapshot of a printer that already has a connection, without subscribing
+    /// (so it never opens one).
+    pub fn peek(&self, printer_id: i64) -> Option<Arc<Snapshot>> {
+        self.lock().get(&printer_id).map(|e| e.tx.borrow().clone())
+    }
+
     /// Printers that currently have a connection task (for tests and diagnostics).
     pub fn active(&self) -> Vec<i64> {
         let mut ids: Vec<i64> = self.lock().keys().copied().collect();
