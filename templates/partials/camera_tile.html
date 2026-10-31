@@ -1,0 +1,14 @@
+{%- if let Some(classes) = image %}
+<div class="cam-frame">
+  <img class="cam-img{% if !classes.is_empty() %} {{ classes }}{% endif %}"{% if snapshot %} src="/p/{{ id }}/camera/snapshot" data-snapshot="/p/{{ id }}/camera/snapshot"{% endif %} alt="camera: {{ name }}">
+{%- if !snapshot %}
+  <p class="cam-idle dim">[ no snapshots · press live ]</p>
+{%- endif %}
+</div>
+<p class="cam-none dim">[ camera unavailable ]</p>
+{%- if stream %}
+<div class="cam-actions"><button type="button" data-live="/p/{{ id }}/camera/stream">live</button></div>
+{%- endif %}
+{%- else %}
+<p class="cam-msg dim">[ {{ message }} ]</p>
+{%- endif %}

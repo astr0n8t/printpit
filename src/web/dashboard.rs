@@ -29,6 +29,7 @@ use crate::db::{audit, prefs};
 use crate::error::AppError;
 use crate::moonraker::hub::poll_once;
 use crate::moonraker::status::{Link, Snapshot, current_file};
+use crate::moonraker::webcam::CameraSettings;
 use crate::moonraker::{MoonrakerClient, MoonrakerError};
 use crate::state::AppState;
 use crate::web::card;
@@ -421,6 +422,60 @@ async fn camera_client(state: &AppState, id: i64) -> Result<(MoonrakerClient, Pr
     }
 }
 
+fn camera_settings(p: &Printer) -> CameraSettings<'_> {
+    CameraSettings {
+        url: p.webcam_override.as_deref(),
+        transform: p.webcam_transform.as_deref(),
+    }
+}
+
+#[derive(Template)]
+#[template(path = "partials/camera_tile.html")]
+struct CameraTile {
+    id: i64,
+    name: String,
+    /// `None`: nothing to show, with this message.
+    image: Option<String>,
+    snapshot: bool,
+    stream: bool,
+    message: &'static str,
+}
+
+/// The camera tile, loaded when the card scrolls into view. It knows the camera's orientation
+/// without a page-load printer call; the snapshot it embeds reuses the same cached lookup.
+pub async fn camera_tile(
+    State(state): State<AppState>,
+    _user: CurrentUser,
+    Path(id): Path<i64>,
+) -> Result<Response, AppError> {
+    let p = enabled_printer(&state, id).await?;
+    let cam = match state.printer_client(&p) {
+        Ok(client) => state.webcams.get(id, &client, camera_settings(&p)).await,
+        Err(e) => Err(e),
+    };
+    let mut tile = CameraTile {
+        id,
+        name: p.name.clone(),
+        image: None,
+        snapshot: false,
+        stream: false,
+        message: "no camera",
+    };
+    match cam {
+        Ok(Some(cam)) if cam.snapshot.is_some() || cam.stream.is_some() => {
+            tile.image = Some(cam.transform.classes());
+            tile.snapshot = cam.snapshot.is_some();
+            tile.stream = cam.stream.is_some();
+        }
+        Ok(_) => {}
+        Err(e) => {
+            tracing::debug!(error = %e, "camera lookup failed");
+            tile.message = "camera unavailable";
+        }
+    }
+    Ok(Html(tile.render()?).into_response())
+}
+
 fn camera_error(e: &MoonrakerError) -> Response {
     tracing::debug!(error = %e, "camera request failed");
     StatusCode::BAD_GATEWAY.into_response()
@@ -436,7 +491,7 @@ pub async fn camera_snapshot(
         Ok(v) => v,
         Err(res) => return *res,
     };
-    let cam = match state.webcams.get(id, &client, p.webcam_override.as_deref()).await {
+    let cam = match state.webcams.get(id, &client, camera_settings(&p)).await {
         Ok(cam) => cam,
         Err(e) => return camera_error(&e),
     };
@@ -492,7 +547,7 @@ pub async fn camera_stream(
         Ok(v) => v,
         Err(res) => return *res,
     };
-    let cam = match state.webcams.get(id, &client, p.webcam_override.as_deref()).await {
+    let cam = match state.webcams.get(id, &client, camera_settings(&p)).await {
         Ok(cam) => cam,
         Err(e) => return camera_error(&e),
     };

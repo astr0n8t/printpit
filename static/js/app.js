@@ -219,11 +219,19 @@
       img.dataset.watched = "1";
       observer.observe(img);
       // The snapshot may have failed before this script ran, so its error event was missed.
-      if (img.complete && img.naturalWidth === 0) img.closest(".cam")?.classList.add("cam-missing");
+      if (img.getAttribute("src") && img.complete && img.naturalWidth === 0) {
+        img.closest(".cam")?.classList.add("cam-missing");
+      }
     });
   };
   document.addEventListener("htmx:afterSettle", watchCams);
   document.addEventListener("DOMContentLoaded", watchCams);
+
+  // Back to snapshots after a live stream, or to nothing for a stream-only camera.
+  const showSnapshot = (img) => {
+    if (img.dataset.snapshot) img.src = `${img.dataset.snapshot}?t=${Date.now()}`;
+    else img.removeAttribute("src");
+  };
 
   // A 404/502 snapshot means no (reachable) camera: show the placeholder instead. A failed
   // live stream falls back to snapshots rather than hiding the tile (and its stop button).
@@ -237,7 +245,7 @@
         delete img.dataset.streaming;
         const button = cam?.querySelector("button[data-live]");
         if (button) button.textContent = "live";
-        img.src = `${img.dataset.snapshot}?t=${Date.now()}`;
+        showSnapshot(img);
         return;
       }
       cam?.classList.add("cam-missing");
@@ -262,7 +270,7 @@
     if (!img) return;
     if (img.dataset.streaming) {
       delete img.dataset.streaming;
-      img.src = `${img.dataset.snapshot}?t=${Date.now()}`;
+      showSnapshot(img);
       button.textContent = "live";
     } else {
       img.dataset.streaming = "1";
@@ -280,7 +288,7 @@
         visible.delete(img);
         continue;
       }
-      if (img.dataset.streaming || img.closest(".cam-missing")) continue;
+      if (img.dataset.streaming || !img.dataset.snapshot || img.closest(".cam-missing")) continue;
       img.src = `${img.dataset.snapshot}?t=${Date.now()}`;
     }
   }, SNAPSHOT_EVERY_MS);

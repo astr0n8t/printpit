@@ -17,6 +17,7 @@ use crate::db::printers::{self, API_KEY_CONTEXT, KeyChange, NewPrinter, Printer}
 use crate::error::AppError;
 use crate::moonraker::MoonrakerError;
 use crate::moonraker::net::{base_string, parse_base_url};
+use crate::moonraker::webcam::Transform;
 use crate::state::AppState;
 use crate::web::layout::{HxRequest, Tab, page};
 
@@ -49,6 +50,7 @@ struct FormTemplate {
     name: String,
     base_url: String,
     webcam_override: String,
+    webcam_transform: String,
     enabled: bool,
     key_set: bool,
     key_dropped: bool,
@@ -76,6 +78,8 @@ pub struct PrinterForm {
     #[serde(default)]
     webcam_override: String,
     #[serde(default)]
+    webcam_transform: String,
+    #[serde(default)]
     enabled: Option<String>,
 }
 
@@ -83,6 +87,7 @@ struct Valid {
     name: String,
     base_url: String,
     webcam_override: Option<String>,
+    webcam_transform: Option<String>,
     api_key: Option<String>,
     enabled: bool,
 }
@@ -159,6 +164,7 @@ pub async fn new_form(hx: HxRequest, user: RequireRole<Admin>) -> Result<Respons
         name: String::new(),
         base_url: String::new(),
         webcam_override: String::new(),
+        webcam_transform: String::new(),
         enabled: true,
         key_set: false,
         key_dropped: false,
@@ -182,6 +188,7 @@ pub async fn edit_form(
         name: p.name,
         base_url: p.base_url,
         webcam_override: p.webcam_override.unwrap_or_default(),
+        webcam_transform: p.webcam_transform.unwrap_or_default(),
         enabled: p.enabled,
         key_set: p.api_key_enc.is_some(),
         key_dropped: false,
@@ -228,6 +235,12 @@ async fn validate(state: &AppState, f: &PrinterForm, except: Option<i64>) -> Res
         Some(webcam.to_string())
     };
 
+    let webcam_transform = match f.webcam_transform.trim() {
+        "" => None,
+        t if Transform::from_setting(t).is_some() => Some(t.to_string()),
+        _ => return Err("Pick a camera orientation from the list.".into()),
+    };
+
     let key = f.api_key.trim();
     if key.len() > MAX_KEY || key.chars().any(|c| c.is_whitespace() || c.is_control()) {
         return Err(
@@ -239,6 +252,7 @@ async fn validate(state: &AppState, f: &PrinterForm, except: Option<i64>) -> Res
         name: name.to_string(),
         base_url: base_string(&url),
         webcam_override,
+        webcam_transform,
         api_key: (!key.is_empty()).then(|| key.to_string()),
         enabled: f.enabled.is_some(),
     })
@@ -258,6 +272,7 @@ fn form_error(
         name: f.name.clone(),
         base_url: f.base_url.clone(),
         webcam_override: f.webcam_override.clone(),
+        webcam_transform: f.webcam_transform.clone(),
         enabled: f.enabled.is_some(),
         key_set,
         key_dropped: !f.api_key.trim().is_empty(),
@@ -291,6 +306,7 @@ pub async fn create(
                 .as_deref()
                 .map(|k| state.cipher.seal(k, API_KEY_CONTEXT)),
             webcam_override: v.webcam_override.as_deref(),
+            webcam_transform: v.webcam_transform.as_deref(),
             enabled: v.enabled,
         },
     )
@@ -344,6 +360,7 @@ pub async fn update(
             base_url: &v.base_url,
             api_key_enc: None,
             webcam_override: v.webcam_override.as_deref(),
+            webcam_transform: v.webcam_transform.as_deref(),
             enabled: v.enabled,
         },
         key,

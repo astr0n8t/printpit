@@ -31,6 +31,15 @@
       <input id="webcam_override" name="webcam_override" value="{{ webcam_override }}" placeholder="auto-detect from Moonraker" spellcheck="false" autocapitalize="none">
     </div>
     <div class="field">
+      <label for="webcam_transform">camera orientation</label>
+      <select id="webcam_transform" name="webcam_transform">
+        <option value=""{% if webcam_transform.is_empty() %} selected{% endif %}>auto (Moonraker's webcam settings)</option>
+{%- for (value, label) in Transform::CHOICES %}
+        <option value="{{ value }}"{% if webcam_transform == value %} selected{% endif %}>{{ label }}</option>
+{%- endfor %}
+      </select>
+    </div>
+    <div class="field">
       <label><input type="checkbox" name="enabled"{% if enabled %} checked{% endif %}>enabled</label>
     </div>
     <div class="actions">

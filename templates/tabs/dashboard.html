@@ -22,10 +22,8 @@
     <div id="live-{{ id }}" class="live"{% if !auto_refresh %} hx-get="/p/{{ id }}/status" hx-trigger="load"{% endif %}>
       <p class="dim">connecting…</p>
     </div>
-    <div class="cam">
-      <img class="cam-img" src="/p/{{ id }}/camera/snapshot" data-snapshot="/p/{{ id }}/camera/snapshot" alt="camera: {{ name }}" loading="lazy">
-      <p class="cam-none dim">[ no camera ]</p>
-      <div class="cam-actions"><button type="button" data-live="/p/{{ id }}/camera/stream">live</button></div>
+    <div class="cam" hx-get="/p/{{ id }}/camera/tile" hx-trigger="intersect once">
+      <p class="cam-msg dim">[ camera ]</p>
     </div>
     <div id="ctl-{{ id }}" class="controls"></div>
     <div id="msg-{{ id }}" class="msg" role="status"></div>

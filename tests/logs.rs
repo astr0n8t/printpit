@@ -24,6 +24,7 @@ async fn setup(opts: MockOptions) -> (TestApp, Client, MockMoonraker, i64) {
             base_url: &mock.url(),
             api_key_enc: None,
             webcam_override: None,
+            webcam_transform: None,
             enabled: true,
         },
     )

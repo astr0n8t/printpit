@@ -46,6 +46,7 @@ pub fn router(state: AppState) -> Router {
         .route("/p/{id}/start", get(dashboard::start_picker))
         .route("/p/{id}/print/{action}", post(dashboard::print_action))
         .route("/p/{id}/estop", post(dashboard::estop))
+        .route("/p/{id}/camera/tile", get(dashboard::camera_tile))
         .route("/p/{id}/camera/snapshot", get(dashboard::camera_snapshot))
         .route("/p/{id}/camera/stream", get(dashboard::camera_stream))
         .route("/ui/files", get(files::tab))

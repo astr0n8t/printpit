@@ -14,6 +14,8 @@ pub struct Printer {
     pub sort_order: i64,
     pub created_at: i64,
     pub updated_at: i64,
+    /// `webcam::Transform::CHOICES` value; `None` = Moonraker's setting.
+    pub webcam_transform: Option<String>,
 }
 
 pub struct NewPrinter<'a> {
@@ -21,6 +23,7 @@ pub struct NewPrinter<'a> {
     pub base_url: &'a str,
     pub api_key_enc: Option<Vec<u8>>,
     pub webcam_override: Option<&'a str>,
+    pub webcam_transform: Option<&'a str>,
     pub enabled: bool,
 }
 
@@ -55,14 +58,16 @@ pub async fn name_taken(db: &Db, name: &str, except: Option<i64>) -> Result<bool
 pub async fn create(db: &Db, p: NewPrinter<'_>) -> Result<i64, sqlx::Error> {
     let ts = now();
     sqlx::query_scalar(
-        "INSERT INTO printers (name, base_url, api_key_enc, webcam_override, enabled, sort_order, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM printers), ?, ?)
+        "INSERT INTO printers (name, base_url, api_key_enc, webcam_override, webcam_transform, enabled, sort_order,
+                               created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM printers), ?, ?)
          RETURNING id",
     )
     .bind(p.name)
     .bind(p.base_url)
     .bind(p.api_key_enc)
     .bind(p.webcam_override)
+    .bind(p.webcam_transform)
     .bind(p.enabled)
     .bind(ts)
     .bind(ts)
@@ -74,12 +79,13 @@ pub async fn update(db: &Db, id: i64, p: NewPrinter<'_>, key: KeyChange) -> Resu
     let res = match key {
         KeyChange::Keep => {
             sqlx::query(
-                "UPDATE printers SET name = ?, base_url = ?, webcam_override = ?, enabled = ?, updated_at = ?
-             WHERE id = ?",
+                "UPDATE printers SET name = ?, base_url = ?, webcam_override = ?, webcam_transform = ?, enabled = ?,
+                 updated_at = ? WHERE id = ?",
             )
             .bind(p.name)
             .bind(p.base_url)
             .bind(p.webcam_override)
+            .bind(p.webcam_transform)
             .bind(p.enabled)
             .bind(now())
             .bind(id)
@@ -92,13 +98,14 @@ pub async fn update(db: &Db, id: i64, p: NewPrinter<'_>, key: KeyChange) -> Resu
                 _ => None,
             };
             sqlx::query(
-                "UPDATE printers SET name = ?, base_url = ?, api_key_enc = ?, webcam_override = ?, enabled = ?,
-                 updated_at = ? WHERE id = ?",
+                "UPDATE printers SET name = ?, base_url = ?, api_key_enc = ?, webcam_override = ?,
+                 webcam_transform = ?, enabled = ?, updated_at = ? WHERE id = ?",
             )
             .bind(p.name)
             .bind(p.base_url)
             .bind(enc)
             .bind(p.webcam_override)
+            .bind(p.webcam_transform)
             .bind(p.enabled)
             .bind(now())
             .bind(id)

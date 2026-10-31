@@ -127,12 +127,13 @@ New mock endpoints go in both `tests/common/moonraker.rs` and `examples/mock_moo
 - [x] Tests: card unit tests (with/without slicer time, overrun clamps to 0); hub integration test: one metadata call per file, none when idle
 
 ### 8.2 Camera flip/rotation
-- [ ] `Webcam` carries `flip_h`, `flip_v`, `rotation` (0/90/180/270; anything else → 0) from `server.webcams.list`
-- [ ] Lazy camera tile: `.cam` loads `GET /p/{id}/camera/tile` on `hx-trigger="revealed"`. It uses `WebcamCache` (the snapshot needs the same lookup, so no extra Moonraker calls) and renders the `<img>` with transform classes, or `[ no camera ]` server-side
-- [ ] CSS classes `cam-flip-h`, `cam-flip-v`, `cam-rot-{90,180,270}` (no inline styles, CSP); rotated 90/270 tiles keep the card's aspect box; check at 390 px
-- [ ] `app.js`: snapshot refresh and live toggle also work on tiles that htmx swaps in (watch `htmx:load`)
-- [ ] Override cameras: optional flip/rotate select in the printer form (new migration column `webcam_transform`)
-- [ ] Tests: tile HTML has the classes; dashboard page load still makes zero printer calls; mock webcam with flip/rotation
+- [x] `Webcam` carries `flip_h`, `flip_v`, `rotation` (0/90/180/270; anything else → 0) from `server.webcams.list`
+- [x] Lazy camera tile: `.cam` loads `GET /p/{id}/camera/tile` on `hx-trigger="intersect once"`. It uses `WebcamCache` (the snapshot needs the same lookup, so no extra Moonraker calls) and renders the `<img>` with transform classes, or `[ no camera ]` server-side
+- [x] CSS classes `cam-flip-h`, `cam-flip-v`, `cam-rot-{90,180,270}` (no inline styles, CSP); rotated 90/270 tiles keep the card's aspect box; check at 390 px
+- [x] `app.js`: snapshot refresh and live toggle work on swapped-in tiles (existing `htmx:afterSettle` hook); stream-only cameras (override without `action=stream`) show `[ no snapshots · press live ]` and never load a snapshot
+- [x] Checked in Chromium at 1280 px and 390 px: rotated test card fills the 16:9 frame, live/stop keeps the rotation, no horizontal scroll, no console errors
+- [x] Orientation select in the printer form (migration `0003`, column `webcam_transform`): "auto" (NULL) uses Moonraker's settings, any other choice overrides them, for discovered and override cameras alike
+- [x] Tests: tile HTML has the classes; dashboard page load still makes zero printer calls; mock webcam with flip/rotation
 
 ### 8.3 Temperature targets and presets
 - [ ] Migration: `temp_presets(id, name UNIQUE NOCASE, extruder REAL, bed REAL, sort_order, created_at, updated_at)`

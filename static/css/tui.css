@@ -302,10 +302,26 @@ code { font: inherit; color: var(--info); }
 .msg { margin-top: 0.3em; }
 
 .cam { position: relative; margin: 0.4em 0; border: 1px solid var(--border); }
-.cam-img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: contain; background: var(--bg-alt); }
+.cam-msg { margin: 0; padding: 0.4em 1ch; }
+/* A 16:9 box; the image is laid out inside it so rotation never changes the card's height. */
+.cam-frame { position: relative; aspect-ratio: 16 / 9; overflow: hidden; background: var(--bg-alt); }
+.cam-img {
+  position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: contain;
+  transform: rotate(var(--cam-rot, 0deg)) scale(var(--cam-sx, 1), var(--cam-sy, 1));
+}
+.cam-img:not([src]) { display: none; }
+.cam-flip-h { --cam-sx: -1; }
+.cam-flip-v { --cam-sy: -1; }
+.cam-rot-90 { --cam-rot: 90deg; }
+.cam-rot-180 { --cam-rot: 180deg; }
+.cam-rot-270 { --cam-rot: 270deg; }
+/* Quarter turns: a box 9/16 wide and 16/9 tall, centred, so once turned it fills the frame. */
+.cam-rot-90, .cam-rot-270 { width: 56.25%; height: 177.78%; left: 21.875%; top: -38.89%; }
+.cam-idle { position: absolute; inset: 0; margin: 0; display: grid; place-items: center; }
+.cam-frame:has(.cam-img[src]) .cam-idle { display: none; }
 .cam-none { display: none; margin: 0; padding: 0.4em 1ch; }
 .cam-actions { position: absolute; right: 1ch; bottom: 0.3em; background: var(--bg); padding: 0 0.5ch; }
-.cam-missing .cam-img, .cam-missing .cam-actions { display: none; }
+.cam-missing .cam-frame, .cam-missing .cam-actions { display: none; }
 .cam-missing .cam-none { display: block; }
 
 #modal { width: min(90ch, calc(100vw - 4ch)); }

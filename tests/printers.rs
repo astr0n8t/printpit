@@ -83,6 +83,48 @@ async fn create_edit_and_delete_a_printer() {
 }
 
 #[tokio::test]
+async fn camera_orientation_is_saved_and_validated() {
+    let (app, mut c, csrf) = admin().await;
+    add(&mut c, &csrf, "P", "127.0.0.1:7125", "").await;
+    let id = only_printer(&app).await.id;
+    let form = c.get_hx(&format!("/ui/printers/{id}")).await;
+    assert!(
+        form.body.contains(r#"<option value="" selected>auto"#),
+        "{}",
+        form.body
+    );
+
+    let post = |t: &'static str| {
+        [
+            ("name", "P"),
+            ("base_url", "127.0.0.1:7125"),
+            ("webcam_transform", t),
+        ]
+    };
+    let res = c
+        .post_hx(&format!("/printers/{id}"), &csrf, &post("flip_v"))
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(
+        only_printer(&app).await.webcam_transform.as_deref(),
+        Some("flip_v")
+    );
+    let form = c.get_hx(&format!("/ui/printers/{id}")).await;
+    assert!(form.body.contains(r#"<option value="flip_v" selected>"#));
+
+    let res = c.post_hx(&format!("/printers/{id}"), &csrf, &post("spin")).await;
+    assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(res.body.contains("camera orientation"));
+    assert_eq!(
+        only_printer(&app).await.webcam_transform.as_deref(),
+        Some("flip_v")
+    );
+
+    c.post_hx(&format!("/printers/{id}"), &csrf, &post("")).await;
+    assert_eq!(only_printer(&app).await.webcam_transform, None, "back to auto");
+}
+
+#[tokio::test]
 async fn plain_form_posts_redirect() {
     let (app, mut c, csrf) = admin().await;
     let res = c
@@ -301,6 +343,7 @@ async fn undecryptable_key_is_reported() {
             base_url: "http://127.0.0.1:1",
             api_key_enc: Some(vec![1, 2, 3]),
             webcam_override: None,
+            webcam_transform: None,
             enabled: true,
         },
     )
@@ -382,6 +425,7 @@ async fn egress_allowlist_enforced_at_connect_time() {
                 base_url: &url,
                 api_key_enc: None,
                 webcam_override: None,
+                webcam_transform: None,
                 enabled: true,
             },
         )

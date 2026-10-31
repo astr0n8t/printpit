@@ -34,6 +34,7 @@ async fn add_printer(app: &TestApp, name: &str, url: &str) -> i64 {
             base_url: url,
             api_key_enc: None,
             webcam_override: None,
+            webcam_transform: None,
             enabled: true,
         },
     )
@@ -69,7 +70,9 @@ async fn opening_the_dashboard_makes_no_printer_calls() {
     ] {
         assert!(body.contains(r#"data-sse="/ui/dashboard/stream""#));
         assert!(body.contains(&format!(r#"id="live-{id}""#)));
-        assert!(body.contains(&format!("/p/{id}/camera/snapshot")));
+        assert!(body.contains(&format!(
+            r#"hx-get="/p/{id}/camera/tile" hx-trigger="intersect once""#
+        )));
         assert!(!body.contains(&mock.url()), "printer address leaked");
         assert!(!body.contains("/webcam/"), "webcam URL leaked");
     }
@@ -491,6 +494,88 @@ async fn stream_frame(s: &mut common::SseStream) -> Vec<u8> {
         .unwrap()
         .unwrap();
     frame.into_data().map(|b| b.to_vec()).unwrap_or_default()
+}
+
+#[tokio::test]
+async fn camera_tile_carries_orientation() {
+    let (app, mut c, mock, id) = setup(MockOptions::default()).await;
+    let tile = c.get_hx(&format!("/p/{id}/camera/tile")).await;
+    assert_eq!(tile.status, StatusCode::OK);
+    assert!(
+        tile.body
+            .contains(&format!(r#"<img class="cam-img" src="/p/{id}/camera/snapshot""#)),
+        "{}",
+        tile.body
+    );
+    assert!(
+        tile.body
+            .contains(&format!(r#"data-live="/p/{id}/camera/stream""#))
+    );
+    assert!(!tile.body.contains("/webcam/") && !tile.body.contains(&mock.url()));
+    // The snapshot the tile embeds reuses the tile's webcam lookup.
+    c.get(&format!("/p/{id}/camera/snapshot")).await;
+    let lookups = |m: &MockMoonraker| m.paths().iter().filter(|p| *p == "/server/webcams/list").count();
+    assert_eq!(lookups(&mock), 1);
+
+    // Moonraker's flip/rotation become CSS classes.
+    let (_app2, mut c2, _mock2, id2) = setup(MockOptions {
+        webcam_flip_h: true,
+        webcam_rotation: 90,
+        ..MockOptions::default()
+    })
+    .await;
+    let tile = c2.get_hx(&format!("/p/{id2}/camera/tile")).await;
+    assert!(
+        tile.body.contains(r#"class="cam-img cam-flip-h cam-rot-90""#),
+        "{}",
+        tile.body
+    );
+
+    // The admin's choice wins over Moonraker's (after the cache is dropped on edit).
+    sqlx::query("UPDATE printers SET webcam_transform = 'rot_180' WHERE id = ?")
+        .bind(id)
+        .execute(&app.state.db)
+        .await
+        .unwrap();
+    app.state.printer_changed(id);
+    let tile = c.get_hx(&format!("/p/{id}/camera/tile")).await;
+    assert!(
+        tile.body.contains(r#"class="cam-img cam-rot-180""#),
+        "{}",
+        tile.body
+    );
+
+    // A stream-only override (no `action=stream` to derive a snapshot from): no snapshot is
+    // loaded until the user presses live.
+    sqlx::query("UPDATE printers SET webcam_override = '/webcam/live' WHERE id = ?")
+        .bind(id)
+        .execute(&app.state.db)
+        .await
+        .unwrap();
+    app.state.printer_changed(id);
+    let tile = c.get_hx(&format!("/p/{id}/camera/tile")).await;
+    assert!(
+        !tile.body.contains("src=") && !tile.body.contains("data-snapshot"),
+        "{}",
+        tile.body
+    );
+    assert!(tile.body.contains("press live") && tile.body.contains("data-live="));
+}
+
+#[tokio::test]
+async fn camera_tile_without_camera_or_printer() {
+    let (app, mut c, _mock, id) = setup(MockOptions {
+        webcam: false,
+        ..MockOptions::default()
+    })
+    .await;
+    let tile = c.get_hx(&format!("/p/{id}/camera/tile")).await;
+    assert!(tile.body.contains("[ no camera ]") && !tile.body.contains("<img"));
+
+    let gone = add_printer(&app, "Gone", "http://127.0.0.1:1").await;
+    let tile = c.get_hx(&format!("/p/{gone}/camera/tile")).await;
+    assert_eq!(tile.status, StatusCode::OK);
+    assert!(tile.body.contains("[ camera unavailable ]") && !tile.body.contains("127.0.0.1"));
 }
 
 #[tokio::test]

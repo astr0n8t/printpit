@@ -27,6 +27,9 @@ pub struct MockOptions {
     pub required_key: Option<&'static str>,
     pub klippy_state: &'static str,
     pub webcam: bool,
+    /// The webcam's configured orientation (`flip_horizontal`, `rotation`).
+    pub webcam_flip_h: bool,
+    pub webcam_rotation: i32,
     /// Answer the WebSocket upgrade with 404 (forces the HTTP polling fallback).
     pub no_websocket: bool,
     /// Ignore `Range` headers on log downloads (forces the streaming tail fallback).
@@ -41,6 +44,8 @@ impl Default for MockOptions {
             required_key: None,
             klippy_state: "ready",
             webcam: true,
+            webcam_flip_h: false,
+            webcam_rotation: 0,
             no_websocket: false,
             no_range: false,
             no_update_manager: false,
@@ -326,7 +331,9 @@ async fn objects_query(State(mock): State<Mock>) -> impl IntoResponse {
 async fn webcams(State(mock): State<Mock>) -> impl IntoResponse {
     let cams = if mock.opts.webcam {
         json!([{"name": "cam", "enabled": true, "service": "mjpegstreamer",
-                "snapshot_url": "/webcam/?action=snapshot", "stream_url": "/webcam/?action=stream"}])
+                "snapshot_url": "/webcam/?action=snapshot", "stream_url": "/webcam/?action=stream",
+                "flip_horizontal": mock.opts.webcam_flip_h, "flip_vertical": false,
+                "rotation": mock.opts.webcam_rotation}])
     } else {
         json!([])
     };

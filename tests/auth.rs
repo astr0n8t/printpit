@@ -22,6 +22,7 @@ const PROTECTED_GET: &[&str] = &[
     "/ui/dashboard/stream",
     "/p/1/status",
     "/p/1/start",
+    "/p/1/camera/tile",
     "/p/1/camera/snapshot",
     "/p/1/camera/stream",
     "/p/1/files",
