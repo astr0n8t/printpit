@@ -32,6 +32,7 @@ struct Row {
     key_label: &'static str,
     key_class: &'static str,
     enabled: bool,
+    notify: bool,
 }
 
 struct PresetRow {
@@ -63,6 +64,9 @@ struct FormTemplate {
     webcam_override: String,
     webcam_transform: String,
     enabled: bool,
+    notify: bool,
+    /// The notify checkbox only shows when a webhook URL is configured.
+    notify_available: bool,
     key_set: bool,
     key_dropped: bool,
     error: Option<String>,
@@ -92,6 +96,8 @@ pub struct PrinterForm {
     webcam_transform: String,
     #[serde(default)]
     enabled: Option<String>,
+    #[serde(default)]
+    notify: Option<String>,
 }
 
 struct Valid {
@@ -101,6 +107,7 @@ struct Valid {
     webcam_transform: Option<String>,
     api_key: Option<String>,
     enabled: bool,
+    notify: bool,
 }
 
 fn row(state: &AppState, p: Printer) -> Row {
@@ -116,6 +123,7 @@ fn row(state: &AppState, p: Printer) -> Row {
         key_label,
         key_class,
         enabled: p.enabled,
+        notify: p.notify && state.notifier.enabled(),
     }
 }
 
@@ -198,7 +206,11 @@ pub async fn list(
     list_page(&state, hx, &user, None, None).await
 }
 
-pub async fn new_form(hx: HxRequest, user: RequireRole<Admin>) -> Result<Response, AppError> {
+pub async fn new_form(
+    State(state): State<AppState>,
+    hx: HxRequest,
+    user: RequireRole<Admin>,
+) -> Result<Response, AppError> {
     let html = FormTemplate {
         id: None,
         action: "/printers".into(),
@@ -208,6 +220,8 @@ pub async fn new_form(hx: HxRequest, user: RequireRole<Admin>) -> Result<Respons
         webcam_override: String::new(),
         webcam_transform: String::new(),
         enabled: true,
+        notify: false,
+        notify_available: state.notifier.enabled(),
         key_set: false,
         key_dropped: false,
         error: None,
@@ -232,6 +246,8 @@ pub async fn edit_form(
         webcam_override: p.webcam_override.unwrap_or_default(),
         webcam_transform: p.webcam_transform.unwrap_or_default(),
         enabled: p.enabled,
+        notify: p.notify,
+        notify_available: state.notifier.enabled(),
         key_set: p.api_key_enc.is_some(),
         key_dropped: false,
         error: None,
@@ -297,10 +313,12 @@ async fn validate(state: &AppState, f: &PrinterForm, except: Option<i64>) -> Res
         webcam_transform,
         api_key: (!key.is_empty()).then(|| key.to_string()),
         enabled: f.enabled.is_some(),
+        notify: f.notify.is_some(),
     })
 }
 
 fn form_error(
+    state: &AppState,
     user: &RequireRole<Admin>,
     id: Option<i64>,
     key_set: bool,
@@ -316,6 +334,8 @@ fn form_error(
         webcam_override: f.webcam_override.clone(),
         webcam_transform: f.webcam_transform.clone(),
         enabled: f.enabled.is_some(),
+        notify: f.notify.is_some(),
+        notify_available: state.notifier.enabled(),
         key_set,
         key_dropped: !f.api_key.trim().is_empty(),
         error: Some(error),
@@ -336,7 +356,7 @@ pub async fn create(
     };
     let v = match validate(&state, &f, None).await {
         Ok(v) => v,
-        Err(e) => return form_error(&user, None, false, &f, e),
+        Err(e) => return form_error(&state, &user, None, false, &f, e),
     };
     let id = printers::create(
         &state.db,
@@ -350,9 +370,12 @@ pub async fn create(
             webcam_override: v.webcam_override.as_deref(),
             webcam_transform: v.webcam_transform.as_deref(),
             enabled: v.enabled,
+            // Only settable while a webhook is configured.
+            notify: v.notify && state.notifier.enabled(),
         },
     )
     .await?;
+    state.printer_changed(id);
     audit::record(
         &state.db,
         audit::Entry {
@@ -382,7 +405,7 @@ pub async fn update(
     let key_set = existing.api_key_enc.is_some();
     let v = match validate(&state, &f, Some(id)).await {
         Ok(v) => v,
-        Err(e) => return form_error(&user, Some(id), key_set, &f, e),
+        Err(e) => return form_error(&state, &user, Some(id), key_set, &f, e),
     };
     let key = match (&v.api_key, f.clear_key.is_some()) {
         (Some(k), _) => KeyChange::Set(state.cipher.seal(k, API_KEY_CONTEXT)),
@@ -404,6 +427,12 @@ pub async fn update(
             webcam_override: v.webcam_override.as_deref(),
             webcam_transform: v.webcam_transform.as_deref(),
             enabled: v.enabled,
+            // Without a webhook the checkbox isn't shown, so keep what was there.
+            notify: if state.notifier.enabled() {
+                v.notify
+            } else {
+                existing.notify
+            },
         },
         key,
     )
@@ -414,7 +443,11 @@ pub async fn update(
             user_id: Some(user.id),
             printer_id: Some(id),
             action: "printer_update",
-            detail: Some(format!("name={} api_key={key_note}", v.name)),
+            detail: Some(format!(
+                "name={} api_key={key_note} notify={}",
+                v.name,
+                if v.notify { "on" } else { "off" }
+            )),
             ip: ip.to_string_opt(),
         },
     )

@@ -14,6 +14,7 @@ use crate::moonraker::hub::{HubConfig, HubDeps, PrinterHub};
 use crate::moonraker::status::SlicerTimes;
 use crate::moonraker::webcam::WebcamCache;
 use crate::moonraker::{self, Egress, MoonrakerClient, MoonrakerError};
+use crate::notify::Notifier;
 
 #[derive(Debug, thiserror::Error)]
 pub enum StartupError {
@@ -21,7 +22,7 @@ pub enum StartupError {
     DataDir { path: String, source: std::io::Error },
     #[error("cannot open database: {0}")]
     Db(#[from] sqlx::Error),
-    #[error("cannot build the printer HTTP client: {0}")]
+    #[error("cannot build an HTTP client: {0}")]
     Http(#[from] reqwest::Error),
 }
 
@@ -39,6 +40,7 @@ pub struct AppState {
     pub webcams: Arc<WebcamCache>,
     pub dirs: Arc<DirCache>,
     pub slicer: Arc<SlicerTimes>,
+    pub notifier: Arc<Notifier>,
 }
 
 impl AppState {
@@ -65,6 +67,7 @@ impl AppState {
                 grace: config.ws_idle_grace,
             },
         );
+        let notifier = Notifier::new(db.clone(), hub.clone(), config.notify_webhook.clone())?;
         Ok(Self {
             config: Arc::new(config),
             db,
@@ -76,6 +79,7 @@ impl AppState {
             webcams: Arc::default(),
             dirs: Arc::default(),
             slicer,
+            notifier,
         })
     }
 
@@ -94,6 +98,16 @@ impl AppState {
         self.webcams.invalidate(printer_id);
         self.dirs.invalidate(printer_id);
         self.slicer.invalidate(printer_id);
+        if let Ok(rt) = tokio::runtime::Handle::try_current() {
+            let notifier = self.notifier.clone();
+            rt.spawn(async move { notifier.sync().await });
+        }
+    }
+
+    /// Starts watching the printers that have notifications turned on (no-op without
+    /// `PRINTPIT_NOTIFY_WEBHOOK_URL`).
+    pub async fn start_notifications(&self) {
+        self.notifier.sync().await;
     }
 
     /// Periodically purges expired sessions and stale rate-limit windows.

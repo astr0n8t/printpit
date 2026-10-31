@@ -26,6 +26,7 @@ async fn setup(opts: MockOptions) -> (TestApp, Client, MockMoonraker, i64) {
             webcam_override: None,
             webcam_transform: None,
             enabled: true,
+            notify: false,
         },
     )
     .await

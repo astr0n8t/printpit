@@ -156,14 +156,14 @@ New mock endpoints go in both `tests/common/moonraker.rs` and `examples/mock_moo
 - [x] Mock history endpoints (60 generated jobs, `no_history` option); tests: tab lazy (no calls on `/ui/history`), paging, details, reprint role gating, disabled component
 
 ### 8.5 Print notifications (webhook)
-- [ ] Config: `PRINTPIT_NOTIFY_WEBHOOK_URL` (+ `_FILE`; it usually embeds a token), validated as http(s); never logged or rendered
-- [ ] Migration: `printers.notify INTEGER NOT NULL DEFAULT 0`; checkbox in the printer form (shown only when the webhook is configured), audited with the printer update
-- [ ] `notify.rs`: a supervisor holds one hub `Subscription` per enabled `notify` printer, **the one documented exception to rule 2**. Resynced on startup and from `state.printer_changed`
-- [ ] Edge detection on `print_stats.state`: `printing|paused → complete|error|cancelled` only. The first snapshot after (re)connect sets the baseline and never fires, so reconnects don't double-notify
-- [ ] Payload: JSON `{printer, event, filename, duration, message}` plus `text`/`content` summary fields so Slack/Discord-style webhooks work. Printer name only, never its address
-- [ ] Separate webhook `reqwest::Client` (rustls, no redirects, 10 s timeout, 3 tries with backoff), not the printer egress client; document why in CLAUDE.md
-- [ ] Update CLAUDE.md rule 2 and PLAN.md §6 with the exception
-- [ ] Tests: transitions fire once; baseline doesn't fire; disabled printer/flag drops the subscription; webhook URL absent from logs and pages; local test webhook receiver
+- [x] Config: `PRINTPIT_NOTIFY_WEBHOOK_URL` (+ `_FILE`; it usually embeds a token), validated as http(s); never logged or rendered
+- [x] Migration: `printers.notify INTEGER NOT NULL DEFAULT 0`; checkbox in the printer form (shown only when the webhook is configured; without one, saving keeps the stored value), `NOTIFY` badge in the list, audited in `printer_update` (`notify=on|off`)
+- [x] `notify.rs`: a supervisor holds one hub `Subscription` per enabled `notify` printer, **the one documented exception to rule 2**. Resynced on startup and from `state.printer_changed`
+- [x] Edge detection on `print_stats.state` (`notify::Tracker`, pure and unit-tested): `printing|paused → complete|error|cancelled` only. The first state after printpit starts is a baseline. The last state survives reconnects (a print that ended while disconnected is still reported; the same finished job isn't reported twice). A Klipper shutdown mid-print (`Link::NotReady` shutdown/error) counts as `error`
+- [x] Payload: JSON `{printer, event, filename, duration, message}` plus `text`/`content` summary fields so Slack/Discord-style webhooks work. Printer name only, never its address
+- [x] Separate webhook `reqwest::Client` (rustls, no redirects, 10 s timeout, 3 tries: 0/1/3 s), not the printer egress client; failures log the root cause without the URL. Checked in the real app: token absent from logs at debug level
+- [x] Update CLAUDE.md rule 2, PLAN.md §6 (item 8), README (config table + "Print notifications" section) and both compose files (empty `PRINTPIT_NOTIFY_WEBHOOK_URL`)
+- [x] Tests: transitions fire once; baseline doesn't fire; disabled printer/flag drops the subscription; webhook URL absent from logs and pages; local test webhook receiver
 
 ### 8.6 TOTP 2FA
 - [ ] Deps: `hmac` + `sha1` (RustCrypto, RFC 6238 hand-rolled: 6 digits, 30 s, ±1 step), `qrcode` (SVG, no image deps) for the enrolment QR, checked against CSP (no `style=` in the SVG)

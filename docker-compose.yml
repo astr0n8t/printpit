@@ -16,6 +16,8 @@ services:
     environment:
       PRINTPIT_SECRET_KEY: ${PRINTPIT_SECRET_KEY:?set PRINTPIT_SECRET_KEY in .env}
       PRINTPIT_SECURE_COOKIES: ${PRINTPIT_SECURE_COOKIES:-true}
+      # Optional print notifications (see README). Empty means off.
+      PRINTPIT_NOTIFY_WEBHOOK_URL: ${PRINTPIT_NOTIFY_WEBHOOK_URL:-}
       RUST_LOG: ${RUST_LOG:-info}
     volumes:
       - printpit-data:/data

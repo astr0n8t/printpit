@@ -27,6 +27,7 @@ async fn setup(opts: MockOptions) -> (TestApp, Client, MockMoonraker, i64) {
             webcam_override: None,
             webcam_transform: None,
             enabled: true,
+            notify: false,
         },
     )
     .await
@@ -169,6 +170,7 @@ async fn missing_update_manager_and_offline_printer() {
             webcam_override: None,
             webcam_transform: None,
             enabled: true,
+            notify: false,
         },
     )
     .await

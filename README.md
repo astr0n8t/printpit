@@ -112,6 +112,8 @@ All settings are environment variables.
 | `PRINTPIT_WS_IDLE_GRACE_SECS` | `30` | Keep a printer's live connection open this long after the last viewer leaves. |
 | `PRINTPIT_SYSTEM_REFRESH_SECS` | `5` | System tab refresh interval (when auto-refresh is on). |
 | `PRINTPIT_MAX_UPLOAD_MB` | `1024` | Largest G-code upload. |
+| `PRINTPIT_NOTIFY_WEBHOOK_URL` | unset | Where print notifications are POSTed (see below). Never logged or shown. |
+| `PRINTPIT_NOTIFY_WEBHOOK_URL_FILE` | unset | Read the webhook URL from a file instead (Docker secrets). |
 | `PRINTPIT_LOG_FORMAT` | `pretty` | `pretty` or `json`. |
 | `RUST_LOG` | `info` | Log filter, e.g. `info,printpit=debug`. |
 
@@ -119,19 +121,32 @@ All settings are environment variables.
 
 Add printers on the **[p] Printers** tab with Moonraker's address *as seen from the container*. Installs with Mainsail or Fluidd usually proxy Moonraker on port 80, so `http://printer.local` often works; otherwise use port `7125`. If Moonraker doesn't already trust printpit's address (`[authorization] trusted_clients`), create an API key in Moonraker and paste it in. **Test** shows Klipper's state and versions, or why it can't connect.
 
+### Print notifications
+
+Set `PRINTPIT_NOTIFY_WEBHOOK_URL` and a **notify** checkbox appears on each printer's settings. For printers with it ticked, printpit POSTs JSON when a print finishes, fails (including a Klipper shutdown mid-print) or is cancelled:
+
+```json
+{"printer": "Voron", "event": "complete", "filename": "benchy.gcode", "duration": 3725.0,
+ "message": "", "text": "Voron: finished benchy.gcode in 1:02:05", "content": "…same as text…"}
+```
+
+`text` suits Slack-style incoming webhooks and `content` suits Discord, so those work as they are; anything else can read the structured fields. Failed deliveries are retried twice.
+
+Normally printpit only talks to a printer while someone is looking at it. A printer with notifications on is the exception: printpit keeps its connection open all the time so it can see the print end. The webhook request goes out through the container's normal network, not the printer network (`PRINTPIT_EGRESS_BIND` and `PRINTPIT_PRINTER_CIDRS` don't apply to it).
+
 ## Users and roles
 
 | Role | Can |
 |---|---|
 | viewer | Watch the dashboard and camera, browse and download files, read logs and system info. |
-| operator | Also start, pause, resume, cancel and e-stop prints, and upload, move and delete files. |
-| admin | Also manage printers and users and read the audit log. Only admins see printer addresses. |
+| operator | Also start, pause, resume, cancel and e-stop prints, set heater temperatures and apply presets, and upload, move and delete files. |
+| admin | Also manage printers, temperature presets and users, and read the audit log. Only admins see printer addresses. |
 
 Admins manage users on the **[u] Users** tab. Disabling a user, resetting their password or deleting them signs them out at once. Every control action and change is recorded on the **[l] Audit** tab.
 
 ## Keyboard
 
-`1`–`4` switch tabs, `a` opens your account, and admins have `p`/`u`/`l`. `r` refreshes what's on screen, `/` filters a list, `j`/`k`/`Enter` move through it, and `y`/`n` answer confirmations. Press `?` for the full list.
+`1`–`5` switch tabs (dashboard, files, logs, system, history), `a` opens your account, and admins have `p`/`u`/`l`. `r` refreshes what's on screen, `/` filters a list, `j`/`k`/`Enter` move through it, and `y`/`n` answer confirmations. Press `?` for the full list.
 
 ## Backup and restore
 

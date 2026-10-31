@@ -33,6 +33,7 @@ async fn add_printer(app: &TestApp, name: &str, url: &str) -> i64 {
             webcam_override: None,
             webcam_transform: None,
             enabled: true,
+            notify: false,
         },
     )
     .await

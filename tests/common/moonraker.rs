@@ -250,6 +250,11 @@ impl MockMoonraker {
     pub fn print_state(&self) -> String {
         self.inner.print_state.lock().unwrap().clone()
     }
+
+    /// Changes `print_stats.state` (pushed to WebSocket subscribers within 50 ms).
+    pub fn set_print_state(&self, state: &str) {
+        *self.inner.print_state.lock().unwrap() = state.into();
+    }
 }
 
 async fn record_and_auth(State(mock): State<Mock>, req: Request, next: axum::middleware::Next) -> Response {

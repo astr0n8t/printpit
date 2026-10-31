@@ -48,6 +48,8 @@ services:
       PRINTPIT_PRINTER_CIDRS: 192.168.50.0/24
       # Trust X-Forwarded-For from Caddy only (for rate limiting and the audit log).
       PRINTPIT_TRUSTED_PROXIES: 172.30.0.2
+      # Optional print notifications (see README). Empty means off.
+      PRINTPIT_NOTIFY_WEBHOOK_URL: ${PRINTPIT_NOTIFY_WEBHOOK_URL:-}
       RUST_LOG: ${RUST_LOG:-info}
     volumes:
       - printpit-data:/data

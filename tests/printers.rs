@@ -345,6 +345,7 @@ async fn undecryptable_key_is_reported() {
             webcam_override: None,
             webcam_transform: None,
             enabled: true,
+            notify: false,
         },
     )
     .await
@@ -427,6 +428,7 @@ async fn egress_allowlist_enforced_at_connect_time() {
                 webcam_override: None,
                 webcam_transform: None,
                 enabled: true,
+                notify: false,
             },
         )
         .await

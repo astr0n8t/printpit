@@ -28,6 +28,7 @@ async fn setup() -> (TestApp, Client, String, MockMoonraker, i64) {
             webcam_override: None,
             webcam_transform: None,
             enabled: true,
+            notify: false,
         },
     )
     .await

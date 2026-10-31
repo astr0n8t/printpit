@@ -181,6 +181,7 @@ This is the core rule: **printpit talks to a printer only because a logged-in us
    - **Off:** no SSE stream and no timers. Each card and the System tab show a `[r] refresh` action that fetches a single snapshot (`/printer/objects/query` for cards). This is the lowest-traffic mode.
    - Toggling the box saves the setting (`POST /account/prefs`, CSRF-protected) and starts or stops the live stream right away, without a page reload.
    - The Logs tab's follow mode stays a separate toggle on that tab and is not remembered.
+8. **The one exception: print notifications.** A printer an admin has opted in to notifications (`printers.notify`, only offered when `PRINTPIT_NOTIFY_WEBHOOK_URL` is set) is watched permanently: `notify.rs` holds a hub subscription for it, so its WebSocket stays open with or without viewers, and posts to the webhook when a print leaves `printing`/`paused` for `complete`, `error` or `cancelled`. All other printers stay lazy.
 
 ---
 

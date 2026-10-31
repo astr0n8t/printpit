@@ -42,6 +42,12 @@
     <div class="field">
       <label><input type="checkbox" name="enabled"{% if enabled %} checked{% endif %}>enabled</label>
     </div>
+{%- if notify_available %}
+    <div class="field">
+      <label><input type="checkbox" name="notify"{% if notify %} checked{% endif %}>notify when a print finishes, fails or is cancelled</label>
+      <p class="dim">Sends to PRINTPIT_NOTIFY_WEBHOOK_URL. printpit then keeps this printer's connection open all the time, even when nobody is watching.</p>
+    </div>
+{%- endif %}
     <div class="actions">
       <button type="submit" class="primary">save</button>
       <a class="btn" href="/ui/printers" hx-get="/ui/printers" hx-target="#main" hx-push-url="true">cancel</a>

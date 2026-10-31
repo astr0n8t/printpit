@@ -42,6 +42,17 @@ impl fmt::Debug for SecretKey {
     }
 }
 
+/// Where print notifications are POSTed. Webhook URLs usually embed a token, so `Debug` (and
+/// therefore logs) never print it.
+#[derive(Clone)]
+pub struct WebhookUrl(pub url::Url);
+
+impl fmt::Debug for WebhookUrl {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("WebhookUrl(<redacted>)")
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Config {
     pub bind: SocketAddr,
@@ -58,6 +69,7 @@ pub struct Config {
     pub max_upload_bytes: u64,
     pub trusted_proxies: Vec<IpNet>,
     pub log_format: LogFormat,
+    pub notify_webhook: Option<WebhookUrl>,
 }
 
 pub const DEFAULT_BIND: &str = "0.0.0.0:8080";
@@ -146,6 +158,10 @@ impl Config {
             get("PRINTPIT_TRUSTED_PROXIES").as_deref().unwrap_or(""),
         )?;
 
+        let notify_webhook = secret(&get, "PRINTPIT_NOTIFY_WEBHOOK_URL")?
+            .map(|raw| parse_webhook(&raw))
+            .transpose()?;
+
         let log_format = match get("PRINTPIT_LOG_FORMAT").as_deref().map(str::trim) {
             None | Some("pretty") => LogFormat::Pretty,
             Some("json") => LogFormat::Json,
@@ -172,6 +188,7 @@ impl Config {
             max_upload_bytes: max_upload_mb * 1024 * 1024,
             trusted_proxies,
             log_format,
+            notify_webhook,
         })
     }
 }
@@ -187,6 +204,19 @@ fn secret(get: &impl Fn(&str) -> Option<String>, var: &'static str) -> Result<Op
             .map_err(|source| ConfigError::File { var, path, source }),
         (None, None) => Ok(None),
     }
+}
+
+fn parse_webhook(raw: &str) -> Result<WebhookUrl, ConfigError> {
+    // The reason never quotes the value: it may hold a token.
+    let invalid = |reason: &str| ConfigError::Invalid {
+        var: "PRINTPIT_NOTIFY_WEBHOOK_URL",
+        reason: reason.into(),
+    };
+    let url = url::Url::parse(raw.trim()).map_err(|_| invalid("not a valid URL"))?;
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        return Err(invalid("must be an http:// or https:// URL"));
+    }
+    Ok(WebhookUrl(url))
 }
 
 fn parse_secret_key(raw: &str) -> Result<SecretKey, ConfigError> {
@@ -338,5 +368,28 @@ mod tests {
     fn debug_redacts_secret() {
         let c = load(&[("PRINTPIT_SECRET_KEY", KEY)]).unwrap();
         assert!(format!("{c:?}").contains("<redacted>"));
+    }
+
+    #[test]
+    fn webhook_url() {
+        let token = "https://hooks.example.com/services/T000/SECRET-TOKEN";
+        let c = load(&[
+            ("PRINTPIT_SECRET_KEY", KEY),
+            ("PRINTPIT_NOTIFY_WEBHOOK_URL", token),
+        ])
+        .unwrap();
+        assert_eq!(c.notify_webhook.as_ref().unwrap().0.as_str(), token);
+        assert!(!format!("{c:?}").contains("SECRET-TOKEN"));
+        assert!(
+            load(&[("PRINTPIT_SECRET_KEY", KEY)])
+                .unwrap()
+                .notify_webhook
+                .is_none()
+        );
+        for bad in ["not a url", "ftp://example.com/x", "file:///etc/passwd"] {
+            let err =
+                load(&[("PRINTPIT_SECRET_KEY", KEY), ("PRINTPIT_NOTIFY_WEBHOOK_URL", bad)]).unwrap_err();
+            assert!(!err.to_string().contains(bad), "{err}");
+        }
     }
 }
