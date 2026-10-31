@@ -31,7 +31,7 @@ RUN case "$TARGETARCH" in \
  && rustup target add "$(cat /rust-target)"
 WORKDIR /src
 COPY . .
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,id=cargo-registry-$TARGETARCH \
     --mount=type=cache,target=/src/target,id=target-$TARGETARCH \
     cargo zigbuild --release --locked --target "$(cat /rust-target)" \
  && cp "target/$(cat /rust-target)/release/printpit" /printpit \
