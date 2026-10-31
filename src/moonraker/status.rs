@@ -1,7 +1,8 @@
 //! Live printer status: which Klipper objects to watch, merging Moonraker's partial updates,
 //! and the snapshot that the hub publishes to viewers.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value};
@@ -31,6 +32,8 @@ pub struct Snapshot {
     pub link: Link,
     pub status: Map<String, Value>,
     pub history: BTreeMap<String, Vec<f64>>,
+    /// The slicer's total print time for the current file, from its metadata.
+    pub estimated_time: Option<f64>,
 }
 
 impl Snapshot {
@@ -39,7 +42,47 @@ impl Snapshot {
             link: Link::Connecting,
             status: Map::new(),
             history: BTreeMap::new(),
+            estimated_time: None,
         }
+    }
+}
+
+/// The file Klipper has loaded (`print_stats.filename`), if any.
+pub fn current_file(status: &Map<String, Value>) -> Option<&str> {
+    status
+        .get("print_stats")?
+        .get("filename")?
+        .as_str()
+        .filter(|f| !f.is_empty())
+}
+
+/// Slicer estimates, keyed by printer: only the latest file per printer is kept, so a job's
+/// metadata is fetched once however many viewers or manual refreshes there are.
+#[derive(Default)]
+pub struct SlicerTimes {
+    entries: Mutex<HashMap<i64, (String, Option<f64>)>>,
+}
+
+impl SlicerTimes {
+    /// `Some(estimate)` when `filename`'s metadata has been fetched (the estimate itself may be
+    /// missing if the slicer didn't write one).
+    pub fn get(&self, printer_id: i64, filename: &str) -> Option<Option<f64>> {
+        self.lock()
+            .get(&printer_id)
+            .filter(|(f, _)| f == filename)
+            .map(|(_, t)| *t)
+    }
+
+    pub fn insert(&self, printer_id: i64, filename: &str, estimate: Option<f64>) {
+        self.lock().insert(printer_id, (filename.to_string(), estimate));
+    }
+
+    pub fn invalidate(&self, printer_id: i64) {
+        self.lock().remove(&printer_id);
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<i64, (String, Option<f64>)>> {
+        self.entries.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
 
@@ -224,6 +267,26 @@ mod tests {
         );
         assert_eq!(state["print_stats"]["state"], "printing");
         assert_eq!(state["fan"]["speed"], 0.5);
+    }
+
+    #[test]
+    fn current_file_and_slicer_cache() {
+        let status = json!({"print_stats": {"filename": "a.gcode"}});
+        assert_eq!(current_file(status.as_object().unwrap()), Some("a.gcode"));
+        let empty = json!({"print_stats": {"filename": ""}});
+        assert_eq!(current_file(empty.as_object().unwrap()), None);
+
+        let cache = SlicerTimes::default();
+        assert_eq!(cache.get(1, "a.gcode"), None);
+        cache.insert(1, "a.gcode", Some(60.0));
+        assert_eq!(cache.get(1, "a.gcode"), Some(Some(60.0)));
+        assert_eq!(cache.get(1, "b.gcode"), None, "keyed by file");
+        assert_eq!(cache.get(2, "a.gcode"), None, "and by printer");
+        cache.insert(1, "b.gcode", None);
+        assert_eq!(cache.get(1, "a.gcode"), None, "one file per printer");
+        assert_eq!(cache.get(1, "b.gcode"), Some(None));
+        cache.invalidate(1);
+        assert_eq!(cache.get(1, "b.gcode"), None);
     }
 
     #[test]

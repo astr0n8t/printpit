@@ -8,6 +8,8 @@
 //!   no-op if viewers came and went in between.
 //! * The task prefers the WebSocket (`printer.objects.subscribe`) and falls back to polling
 //!   `/printer/objects/query` over HTTP when the WebSocket isn't available.
+//! * When the loaded file changes, its slicer estimate is fetched once (over the same
+//!   connection) and shared through [`SlicerTimes`].
 
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -20,8 +22,8 @@ use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
 
 use super::rpc::{Message, Rpc};
-use super::status::{History, Link, Snapshot, merge, subscription};
-use super::types::{ObjectList, ObjectStatus, ServerInfo};
+use super::status::{History, Link, SlicerTimes, Snapshot, current_file, merge, subscription};
+use super::types::{FileMetadata, ObjectList, ObjectStatus, ServerInfo};
 use super::{Egress, MoonrakerClient, MoonrakerError, client_for};
 use crate::crypto::Cipher;
 use crate::db::{Db, printers};
@@ -39,6 +41,7 @@ pub struct HubDeps {
     pub db: Db,
     pub egress: Egress,
     pub cipher: Arc<Cipher>,
+    pub slicer: Arc<SlicerTimes>,
 }
 
 #[derive(Clone, Copy)]
@@ -208,12 +211,49 @@ fn not_ready(info: &ServerInfo, message: String) -> Link {
 }
 
 struct Publisher {
+    printer_id: i64,
     tx: watch::Sender<Arc<Snapshot>>,
     status: Map<String, Value>,
     history: History,
+    slicer: Arc<SlicerTimes>,
+    /// The file `estimated_time` belongs to (or is being fetched for).
+    slicer_file: Option<String>,
+    estimated_time: Option<f64>,
 }
 
 impl Publisher {
+    /// Notices a change of loaded file. Returns the file whose metadata must be fetched, unless
+    /// it is already cached.
+    fn slicer_wanted(&mut self) -> Option<String> {
+        let file = current_file(&self.status);
+        if file == self.slicer_file.as_deref() {
+            return None;
+        }
+        self.slicer_file = file.map(str::to_string);
+        self.estimated_time = None;
+        let file = self.slicer_file.clone()?;
+        match self.slicer.get(self.printer_id, &file) {
+            Some(estimate) => {
+                self.estimated_time = estimate;
+                None
+            }
+            None => Some(file),
+        }
+    }
+
+    /// Records a metadata result. Failures aren't cached; the next connection retries.
+    fn slicer_fetched(&mut self, file: &str, estimate: Result<Option<f64>, MoonrakerError>) {
+        match estimate {
+            Ok(estimate) => {
+                self.slicer.insert(self.printer_id, file, estimate);
+                if self.slicer_file.as_deref() == Some(file) {
+                    self.estimated_time = estimate;
+                }
+            }
+            Err(e) => tracing::debug!(printer_id = self.printer_id, error = %e, "no slicer metadata"),
+        }
+    }
+
     fn publish(&mut self, link: Link) {
         if matches!(link, Link::Live | Link::Polling) {
             self.history.record(&self.status);
@@ -222,15 +262,20 @@ impl Publisher {
             link,
             status: self.status.clone(),
             history: self.history.snapshot(),
+            estimated_time: self.estimated_time,
         }));
     }
 }
 
 async fn run(deps: HubDeps, config: HubConfig, printer_id: i64, tx: watch::Sender<Arc<Snapshot>>) {
     let mut out = Publisher {
+        printer_id,
         tx,
         status: Map::new(),
         history: History::default(),
+        slicer: deps.slicer.clone(),
+        slicer_file: None,
+        estimated_time: None,
     };
     let mut backoff = MIN_BACKOFF;
     loop {
@@ -280,10 +325,15 @@ async fn poll_for(
 ) -> Option<MoonrakerError> {
     let interval = config.refresh.max(MIN_POLL_INTERVAL);
     let end = Instant::now() + POLL_SPELL;
+    out.slicer_file = None;
     loop {
         match poll_once(client).await {
             Ok((link, status)) => {
                 out.status = status;
+                if let Some(file) = out.slicer_wanted() {
+                    let estimate = client.metadata(&file).await.map(|m| m.estimated_time);
+                    out.slicer_fetched(&file, estimate);
+                }
                 out.publish(link);
             }
             Err(e) => return Some(e),
@@ -346,6 +396,11 @@ async fn subscribed(
         let initial: ObjectStatus =
             decode(rpc.call("printer.objects.subscribe", params, &mut ignore).await?)?;
         out.status = initial.status;
+        // Retry metadata that failed on an earlier connection (cached results are reused).
+        out.slicer_file = None;
+        if fetch_slicer(rpc, out).await? {
+            continue 'ready;
+        }
         out.publish(Link::Live);
 
         let mut tick = tokio::time::interval(config.refresh);
@@ -355,15 +410,15 @@ async fn subscribed(
             tokio::select! {
                 msg = rpc.recv() => {
                     if let Message::Notification { method, params } = msg? {
-                        match method.as_str() {
-                            "notify_status_update" => {
-                                if let Some(delta) = params.get(0).and_then(Value::as_object) {
-                                    merge(&mut out.status, delta);
-                                    dirty = true;
+                        match apply(&mut out.status, &method, &params) {
+                            Notice::Update => {
+                                dirty = true;
+                                if fetch_slicer(rpc, out).await? {
+                                    continue 'ready;
                                 }
                             }
-                            "notify_klippy_disconnected" | "notify_klippy_shutdown" => continue 'ready,
-                            _ => {}
+                            Notice::KlippyGone => continue 'ready,
+                            Notice::Other => {}
                         }
                     }
                 }
@@ -376,6 +431,57 @@ async fn subscribed(
             }
         }
     }
+}
+
+enum Notice {
+    Update,
+    KlippyGone,
+    Other,
+}
+
+/// Applies a WebSocket notification to the cached status.
+fn apply(status: &mut Map<String, Value>, method: &str, params: &Value) -> Notice {
+    match method {
+        "notify_status_update" => match params.get(0).and_then(Value::as_object) {
+            Some(delta) => {
+                merge(status, delta);
+                Notice::Update
+            }
+            None => Notice::Other,
+        },
+        "notify_klippy_disconnected" | "notify_klippy_shutdown" => Notice::KlippyGone,
+        _ => Notice::Other,
+    }
+}
+
+/// Fetches the slicer estimate if the loaded file changed, merging any status updates that
+/// arrive meanwhile. Returns `true` if Klipper went away during the call.
+async fn fetch_slicer(rpc: &mut Rpc, out: &mut Publisher) -> Result<bool, MoonrakerError> {
+    let Some(file) = out.slicer_wanted() else {
+        return Ok(false);
+    };
+    let mut gone = false;
+    let status = &mut out.status;
+    let mut on_notify = |method: &str, params: &Value| {
+        if matches!(apply(status, method, params), Notice::KlippyGone) {
+            gone = true;
+        }
+    };
+    let result = rpc
+        .call(
+            "server.files.metadata",
+            json!({ "filename": file }),
+            &mut on_notify,
+        )
+        .await;
+    let estimate = match result {
+        // The connection itself failed: let the session end and reconnect.
+        Err(e @ MoonrakerError::Offline(_)) => return Err(e),
+        Err(e) => Err(e),
+        Ok(v) => decode::<FileMetadata>(v).map(|m| m.estimated_time),
+    };
+    out.slicer_fetched(&file, estimate);
+    Ok(gone)
 }
 
 fn decode<T: serde::de::DeserializeOwned>(v: Value) -> Result<T, MoonrakerError> {

@@ -28,7 +28,7 @@ use crate::db::printers::{self, Printer};
 use crate::db::{audit, prefs};
 use crate::error::AppError;
 use crate::moonraker::hub::poll_once;
-use crate::moonraker::status::{Link, Snapshot};
+use crate::moonraker::status::{Link, Snapshot, current_file};
 use crate::moonraker::{MoonrakerClient, MoonrakerError};
 use crate::state::AppState;
 use crate::web::card;
@@ -211,16 +211,21 @@ pub async fn status(
     Path(id): Path<i64>,
 ) -> Result<Response, AppError> {
     let p = enabled_printer(&state, id).await?;
-    let (link, status) = match state.printer_client(&p) {
-        Ok(client) => poll_once(&client)
-            .await
-            .unwrap_or_else(|e| (Link::Down(e), Default::default())),
-        Err(e) => (Link::Down(e), Default::default()),
+    let (link, status, estimated_time) = match state.printer_client(&p) {
+        Ok(client) => match poll_once(&client).await {
+            Ok((link, status)) => {
+                let estimate = slicer_estimate(&state, id, &client, &status).await;
+                (link, status, estimate)
+            }
+            Err(e) => (Link::Down(e), Default::default(), None),
+        },
+        Err(e) => (Link::Down(e), Default::default(), None),
     };
     let snap = Snapshot {
         link,
         status,
         history: Default::default(),
+        estimated_time,
     };
     let card = card::build(id, &p.name, &snap, user.has(Role::Operator), true);
     let html = format!(
@@ -229,6 +234,29 @@ pub async fn status(
         card.controls.render()?
     );
     Ok(Html(html).into_response())
+}
+
+/// The slicer estimate for the loaded file, from the shared cache or one metadata call.
+async fn slicer_estimate(
+    state: &AppState,
+    id: i64,
+    client: &MoonrakerClient,
+    status: &serde_json::Map<String, serde_json::Value>,
+) -> Option<f64> {
+    let file = current_file(status)?;
+    if let Some(estimate) = state.slicer.get(id, file) {
+        return estimate;
+    }
+    match client.metadata(file).await {
+        Ok(m) => {
+            state.slicer.insert(id, file, m.estimated_time);
+            m.estimated_time
+        }
+        Err(e) => {
+            tracing::debug!(printer_id = id, error = %e, "no slicer metadata");
+            None
+        }
+    }
 }
 
 /// The start-print picker: most recently modified G-code files, rendered into the modal.

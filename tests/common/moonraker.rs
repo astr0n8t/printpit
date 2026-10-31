@@ -293,7 +293,7 @@ const OBJECTS: &[&str] = &[
 
 fn status_json(mock: &Mock, temperature: f64) -> Value {
     json!({
-        "print_stats": {"state": mock.print_state.lock().unwrap().clone(), "filename": "benchy.gcode",
+        "print_stats": {"state": mock.print_state.lock().unwrap().clone(), "filename": PRINTING_FILE,
                         "print_duration": 600.0, "total_duration": 660.0, "message": "",
                         "info": {"current_layer": 12, "total_layer": 120}},
         "virtual_sdcard": {"progress": 0.25, "is_active": true, "file_position": 1000},
@@ -405,24 +405,40 @@ async fn directory(State(mock): State<Mock>, Query(q): Query<BTreeMap<String, St
               "disk_usage": {"total": 30_000_000_000u64, "used": 10_000_000_000u64, "free": 20_000_000_000u64}}))
 }
 
-async fn metadata(State(mock): State<Mock>, Query(q): Query<BTreeMap<String, String>>) -> Response {
-    let name = q.get("filename").cloned().unwrap_or_default();
+/// The file the mock is "printing" (see `status_json`). It isn't in the `gcodes` root, so the
+/// file listings stay as they are, but it has metadata like a real job would.
+pub const PRINTING_FILE: &str = "benchy.gcode";
+pub const PRINTING_ESTIMATE: f64 = 3000.0;
+
+fn metadata_json(mock: &Mock, name: &str) -> Option<Value> {
+    if name == PRINTING_FILE {
+        return Some(
+            json!({"size": 123_456, "modified": 1_700_000_000.0, "slicer": "OrcaSlicer",
+                           "estimated_time": PRINTING_ESTIMATE, "thumbnails": []}),
+        );
+    }
     let fs = mock.fs.lock().unwrap();
-    let Some((data, modified)) = fs.files.get(&name) else {
-        return not_found("Metadata not available");
-    };
+    let (data, modified) = fs.files.get(name)?;
     let thumbs = if name == "parts/clip.gcode" {
         json!([{"width": 32, "height": 32, "size": 900, "relative_path": ".thumbs/clip-32x32.png"},
                {"width": 300, "height": 300, "size": 1768, "relative_path": ".thumbs/clip-300x300.png"}])
     } else {
         json!([])
     };
-    ok(
+    Some(
         json!({"size": data.len(), "modified": modified, "slicer": "PrusaSlicer", "slicer_version": "2.8.1",
-              "estimated_time": 3725.0, "filament_total": 1520.5, "filament_weight_total": 4.6,
-              "layer_height": 0.2, "object_height": 12.4, "nozzle_diameter": 0.4,
-              "first_layer_extr_temp": 215.0, "first_layer_bed_temp": 60.0, "thumbnails": thumbs}),
+                "estimated_time": 3725.0, "filament_total": 1520.5, "filament_weight_total": 4.6,
+                "layer_height": 0.2, "object_height": 12.4, "nozzle_diameter": 0.4,
+                "first_layer_extr_temp": 215.0, "first_layer_bed_temp": 60.0, "thumbnails": thumbs}),
     )
+}
+
+async fn metadata(State(mock): State<Mock>, Query(q): Query<BTreeMap<String, String>>) -> Response {
+    let name = q.get("filename").cloned().unwrap_or_default();
+    match metadata_json(&mock, &name) {
+        Some(m) => ok(m),
+        None => not_found("Metadata not available"),
+    }
 }
 
 async fn download(State(mock): State<Mock>, Path(path): Path<String>) -> Response {
@@ -706,9 +722,18 @@ async fn session(mock: Mock, mut socket: WebSocket) {
                         subscribed = true;
                         json!({"eventtime": 1.0, "status": status_json(&mock, temperature)})
                     }
+                    "server.files.metadata" => {
+                        metadata_json(&mock, req["params"]["filename"].as_str().unwrap_or_default())
+                            .unwrap_or(Value::Null)
+                    }
                     _ => json!(null),
                 };
-                let reply = json!({"jsonrpc": "2.0", "result": result, "id": req["id"]});
+                let reply = if result.is_null() && method == "server.files.metadata" {
+                    json!({"jsonrpc": "2.0", "error": {"code": 404, "message": "Metadata not available"},
+                           "id": req["id"]})
+                } else {
+                    json!({"jsonrpc": "2.0", "result": result, "id": req["id"]})
+                };
                 if socket.send(Message::Text(reply.to_string().into())).await.is_err() { break; }
             }
             _ = tick.tick(), if subscribed => {

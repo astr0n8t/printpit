@@ -184,11 +184,21 @@ async fn auto_refresh_off_means_manual_snapshots_only() {
             .body
             .contains(&format!(r#"id="ctl-{id}" class="controls" hx-swap-oob="true""#))
     );
+    assert!(status.body.contains("slicer</span> 40:00"), "{}", status.body);
     assert_eq!(mock.ws_total(), 0);
     assert_eq!(
         mock.paths(),
-        ["/server/info", "/printer/objects/list", "/printer/objects/query"]
+        [
+            "/server/info",
+            "/printer/objects/list",
+            "/printer/objects/query",
+            "/server/files/metadata"
+        ]
     );
+    // The estimate is cached: a second refresh only re-reads the status.
+    let again = c.get_hx(&format!("/p/{id}/status")).await;
+    assert!(again.body.contains("slicer</span> 40:00"));
+    assert_eq!(metadata_calls(&mock), 1);
     assert!(app.state.hub.active().is_empty());
 
     // Remembered across page loads, and can be switched back on.
@@ -251,6 +261,59 @@ async fn falls_back_to_http_polling_without_websocket() {
     let live = s.wait_for(&format!("live-{id}"), "(polling)").await;
     assert!(live.contains("PRINTING"));
     assert!(mock.paths().contains(&"/printer/objects/query".to_string()));
+    s.wait_for(&format!("live-{id}"), "slicer</span> 40:00").await;
+    assert_eq!(metadata_calls(&mock), 1);
+}
+
+fn metadata_calls(mock: &MockMoonraker) -> usize {
+    mock.paths()
+        .iter()
+        .filter(|p| p.ends_with("files/metadata") || p.ends_with("files.metadata"))
+        .count()
+}
+
+#[tokio::test]
+async fn slicer_estimate_is_fetched_once_per_file() {
+    let (app, mut c, mock, id) = setup(MockOptions::default()).await;
+    let mut a = c.open_stream("/ui/dashboard/stream").await;
+    // 3000 s estimated, 600 s printed.
+    let live = a.wait_for(&format!("live-{id}"), "slicer</span> 40:00").await;
+    assert!(live.contains("eta</span> 30:00"), "{live}");
+    // Many updates later, and with a second viewer, still one lookup, over the WebSocket.
+    let mut viewer = user(&app, "viewer", Role::Viewer).await;
+    let mut v = viewer.open_stream("/ui/dashboard/stream").await;
+    v.wait_for(&format!("live-{id}"), "slicer</span> 40:00").await;
+    for _ in 0..5 {
+        a.wait_for(&format!("live-{id}"), "°C").await;
+    }
+    assert_eq!(
+        mock.paths()
+            .iter()
+            .filter(|p| *p == "ws:server.files.metadata")
+            .count(),
+        1,
+        "{:?}",
+        mock.paths()
+    );
+    assert_eq!(metadata_calls(&mock), 1);
+
+    // Manual refresh reuses what the live connection fetched.
+    let csrf = c.session_csrf().await;
+    c.post_hx("/account/prefs", &csrf, &[]).await;
+    let status = c.get_hx(&format!("/p/{id}/status")).await;
+    assert!(status.body.contains("slicer</span> 40:00"));
+    assert_eq!(metadata_calls(&mock), 1);
+
+    // Editing the printer drops the cached estimate, so manual refresh looks it up again.
+    app.state.printer_changed(id);
+    c.get_hx(&format!("/p/{id}/status")).await;
+    let http = |m: &MockMoonraker| {
+        m.paths()
+            .iter()
+            .filter(|p| *p == "/server/files/metadata")
+            .count()
+    };
+    assert_eq!(http(&mock), 1);
 }
 
 #[tokio::test]

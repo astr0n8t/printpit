@@ -11,6 +11,7 @@ use crate::db::printers::Printer;
 use crate::db::{self, Db, sessions};
 use crate::moonraker::files::DirCache;
 use crate::moonraker::hub::{HubConfig, HubDeps, PrinterHub};
+use crate::moonraker::status::SlicerTimes;
 use crate::moonraker::webcam::WebcamCache;
 use crate::moonraker::{self, Egress, MoonrakerClient, MoonrakerError};
 
@@ -37,6 +38,7 @@ pub struct AppState {
     pub hub: Arc<PrinterHub>,
     pub webcams: Arc<WebcamCache>,
     pub dirs: Arc<DirCache>,
+    pub slicer: Arc<SlicerTimes>,
 }
 
 impl AppState {
@@ -50,11 +52,13 @@ impl AppState {
         let setup = SetupState::init(&db).await?;
         let egress = Egress::new(&config)?;
         let cipher = Arc::new(Cipher::new(&config.secret_key));
+        let slicer = Arc::new(SlicerTimes::default());
         let hub = PrinterHub::new(
             HubDeps {
                 db: db.clone(),
                 egress: egress.clone(),
                 cipher: cipher.clone(),
+                slicer: slicer.clone(),
             },
             HubConfig {
                 refresh: config.ui_refresh,
@@ -71,6 +75,7 @@ impl AppState {
             hub,
             webcams: Arc::default(),
             dirs: Arc::default(),
+            slicer,
         })
     }
 
@@ -88,6 +93,7 @@ impl AppState {
         self.hub.reset(printer_id);
         self.webcams.invalidate(printer_id);
         self.dirs.invalidate(printer_id);
+        self.slicer.invalidate(printer_id);
     }
 
     /// Periodically purges expired sessions and stale rate-limit windows.

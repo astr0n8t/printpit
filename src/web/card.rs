@@ -50,6 +50,8 @@ pub struct Job {
     pub percent: String,
     pub elapsed: String,
     pub eta: Option<String>,
+    /// Time left according to the slicer's estimate.
+    pub slicer: Option<String>,
     pub layer: Option<String>,
 }
 
@@ -121,7 +123,11 @@ pub fn build(id: i64, name: &str, snap: &Snapshot, can_control: bool, manual: bo
     };
     let ready = matches!(snap.link, Link::Live | Link::Polling);
     let (job, sensors, fans) = if ready {
-        (job(status, print_state), sensors(status, snap), fans(status))
+        (
+            job(status, print_state, snap.estimated_time),
+            sensors(status, snap),
+            fans(status),
+        )
     } else {
         (None, Vec::new(), Vec::new())
     };
@@ -153,7 +159,7 @@ pub fn build(id: i64, name: &str, snap: &Snapshot, can_control: bool, manual: bo
     }
 }
 
-fn job(status: &Map<String, Value>, print_state: &str) -> Option<Job> {
+fn job(status: &Map<String, Value>, print_state: &str, estimated_time: Option<f64>) -> Option<Job> {
     let stats = status.get("print_stats");
     let filename = text(stats, "filename").filter(|f| !f.is_empty())?;
     if !matches!(print_state, "printing" | "paused" | "complete") {
@@ -166,8 +172,13 @@ fn job(status: &Map<String, Value>, print_state: &str) -> Option<Job> {
     let progress = if print_state == "complete" { 1.0 } else { progress };
     let print_duration = num(stats, "print_duration").unwrap_or(0.0);
     let total_duration = num(stats, "total_duration").unwrap_or(print_duration);
-    let eta = (print_state != "complete" && progress > 0.01)
-        .then(|| widgets::duration(print_duration / progress - print_duration));
+    let running = print_state != "complete";
+    let eta =
+        (running && progress > 0.01).then(|| widgets::duration(print_duration / progress - print_duration));
+    // A job that overruns the slicer's estimate shows 00:00 rather than going negative.
+    let slicer = estimated_time
+        .filter(|t| running && *t > 0.0)
+        .map(|t| widgets::duration(t - print_duration));
     let info = stats.and_then(|s| s.get("info"));
     let layer = match (num(info, "current_layer"), num(info, "total_layer")) {
         (Some(c), Some(t)) if t > 0.0 => Some(format!("{c:.0}/{t:.0}")),
@@ -181,6 +192,7 @@ fn job(status: &Map<String, Value>, print_state: &str) -> Option<Job> {
         percent: format!("{:.1}%", progress * 100.0),
         elapsed: widgets::duration(total_duration),
         eta,
+        slicer,
         layer,
     })
 }
@@ -242,6 +254,7 @@ mod tests {
             link,
             status: status.as_object().unwrap().clone(),
             history: BTreeMap::from([("extruder".to_string(), vec![200.0, 210.0, 215.0])]),
+            estimated_time: None,
         }
     }
 
@@ -267,6 +280,7 @@ mod tests {
         assert_eq!(job.filled.chars().count(), 5);
         assert_eq!(job.elapsed, "11:00");
         assert_eq!(job.eta.as_deref(), Some("30:00"));
+        assert_eq!(job.slicer, None, "no metadata, no slicer estimate");
         assert_eq!(job.layer.as_deref(), Some("12/120"));
         let names: Vec<&str> = card.live.sensors.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(names, ["extruder", "bed", "chamber"]);
@@ -282,6 +296,38 @@ mod tests {
         );
         let c = card.controls;
         assert!(c.pause && c.cancel && c.estop && !c.start && !c.resume);
+    }
+
+    #[test]
+    fn slicer_estimate() {
+        let mut s = snap(Link::Live, printing());
+        s.estimated_time = Some(2292.0);
+        let job = build(1, "P", &s, true, false).live.job.unwrap();
+        assert_eq!(job.eta.as_deref(), Some("30:00"));
+        assert_eq!(
+            job.slicer.as_deref(),
+            Some("28:12"),
+            "2292 s total - 600 s printed"
+        );
+
+        // Overrunning the estimate clamps at zero.
+        s.estimated_time = Some(300.0);
+        let job = build(1, "P", &s, true, false).live.job.unwrap();
+        assert_eq!(job.slicer.as_deref(), Some("00:00"));
+
+        // Shown even before progress is meaningful, and not once the job is done.
+        let mut early = printing();
+        early["virtual_sdcard"]["progress"] = json!(0.0);
+        let mut s = snap(Link::Live, early);
+        s.estimated_time = Some(3600.0);
+        let job = build(1, "P", &s, true, false).live.job.unwrap();
+        assert_eq!((job.eta, job.slicer.as_deref()), (None, Some("50:00")));
+
+        let mut done = printing();
+        done["print_stats"]["state"] = json!("complete");
+        let mut s = snap(Link::Live, done);
+        s.estimated_time = Some(3600.0);
+        assert_eq!(build(1, "P", &s, true, false).live.job.unwrap().slicer, None);
     }
 
     #[test]

@@ -120,10 +120,11 @@ Every new protected route goes into `PROTECTED_GET`/`PROTECTED_POST` in `tests/a
 New mock endpoints go in both `tests/common/moonraker.rs` and `examples/mock_moonraker.rs`.
 
 ### 8.1 Slicer ETA
-- [ ] Hub: when `print_stats.filename` changes to a non-empty name, fetch `server.files.metadata` once (over the open RPC; in `poll_once` through a small per-printer `filename → estimated_time` cache) and keep it in the `Publisher`
-- [ ] `Snapshot` gains `estimated_time: Option<f64>` (cleared when the filename changes or empties; a metadata error just leaves it `None`)
-- [ ] Card: `eta 30:00 · slicer 28:12`, where slicer = `estimated_time - print_duration` (clamped ≥ 0; hidden when complete or unknown)
-- [ ] Tests: card unit tests (with/without slicer time, overrun clamps to 0); hub integration test: one metadata call per file, none when idle
+- [x] Hub: when `print_stats.filename` changes to a non-empty name, fetch `server.files.metadata` once (over the open RPC; in `poll_once` through a small per-printer `filename → estimated_time` cache) and keep it in the `Publisher`
+- [x] `Snapshot` gains `estimated_time: Option<f64>` (cleared when the filename changes or empties; a metadata error just leaves it `None`)
+- [x] Card: `eta 30:00 · slicer 28:12`, where slicer = `estimated_time - print_duration` (clamped ≥ 0; hidden when complete or unknown)
+- [x] The hub's lookup goes over the open WebSocket (`server.files.metadata`), merging status updates that arrive during the call; the HTTP poller and manual refresh use `GET /server/files/metadata`. All share `state.slicer` (`SlicerTimes`, latest file per printer, cleared by `printer_changed`)
+- [x] Tests: card unit tests (with/without slicer time, overrun clamps to 0); hub integration test: one metadata call per file, none when idle
 
 ### 8.2 Camera flip/rotation
 - [ ] `Webcam` carries `flip_h`, `flip_v`, `rotation` (0/90/180/270; anything else → 0) from `server.webcams.list`
