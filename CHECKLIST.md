@@ -114,11 +114,72 @@ See `PLAN.md` for design details and `CLAUDE.md` for rules.
 - [x] Security review pass: no secrets/addresses in logs, SSRF via allowlist + egress, CSRF everywhere, authz matrix test for admin routes, HSTS with TLS
 - [x] Docs: configuration reference, reverse proxy examples (Caddy/Traefik/nginx), backup of `/data`, security model
 
-## Later / nice-to-have
-- [ ] Camera flip/rotation from `server.webcams.list` (needs webcam info at render time without a page-load call)
-- [ ] Use slicer `estimated_time` (file metadata) for ETA alongside the progress-based estimate
-- [ ] TOTP 2FA
-- [ ] Trusted-header SSO (behind an auth proxy)
-- [ ] Job history view
-- [ ] Temperature presets / set targets
-- [ ] Notifications (print done/failed) via webhook
+## M8 — Later items (planned 2026-10-31)
+Order: smallest and most self-contained first; the auth changes (TOTP, SSO) last, because they touch the login path every test uses.
+Every new protected route goes into `PROTECTED_GET`/`PROTECTED_POST` in `tests/auth.rs`; every new admin route goes into the authz matrix.
+New mock endpoints go in both `tests/common/moonraker.rs` and `examples/mock_moonraker.rs`.
+
+### 8.1 Slicer ETA
+- [ ] Hub: when `print_stats.filename` changes to a non-empty name, fetch `server.files.metadata` once (over the open RPC; in `poll_once` through a small per-printer `filename → estimated_time` cache) and keep it in the `Publisher`
+- [ ] `Snapshot` gains `estimated_time: Option<f64>` (cleared when the filename changes or empties; a metadata error just leaves it `None`)
+- [ ] Card: `eta 30:00 · slicer 28:12`, where slicer = `estimated_time - print_duration` (clamped ≥ 0; hidden when complete or unknown)
+- [ ] Tests: card unit tests (with/without slicer time, overrun clamps to 0); hub integration test: one metadata call per file, none when idle
+
+### 8.2 Camera flip/rotation
+- [ ] `Webcam` carries `flip_h`, `flip_v`, `rotation` (0/90/180/270; anything else → 0) from `server.webcams.list`
+- [ ] Lazy camera tile: `.cam` loads `GET /p/{id}/camera/tile` on `hx-trigger="revealed"`. It uses `WebcamCache` (the snapshot needs the same lookup, so no extra Moonraker calls) and renders the `<img>` with transform classes, or `[ no camera ]` server-side
+- [ ] CSS classes `cam-flip-h`, `cam-flip-v`, `cam-rot-{90,180,270}` (no inline styles, CSP); rotated 90/270 tiles keep the card's aspect box; check at 390 px
+- [ ] `app.js`: snapshot refresh and live toggle also work on tiles that htmx swaps in (watch `htmx:load`)
+- [ ] Override cameras: optional flip/rotate select in the printer form (new migration column `webcam_transform`)
+- [ ] Tests: tile HTML has the classes; dashboard page load still makes zero printer calls; mock webcam with flip/rotation
+
+### 8.3 Temperature targets and presets
+- [ ] Migration: `temp_presets(id, name UNIQUE NOCASE, extruder REAL, bed REAL, sort_order, created_at, updated_at)`
+- [ ] `db::presets`: list/create/update/delete/reorder; admin UI section on the Printers page (`/ui/presets…` or inline panel), audit `preset_create/update/delete`
+- [ ] `MoonrakerClient::gcode_script()` → `POST /printer/gcode/script?script=…`
+- [ ] Heater set from Klipper objects: `extruder*`, `heater_bed`, `heater_generic X` → `SET_HEATER_TEMPERATURE HEATER=… TARGET=…`; `temperature_fan X` → `SET_TEMPERATURE_FAN_TARGET`. Validate the heater name against `printer.objects.list` and a strict charset (no G-code injection: `[A-Za-z0-9_ ]`, no newlines); target finite, 0–500 (Klipper enforces `max_temp`)
+- [ ] Card control `temps` (operator+, ready printers) opens a modal `GET /p/{id}/temps` (like the start picker; inputs aren't replaced by live updates): per-heater current/target, set-target form, `off`; preset buttons; `cooldown` (all heaters 0)
+- [ ] `POST /p/{id}/temp` (heater, target), `POST /p/{id}/preset/{preset_id}`, `POST /p/{id}/cooldown`; audit `temp_set`, `temp_preset`, `temp_cooldown`
+- [ ] Mock: `/printer/gcode/script` records scripts; tests for validation (bad heater, injection attempt, out of range), role gating, audit, CSRF
+
+### 8.4 Job history tab
+- [ ] `Tab::History` (`[5]History`, key `5`), `/ui/history` renders the printer selector instantly (no printer calls)
+- [ ] `/p/{id}/history?start=&limit=50` → `server.history.list` (newest first): end time, file, status badge, duration, filament (m), with prev/next paging and `j/k` selection
+- [ ] Totals line from `server.history.totals` (jobs, print time, filament, longest job) loaded with the list
+- [ ] Job details `/p/{id}/history/job?uid=` → `server.history.job` (metadata, thumbnail via the existing files thumb proxy if the file still exists)
+- [ ] Reprint button (operator+, only when `exists`) → existing `print/start` path; confirm dialog
+- [ ] History component not loaded (404) → a clean "history is disabled in Moonraker" box
+- [ ] Mock history endpoints; tests: tab lazy (no calls on `/ui/history`), paging, details, reprint role gating, disabled component
+
+### 8.5 Print notifications (webhook)
+- [ ] Config: `PRINTPIT_NOTIFY_WEBHOOK_URL` (+ `_FILE`; it usually embeds a token), validated as http(s); never logged or rendered
+- [ ] Migration: `printers.notify INTEGER NOT NULL DEFAULT 0`; checkbox in the printer form (shown only when the webhook is configured), audited with the printer update
+- [ ] `notify.rs`: a supervisor holds one hub `Subscription` per enabled `notify` printer, **the one documented exception to rule 2**. Resynced on startup and from `state.printer_changed`
+- [ ] Edge detection on `print_stats.state`: `printing|paused → complete|error|cancelled` only. The first snapshot after (re)connect sets the baseline and never fires, so reconnects don't double-notify
+- [ ] Payload: JSON `{printer, event, filename, duration, message}` plus `text`/`content` summary fields so Slack/Discord-style webhooks work. Printer name only, never its address
+- [ ] Separate webhook `reqwest::Client` (rustls, no redirects, 10 s timeout, 3 tries with backoff), not the printer egress client; document why in CLAUDE.md
+- [ ] Update CLAUDE.md rule 2 and PLAN.md §6 with the exception
+- [ ] Tests: transitions fire once; baseline doesn't fire; disabled printer/flag drops the subscription; webhook URL absent from logs and pages; local test webhook receiver
+
+### 8.6 TOTP 2FA
+- [ ] Deps: `hmac` + `sha1` (RustCrypto, RFC 6238 hand-rolled: 6 digits, 30 s, ±1 step), `qrcode` (SVG, no image deps) for the enrolment QR, checked against CSP (no `style=` in the SVG)
+- [ ] Migration: `users.totp_secret_enc BLOB NULL`, `users.totp_last_step INTEGER` (replay guard), `totp_recovery(user_id, code_hash)`
+- [ ] Secret sealed with `Cipher` (AAD `totp-secret`); recovery codes (10, random, shown once) stored as SHA-256
+- [ ] Account page: enrol (QR + manual key, confirm with a code before enabling), disable (needs password + code), regenerate recovery codes
+- [ ] Login step 2: after the password succeeds for a 2FA user, set a short-lived (5 min) HMAC-signed pending-login cookie and show `/login/totp`. The session is created only after a valid code or recovery code. Failures count in the login rate limiter
+- [ ] Admin: reset a user's 2FA on the Users page (revokes their sessions)
+- [ ] Audit: `totp_enable`, `totp_disable`, `totp_failed`, `totp_recovery_used`, `totp_reset`
+- [ ] Tests: RFC 6238 vectors, replay rejected, window, recovery single-use, pending cookie expiry/tamper, no session before step 2, rate limit, admin reset, secret never rendered after enrolment
+
+### 8.7 Trusted-header SSO
+- [ ] Config: `PRINTPIT_AUTH_HEADER` (e.g. `Remote-User`) requires `PRINTPIT_AUTH_PROXY_CIDRS` (config error otherwise); optional `PRINTPIT_AUTH_LOGOUT_URL`
+- [ ] Trust the header only when the **direct peer** IP is in `PRINTPIT_AUTH_PROXY_CIDRS` (not the XFF-derived client IP); ignore it otherwise
+- [ ] `require_auth`: no valid session + trusted header → look up an **existing, enabled** user (no auto-create; unknown → 403 page naming no internals). Create a normal session (so CSRF etc. are unchanged), set the cookie, audit `login` with `detail=sso`
+- [ ] Session exists but the header names a different user → drop it and switch to the header's user; header missing behind the proxy → fall back to the normal login page
+- [ ] Header logins skip TOTP (the proxy does MFA); password login still works; logout redirects to `PRINTPIT_AUTH_LOGOUT_URL` when set
+- [ ] Docs: Authelia/authentik + Caddy/Traefik examples, the proxy must strip client-supplied copies of the header
+- [ ] Tests: untrusted peer ignored, unknown user 403, disabled user refused, user switch, CSRF still enforced, audit entry
+
+### Wrap-up
+- [ ] README/docs config reference for the new env vars; CLAUDE.md decision log entries
+- [ ] Re-check image size and the lazy-load contract test after M8
