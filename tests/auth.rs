@@ -36,6 +36,9 @@ const PROTECTED_GET: &[&str] = &[
     "/p/1/logs/download?name=klippy.log",
     "/p/1/system/info",
     "/p/1/system/stats",
+    "/ui/history",
+    "/p/1/history",
+    "/p/1/history/job?uid=000001",
     "/ui/users",
     "/ui/audit",
 ];

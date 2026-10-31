@@ -294,3 +294,53 @@ pub struct UpdateStatus {
     pub busy: bool,
     pub version_info: std::collections::BTreeMap<String, serde_json::Value>,
 }
+
+/// One job from `server.history`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct HistoryJob {
+    pub job_id: String,
+    /// Whether the G-code file is still on the printer.
+    pub exists: bool,
+    pub filename: String,
+    /// `completed`, `cancelled`, `error`, `klippy_shutdown`, `in_progress`, …
+    pub status: String,
+    pub start_time: f64,
+    pub end_time: Option<f64>,
+    pub print_duration: f64,
+    pub total_duration: f64,
+    /// Millimetres.
+    pub filament_used: f64,
+    pub metadata: FileMetadata,
+}
+
+/// `GET /server/history/list`
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct HistoryList {
+    pub count: u64,
+    pub jobs: Vec<HistoryJob>,
+}
+
+/// `GET /server/history/totals`
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct HistoryTotals {
+    pub job_totals: JobTotals,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct JobTotals {
+    pub total_jobs: u64,
+    pub total_print_time: f64,
+    pub total_filament_used: f64,
+    pub longest_print: f64,
+}
+
+/// `GET /server/history/job`
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct HistoryJobEnvelope {
+    pub job: HistoryJob,
+}

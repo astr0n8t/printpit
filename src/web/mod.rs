@@ -7,6 +7,7 @@ mod auth;
 pub mod card;
 mod dashboard;
 pub(crate) mod files;
+mod history;
 pub mod layout;
 mod logs;
 mod presets;
@@ -74,6 +75,9 @@ pub fn router(state: AppState) -> Router {
         .route("/ui/system", get(system::tab))
         .route("/p/{id}/system/info", get(system::info))
         .route("/p/{id}/system/stats", get(system::stats))
+        .route("/ui/history", get(history::tab))
+        .route("/p/{id}/history", get(history::list))
+        .route("/p/{id}/history/job", get(history::job))
         .route("/ui/printers", get(printers::list))
         .route("/ui/printers/new", get(printers::new_form))
         .route("/ui/printers/{id}", get(printers::edit_form))

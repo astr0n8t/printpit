@@ -146,13 +146,14 @@ New mock endpoints go in both `tests/common/moonraker.rs` and `examples/mock_moo
 - [x] Mock: `/printer/gcode/script` records scripts (and refuses targets > 300 like Klipper's `max_temp`), mock gained `heater_generic chamber`; `tests/temps.rs` covers validation (bad heater, injection attempt, out of range), role gating, audit, CSRF
 
 ### 8.4 Job history tab
-- [ ] `Tab::History` (`[5]History`, key `5`), `/ui/history` renders the printer selector instantly (no printer calls)
-- [ ] `/p/{id}/history?start=&limit=50` → `server.history.list` (newest first): end time, file, status badge, duration, filament (m), with prev/next paging and `j/k` selection
-- [ ] Totals line from `server.history.totals` (jobs, print time, filament, longest job) loaded with the list
-- [ ] Job details `/p/{id}/history/job?uid=` → `server.history.job` (metadata, thumbnail via the existing files thumb proxy if the file still exists)
-- [ ] Reprint button (operator+, only when `exists`) → existing `print/start` path; confirm dialog
-- [ ] History component not loaded (404) → a clean "history is disabled in Moonraker" box
-- [ ] Mock history endpoints; tests: tab lazy (no calls on `/ui/history`), paging, details, reprint role gating, disabled component
+- [x] `Tab::History` (`[5]History`, key `5`), `/ui/history` renders the printer selector instantly (no printer calls)
+- [x] `/p/{id}/history?start=&limit=50` → `server.history.list` (newest first): end time, file, status badge, duration, filament (m), with prev/next paging and `j/k` selection
+- [x] Totals line from `server.history.totals` (jobs, print time, filament, longest print), fetched concurrently with the page (`tokio::join!`); a totals failure just hides the line
+- [x] Job details `/p/{id}/history/job?uid=` → `server.history.job` (times, durations, filament, slicer facts; thumbnail via the existing files thumb proxy if the file still exists). `files::facts`/`files::thumb_url` are shared with the Files tab. Job ids must be alphanumeric (≤ 32) before they go upstream; deep links `/ui/history?printer=&job=` preload the details
+- [x] Reprint button (operator+, only when `exists`) → existing `print/start` path; confirm dialog
+- [x] History component not loaded (404) → a clean "history is disabled in Moonraker" box
+- [x] Checked in Chromium at 1280 px and 390 px (`5`, `j/k`, Enter, paging, reload of a deep link); on phones the ended/filament columns hide
+- [x] Mock history endpoints (60 generated jobs, `no_history` option); tests: tab lazy (no calls on `/ui/history`), paging, details, reprint role gating, disabled component
 
 ### 8.5 Print notifications (webhook)
 - [ ] Config: `PRINTPIT_NOTIFY_WEBHOOK_URL` (+ `_FILE`; it usually embeds a token), validated as http(s); never logged or rendered

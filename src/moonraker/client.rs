@@ -17,8 +17,9 @@ use super::MoonrakerError;
 use super::net::{self, Egress};
 use super::status::query_string;
 use super::types::{
-    Envelope, ErrorEnvelope, FileEntry, ObjectList, ObjectStatus, PrinterInfo, ProcStats, ServerInfo,
-    SystemInfo, SystemInfoEnvelope, UpdateStatus, WebcamList,
+    Envelope, ErrorEnvelope, FileEntry, HistoryJob, HistoryJobEnvelope, HistoryList, HistoryTotals,
+    JobTotals, ObjectList, ObjectStatus, PrinterInfo, ProcStats, ServerInfo, SystemInfo, SystemInfoEnvelope,
+    UpdateStatus, WebcamList,
 };
 
 pub type MoonrakerSocket = WebSocketStream<reqwest::Upgraded>;
@@ -110,6 +111,29 @@ impl MoonrakerClient {
     /// Cached update status; `refresh=false` so viewing never triggers an update check.
     pub async fn update_status(&self) -> Result<UpdateStatus, MoonrakerError> {
         self.get_json("/machine/update/status?refresh=false").await
+    }
+
+    /// A page of print history, newest first. 404 when Moonraker's `[history]` is off.
+    pub async fn history(&self, start: u64, limit: u64) -> Result<HistoryList, MoonrakerError> {
+        self.get_json(&format!(
+            "/server/history/list?start={start}&limit={limit}&order=desc"
+        ))
+        .await
+    }
+
+    pub async fn history_totals(&self) -> Result<JobTotals, MoonrakerError> {
+        Ok(self
+            .get_json::<HistoryTotals>("/server/history/totals")
+            .await?
+            .job_totals)
+    }
+
+    /// One job by its id (callers pass only validated ids; see `web::history`).
+    pub async fn history_job(&self, uid: &str) -> Result<HistoryJob, MoonrakerError> {
+        Ok(self
+            .get_json::<HistoryJobEnvelope>(&format!("/server/history/job?uid={uid}"))
+            .await?
+            .job)
     }
 
     pub async fn webcams(&self) -> Result<WebcamList, MoonrakerError> {

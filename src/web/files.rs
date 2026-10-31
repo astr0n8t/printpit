@@ -331,7 +331,19 @@ pub struct MetaQuery {
     kind: Option<String>,
 }
 
-fn facts(m: &FileMetadata) -> Vec<(&'static str, String)> {
+/// The largest slicer thumbnail up to 400 px wide, as a `/p/{id}/files/thumb` URL. Thumbnail
+/// paths are relative to the G-code file's directory.
+pub(crate) fn thumb_url(id: i64, gcode_path: &str, m: &FileMetadata) -> Option<String> {
+    m.thumbnails
+        .iter()
+        .filter(|t| t.width <= 400 && !t.relative_path.is_empty())
+        .max_by_key(|t| t.width)
+        .and_then(|t| clean_path(&join(parent(gcode_path), &t.relative_path)))
+        .map(|t| format!("/p/{id}/files/thumb?path={}", urlencode(&t)))
+}
+
+/// Slicer metadata worth showing, as label/value pairs.
+pub(crate) fn facts(m: &FileMetadata) -> Vec<(&'static str, String)> {
     let mut f = vec![
         ("size", widgets::human_size(m.size)),
         ("modified", widgets::age(m.modified)),
@@ -387,17 +399,7 @@ pub async fn meta(
     } else {
         match state.printer_client(&p) {
             Ok(client) => match client.metadata(&path).await {
-                Ok(m) => {
-                    // Largest thumbnail up to 400 px wide; its path is relative to the file's dir.
-                    let thumb = m
-                        .thumbnails
-                        .iter()
-                        .filter(|t| t.width <= 400 && !t.relative_path.is_empty())
-                        .max_by_key(|t| t.width)
-                        .and_then(|t| clean_path(&join(parent(&path), &t.relative_path)))
-                        .map(|t| format!("/p/{id}/files/thumb?path={}", urlencode(&t)));
-                    (thumb, facts(&m), None)
-                }
+                Ok(m) => (thumb_url(id, &path, &m), facts(&m), None),
                 Err(e) => (None, Vec::new(), Some(format!("{}: {}", e.label(), e.detail()))),
             },
             Err(e) => (None, Vec::new(), Some(e.detail())),

@@ -36,6 +36,8 @@ pub struct MockOptions {
     pub no_range: bool,
     /// Answer `/machine/update/status` with 404, as when `[update_manager]` isn't configured.
     pub no_update_manager: bool,
+    /// Answer `/server/history/*` with 404, as when `[history]` isn't configured.
+    pub no_history: bool,
 }
 
 impl Default for MockOptions {
@@ -49,6 +51,7 @@ impl Default for MockOptions {
             no_websocket: false,
             no_range: false,
             no_update_manager: false,
+            no_history: false,
         }
     }
 }
@@ -177,6 +180,9 @@ impl MockMoonraker {
             .route("/printer/print/{action}", post(print_action))
             .route("/printer/emergency_stop", post(estop))
             .route("/printer/gcode/script", post(gcode_script))
+            .route("/server/history/list", get(history_list))
+            .route("/server/history/totals", get(history_totals))
+            .route("/server/history/job", get(history_job))
             .route("/webcam/", get(webcam))
             .route("/websocket", get(websocket))
             .layer(axum::middleware::from_fn_with_state(
@@ -705,6 +711,72 @@ async fn webcam(
             res
         }
         _ => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+/// How many jobs the mock's history holds.
+pub const HISTORY_JOBS: usize = 60;
+
+/// Job `i` (0 = oldest). Every third file has since been deleted; statuses rotate.
+fn history_job_json(i: usize) -> Value {
+    let (filename, exists) = match i % 3 {
+        0 => ("parts/clip.gcode", true),
+        1 => ("old.gcode", true),
+        _ => ("gone.gcode", false),
+    };
+    let status = ["completed", "cancelled", "klippy_shutdown"][i % 3];
+    let thumbs = if exists && filename == "parts/clip.gcode" {
+        json!([{"width": 300, "height": 300, "size": 1768, "relative_path": ".thumbs/clip-300x300.png"}])
+    } else {
+        json!([])
+    };
+    let start = 1_700_000_000.0 + i as f64 * 7200.0;
+    json!({"job_id": format!("{i:06X}"), "exists": exists, "filename": filename, "status": status,
+           "start_time": start, "end_time": start + 3700.0, "print_duration": 3600.0 + i as f64,
+           "total_duration": 3700.0, "filament_used": 1520.5,
+           "metadata": {"size": 1000, "modified": 1_600_000_000.0, "slicer": "PrusaSlicer",
+                        "estimated_time": 3725.0, "layer_height": 0.2, "thumbnails": thumbs}})
+}
+
+fn history_off(mock: &Mock) -> Option<Response> {
+    mock.opts.no_history.then(|| not_found("Not Found"))
+}
+
+async fn history_list(State(mock): State<Mock>, Query(q): Query<BTreeMap<String, String>>) -> Response {
+    if let Some(res) = history_off(&mock) {
+        return res;
+    }
+    let start: usize = q.get("start").and_then(|s| s.parse().ok()).unwrap_or(0);
+    let limit: usize = q.get("limit").and_then(|s| s.parse().ok()).unwrap_or(50);
+    assert_eq!(q.get("order").map(String::as_str), Some("desc"));
+    let jobs: Vec<Value> = (0..HISTORY_JOBS)
+        .rev()
+        .skip(start)
+        .take(limit)
+        .map(history_job_json)
+        .collect();
+    ok(json!({"count": HISTORY_JOBS, "jobs": jobs}))
+}
+
+async fn history_totals(State(mock): State<Mock>) -> Response {
+    if let Some(res) = history_off(&mock) {
+        return res;
+    }
+    ok(
+        json!({"job_totals": {"total_jobs": HISTORY_JOBS, "total_time": 222_000.0,
+              "total_print_time": 217_770.0, "total_filament_used": 91_230.0,
+              "longest_job": 3700.0, "longest_print": 3659.0}}),
+    )
+}
+
+async fn history_job(State(mock): State<Mock>, Query(q): Query<BTreeMap<String, String>>) -> Response {
+    if let Some(res) = history_off(&mock) {
+        return res;
+    }
+    let uid = q.get("uid").cloned().unwrap_or_default();
+    match usize::from_str_radix(&uid, 16).ok().filter(|i| *i < HISTORY_JOBS) {
+        Some(i) => ok(json!({"job": history_job_json(i)})),
+        None => not_found(&format!("Invalid job uid: {uid}")),
     }
 }
 

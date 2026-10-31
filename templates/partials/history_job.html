@@ -1,0 +1,25 @@
+<section class="panel" id="job-view">
+  <h2 class="panel-title">job</h2>
+{%- if let Some(e) = error %}
+  <p class="err" role="alert">! {{ e }}</p>
+{%- else %}
+  <p class="meta-name">{{ filename }} <span class="badge {{ class }}">{{ label }}</span></p>
+{%- if let Some(t) = thumbnail %}
+  <img class="thumb" src="{{ t }}" alt="thumbnail of {{ filename }}">
+{%- endif %}
+  <dl class="kv">
+{%- for (k, v) in facts %}
+    <dt>{{ k }}</dt><dd>{{ v }}</dd>
+{%- endfor %}
+  </dl>
+{%- if missing %}
+  <p class="dim">The file is no longer on the printer.</p>
+{%- endif %}
+{%- if reprint %}
+  <div class="actions">
+    <form hx-post="/p/{{ id }}/print/start" hx-target="#job-msg" hx-confirm="Print {{ filename }} again?"><input type="hidden" name="filename" value="{{ filename }}"><button class="primary">print again</button></form>
+  </div>
+  <div id="job-msg" class="msg" role="status"></div>
+{%- endif %}
+{%- endif %}
+</section>
