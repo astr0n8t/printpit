@@ -129,7 +129,7 @@ docker-compose.yml
    - `viewer`: read-only (dashboard, camera, file list, logs, system).
 6. **Password changes** for yourself, and **admin resets** for others. Changing a password revokes that user's other sessions.
 7. **Audit log.** Control actions (start, pause, cancel, e-stop, file delete/upload, printer and user changes) are recorded with user, printer, action and timestamp, and can be viewed by admins.
-8. *(Later)* Optional TOTP second factor, and optional trusted-header authentication for setups behind an SSO proxy.
+8. Optional TOTP second factor (account tab; see `auth::totp`), and optional trusted-header authentication for setups behind an SSO proxy (`auth::sso`: `PRINTPIT_AUTH_HEADER`, believed only from `PRINTPIT_AUTH_PROXY_CIDRS` as the direct peer, existing enabled users only, skips TOTP).
 
 ---
 

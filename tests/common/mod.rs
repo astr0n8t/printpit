@@ -70,6 +70,7 @@ impl TestApp {
             router: self.router.clone(),
             state: self.state.clone(),
             cookies: HashMap::new(),
+            peer: None,
         }
     }
 
@@ -180,6 +181,8 @@ pub struct Client {
     router: Router,
     state: AppState,
     pub cookies: HashMap<String, String>,
+    /// The TCP peer address requests appear to come from (`ConnectInfo`); none by default.
+    pub peer: Option<std::net::SocketAddr>,
 }
 
 impl Client {
@@ -209,7 +212,11 @@ impl Client {
                 .body(Body::from(b)),
             None => req.body(Body::empty()),
         };
-        let res = self.router.clone().oneshot(req.unwrap()).await.unwrap();
+        let mut req = req.unwrap();
+        if let Some(peer) = self.peer {
+            req.extensions_mut().insert(axum::extract::ConnectInfo(peer));
+        }
+        let res = self.router.clone().oneshot(req).await.unwrap();
         let resp = Resp {
             status: res.status(),
             headers: res.headers().clone(),

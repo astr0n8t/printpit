@@ -70,6 +70,11 @@ pub struct Config {
     pub trusted_proxies: Vec<IpNet>,
     pub log_format: LogFormat,
     pub notify_webhook: Option<WebhookUrl>,
+    /// Trusted-header single sign-on (e.g. `Remote-User`), honoured only from `auth_proxies`.
+    pub auth_header: Option<axum::http::HeaderName>,
+    pub auth_proxies: Vec<IpNet>,
+    /// Where logout sends SSO users (the proxy's own logout), if set.
+    pub auth_logout_url: Option<String>,
 }
 
 pub const DEFAULT_BIND: &str = "0.0.0.0:8080";
@@ -162,6 +167,41 @@ impl Config {
             .map(|raw| parse_webhook(&raw))
             .transpose()?;
 
+        let auth_header = get("PRINTPIT_AUTH_HEADER")
+            .map(|h| {
+                axum::http::HeaderName::try_from(h.trim()).map_err(|_| ConfigError::Invalid {
+                    var: "PRINTPIT_AUTH_HEADER",
+                    reason: format!("`{}` is not a valid header name", h.trim()),
+                })
+            })
+            .transpose()?;
+        let auth_proxies = parse_cidrs(
+            "PRINTPIT_AUTH_PROXY_CIDRS",
+            get("PRINTPIT_AUTH_PROXY_CIDRS").as_deref().unwrap_or(""),
+        )?;
+        if auth_header.is_some() && auth_proxies.is_empty() {
+            return Err(ConfigError::Missing {
+                var: "PRINTPIT_AUTH_PROXY_CIDRS",
+                hint: " when PRINTPIT_AUTH_HEADER is set (the address of the proxy that sets the header; \
+                       anyone else could send it too)",
+            });
+        }
+        let auth_logout_url = get("PRINTPIT_AUTH_LOGOUT_URL")
+            .map(|u| {
+                let u = u.trim().to_string();
+                let ok = (u.starts_with('/') && !u.starts_with("//"))
+                    || url::Url::parse(&u).is_ok_and(|p| matches!(p.scheme(), "http" | "https"));
+                if ok {
+                    Ok(u)
+                } else {
+                    Err(ConfigError::Invalid {
+                        var: "PRINTPIT_AUTH_LOGOUT_URL",
+                        reason: "must be an http(s):// URL or a path starting with /".into(),
+                    })
+                }
+            })
+            .transpose()?;
+
         let log_format = match get("PRINTPIT_LOG_FORMAT").as_deref().map(str::trim) {
             None | Some("pretty") => LogFormat::Pretty,
             Some("json") => LogFormat::Json,
@@ -189,6 +229,9 @@ impl Config {
             trusted_proxies,
             log_format,
             notify_webhook,
+            auth_header,
+            auth_proxies,
+            auth_logout_url,
         })
     }
 }
@@ -368,6 +411,50 @@ mod tests {
     fn debug_redacts_secret() {
         let c = load(&[("PRINTPIT_SECRET_KEY", KEY)]).unwrap();
         assert!(format!("{c:?}").contains("<redacted>"));
+    }
+
+    #[test]
+    fn auth_header_needs_proxies() {
+        let c = load(&[
+            ("PRINTPIT_SECRET_KEY", KEY),
+            ("PRINTPIT_AUTH_HEADER", "Remote-User"),
+            ("PRINTPIT_AUTH_PROXY_CIDRS", "172.30.0.2"),
+            ("PRINTPIT_AUTH_LOGOUT_URL", "https://auth.example.com/logout"),
+        ])
+        .unwrap();
+        assert_eq!(c.auth_header.unwrap().as_str(), "remote-user");
+        assert_eq!(c.auth_proxies.len(), 1);
+        let err = load(&[
+            ("PRINTPIT_SECRET_KEY", KEY),
+            ("PRINTPIT_AUTH_HEADER", "Remote-User"),
+        ])
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            ConfigError::Missing {
+                var: "PRINTPIT_AUTH_PROXY_CIDRS",
+                ..
+            }
+        ));
+        for (var, bad) in [
+            ("PRINTPIT_AUTH_HEADER", "Remote User"),
+            ("PRINTPIT_AUTH_LOGOUT_URL", "//evil.example"),
+            ("PRINTPIT_AUTH_LOGOUT_URL", "javascript:alert(1)"),
+        ] {
+            let vars = [
+                ("PRINTPIT_SECRET_KEY", KEY),
+                ("PRINTPIT_AUTH_HEADER", "Remote-User"),
+                ("PRINTPIT_AUTH_PROXY_CIDRS", "10.0.0.1"),
+                (var, bad),
+            ];
+            assert!(load(&vars).is_err(), "{var}={bad}");
+        }
+        assert!(
+            load(&[("PRINTPIT_SECRET_KEY", KEY)])
+                .unwrap()
+                .auth_header
+                .is_none()
+        );
     }
 
     #[test]

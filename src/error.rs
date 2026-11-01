@@ -20,6 +20,9 @@ pub enum AppError {
     BadRequest(String),
     #[error("forbidden")]
     Forbidden,
+    /// 403 with an explanation.
+    #[error("denied: {0}")]
+    Denied(String),
     #[error("csrf check failed")]
     Csrf,
     /// Details are logged, never shown to the user.
@@ -36,7 +39,7 @@ impl AppError {
         match self {
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
-            Self::Forbidden | Self::Csrf => StatusCode::FORBIDDEN,
+            Self::Forbidden | Self::Denied(_) | Self::Csrf => StatusCode::FORBIDDEN,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -46,6 +49,7 @@ impl AppError {
             Self::NotFound => "Nothing here.".into(),
             Self::BadRequest(msg) => msg.clone(),
             Self::Forbidden => "You don't have permission to do that.".into(),
+            Self::Denied(msg) => msg.clone(),
             Self::Csrf => "Security token missing or invalid. Reload the page and try again.".into(),
             Self::Internal(_) => "Something went wrong. Details are in the server log.".into(),
         }

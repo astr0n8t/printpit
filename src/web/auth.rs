@@ -2,13 +2,15 @@
 
 use askama::Template;
 use axum::extract::{Query, State};
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::{Form, extract::rejection::FormRejection};
 use axum_extra::extract::CookieJar;
 use serde::Deserialize;
 
+use crate::auth::client_ip::PeerIp;
 use crate::auth::session::{self, SessionCheck};
+use crate::auth::sso;
 use crate::auth::totp::{PENDING_SECS, Pending};
 use crate::auth::{ClientIp, CurrentUser, csrf, password, safe_next, validate_username};
 use crate::db::{self, audit, sessions, users};
@@ -124,10 +126,15 @@ fn login_response(
 
 pub async fn login_page(
     State(state): State<AppState>,
+    peer: PeerIp,
+    headers: HeaderMap,
     jar: CookieJar,
     Query(q): Query<NextQuery>,
 ) -> Result<Response, AppError> {
-    if let SessionCheck::Valid(_) = session::check(&state, &jar).await? {
+    // Signed in already, or the auth proxy vouches for someone (the protected route they go
+    // on to signs them in, or explains why it can't): no form needed.
+    let signed_in = matches!(session::check(&state, &jar).await?, SessionCheck::Valid(_));
+    if signed_in || sso::header_user(&state.config, &headers, peer.0).is_some() {
         return Ok(Redirect::to(safe_next(q.next.as_deref())).into_response());
     }
     login_response(&state, jar, StatusCode::OK, q.next.as_deref(), "", None)
@@ -394,10 +401,14 @@ pub async fn logout(
         &state.config,
         session::cookie_name(&state.config),
     ));
+    // Behind an auth proxy, the proxy's own logout ends its session too (otherwise the next
+    // request would sign straight back in).
+    let to = state.config.auth_logout_url.as_deref().unwrap_or("/login");
     if hx.0 {
-        Ok((jar, [("hx-redirect", "/login")]).into_response())
+        let to = HeaderValue::from_str(to).unwrap_or(HeaderValue::from_static("/login"));
+        Ok((jar, [(HeaderName::from_static("hx-redirect"), to)]).into_response())
     } else {
-        Ok((jar, Redirect::to("/login")).into_response())
+        Ok((jar, Redirect::to(to)).into_response())
     }
 }
 

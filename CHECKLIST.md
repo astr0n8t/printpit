@@ -178,13 +178,14 @@ New mock endpoints go in both `tests/common/moonraker.rs` and `examples/mock_moo
 - [x] Tests: RFC 6238 vectors, replay rejected, window, recovery single-use, pending cookie expiry/tamper, no session before step 2, rate limit, admin reset, secret never rendered after enrolment
 
 ### 8.7 Trusted-header SSO
-- [ ] Config: `PRINTPIT_AUTH_HEADER` (e.g. `Remote-User`) requires `PRINTPIT_AUTH_PROXY_CIDRS` (config error otherwise); optional `PRINTPIT_AUTH_LOGOUT_URL`
-- [ ] Trust the header only when the **direct peer** IP is in `PRINTPIT_AUTH_PROXY_CIDRS` (not the XFF-derived client IP); ignore it otherwise
-- [ ] `require_auth`: no valid session + trusted header → look up an **existing, enabled** user (no auto-create; unknown → 403 page naming no internals). Create a normal session (so CSRF etc. are unchanged), set the cookie, audit `login` with `detail=sso`
-- [ ] Session exists but the header names a different user → drop it and switch to the header's user; header missing behind the proxy → fall back to the normal login page
-- [ ] Header logins skip TOTP (the proxy does MFA); password login still works; logout redirects to `PRINTPIT_AUTH_LOGOUT_URL` when set
-- [ ] Docs: Authelia/authentik + Caddy/Traefik examples, the proxy must strip client-supplied copies of the header
-- [ ] Tests: untrusted peer ignored, unknown user 403, disabled user refused, user switch, CSRF still enforced, audit entry
+- [x] Config: `PRINTPIT_AUTH_HEADER` (e.g. `Remote-User`) requires `PRINTPIT_AUTH_PROXY_CIDRS` (config error otherwise); optional `PRINTPIT_AUTH_LOGOUT_URL`
+- [x] Trust the header only when the **direct peer** IP is in `PRINTPIT_AUTH_PROXY_CIDRS` (new `client_ip::PeerIp` extractor, IPv4-mapped addresses canonicalised; never the XFF-derived client IP); ignore it otherwise, and refuse duplicate headers. Checked against the real server with curl (ConnectInfo), not only in tests
+- [x] `require_auth`: no valid session + trusted header → look up an **existing, enabled** user (no auto-create; unknown → 403 page naming no internals; new `AppError::Denied(msg)`). Create a normal session (so CSRF etc. are unchanged), set the cookie, audit `login` with `detail=sso`
+- [x] Session exists but the header names a different user → drop it and switch to the header's user; header missing behind the proxy → fall back to the normal login page
+- [x] Header logins skip TOTP (the proxy does MFA); password login still works; logout redirects to `PRINTPIT_AUTH_LOGOUT_URL` when set (validated: http(s) or a `/path`, not `//host`); `/login` skips the form when the proxy vouches for someone
+- [x] Docs: README "Single sign-on" section with Caddy + Authelia and Traefik examples (both strip client-supplied `Remote-User` first), config table rows, security model; PLAN §3.8
+- [x] Test client can set a peer address (`Client::peer` → `ConnectInfo`)
+- [x] Tests: untrusted peer ignored (incl. spoofed X-Forwarded-For and no peer), unknown user 403, disabled user refused, user switch, CSRF still enforced, audit entry
 
 ### Wrap-up
 - [ ] README/docs config reference for the new env vars; CLAUDE.md decision log entries

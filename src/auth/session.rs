@@ -12,9 +12,10 @@ use axum::response::{IntoResponse, Redirect, Response};
 use axum_extra::extract::CookieJar;
 use axum_extra::extract::cookie::{Cookie, SameSite};
 
-use super::Role;
+use super::client_ip::{ClientIp, PeerIp};
+use super::{Role, sso, validate_username};
 use crate::config::Config;
-use crate::db::{self, sessions};
+use crate::db::{self, audit, sessions, users};
 use crate::error::AppError;
 use crate::state::AppState;
 use crate::web::layout::HxRequest;
@@ -184,14 +185,71 @@ pub async fn check(state: &AppState, jar: &CookieJar) -> Result<SessionCheck, sq
     if now - s.last_seen_at >= TOUCH_INTERVAL_SECS {
         sessions::touch(&state.db, &hash).await?;
     }
-    Ok(SessionCheck::Valid(Box::new(CurrentUser {
+    Ok(SessionCheck::Valid(Box::new(current_user(s, hash))))
+}
+
+fn current_user(s: sessions::SessionUser, hash: Vec<u8>) -> CurrentUser {
+    CurrentUser {
         id: s.user_id,
         username: s.username,
         role: s.role,
         csrf_token: s.csrf_token,
         session_hash: hash,
         theme: Theme::parse(s.theme.as_deref()),
-    })))
+    }
+}
+
+/// Signs in the user a trusted proxy named: an existing, enabled account only. Returns the
+/// user and the new session cookie.
+async fn sso_session(
+    state: &AppState,
+    ip: ClientIp,
+    user_agent: Option<&str>,
+    name: &str,
+) -> Result<(CurrentUser, Cookie<'static>), AppError> {
+    let denied = || {
+        AppError::Denied(format!(
+            "You're signed in as \"{name}\", but printpit has no enabled user by that name. Ask an admin to add one."
+        ))
+    };
+    if validate_username(name).is_err() {
+        return Err(denied());
+    }
+    let user = match users::by_username(&state.db, name).await? {
+        Some(u) if !u.disabled => u,
+        _ => {
+            tracing::warn!(user = %name, "SSO sign-in refused: no such enabled user");
+            return Err(denied());
+        }
+    };
+    let ip_str = ip.to_string_opt();
+    let new = sessions::create(
+        &state.db,
+        user.id,
+        state.config.session_absolute,
+        user_agent,
+        ip_str.as_deref(),
+    )
+    .await?;
+    let s = sessions::lookup(&state.db, &new.id_hash)
+        .await?
+        .ok_or_else(|| AppError::internal("new session vanished"))?;
+    audit::record(
+        &state.db,
+        audit::Entry {
+            user_id: Some(user.id),
+            printer_id: None,
+            action: "login",
+            detail: Some("sso".into()),
+            ip: ip_str,
+        },
+    )
+    .await;
+    tracing::info!(user = %user.username, "login (sso)");
+    Ok((
+        current_user(s, new.id_hash),
+        session_cookie(&state.config, new.token),
+    ))
 }
 
 /// Whether a session is still live. Long-lived responses (SSE) call this periodically so a
@@ -208,21 +266,49 @@ pub async fn still_valid(state: &AppState, session_hash: &[u8]) -> bool {
     }
 }
 
-/// Resolves the session cookie to a user, or sends the client to the login page.
+/// Resolves the session cookie to a user, or sends the client to the login page. With
+/// trusted-header SSO, a request from the auth proxy naming a user is signed in as that user
+/// (replacing a session for anyone else).
 pub async fn require_auth(
     State(state): State<AppState>,
     hx: HxRequest,
+    ip: ClientIp,
+    peer: PeerIp,
     jar: CookieJar,
     mut req: Request,
     next: Next,
 ) -> Result<Response, AppError> {
-    match check(&state, &jar).await? {
-        SessionCheck::Valid(user) => {
+    let sso_name = sso::header_user(&state.config, req.headers(), peer.0);
+    let check = check(&state, &jar).await?;
+    match (check, sso_name) {
+        (SessionCheck::Valid(user), None) => {
             req.extensions_mut().insert(*user);
             Ok(next.run(req).await)
         }
-        SessionCheck::Missing => Ok(unauthenticated(hx, &req, None)),
-        SessionCheck::Invalid => {
+        (SessionCheck::Valid(user), Some(name)) if name.eq_ignore_ascii_case(&user.username) => {
+            req.extensions_mut().insert(*user);
+            Ok(next.run(req).await)
+        }
+        (check, Some(name)) => {
+            if let SessionCheck::Valid(other) = check {
+                // The proxy now vouches for someone else: that session ends here.
+                sessions::delete(&state.db, &other.session_hash).await?;
+            }
+            let user_agent = req
+                .headers()
+                .get(axum::http::header::USER_AGENT)
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string);
+            let (user, cookie) = sso_session(&state, ip, user_agent.as_deref(), &name).await?;
+            req.extensions_mut().insert(user);
+            let mut res = next.run(req).await;
+            if let Ok(v) = HeaderValue::from_str(&cookie.to_string()) {
+                res.headers_mut().append(axum::http::header::SET_COOKIE, v);
+            }
+            Ok(res)
+        }
+        (SessionCheck::Missing, None) => Ok(unauthenticated(hx, &req, None)),
+        (SessionCheck::Invalid, None) => {
             let clear = removal(&state.config, cookie_name(&state.config));
             Ok(unauthenticated(hx, &req, Some(clear)))
         }

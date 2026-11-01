@@ -92,6 +92,47 @@ labels:
 
 Traefik streams SSE without extra settings. Raise its read timeout if you use long camera streams.
 
+### Single sign-on (auth proxy)
+
+If an auth proxy such as Authelia, authentik or oauth2-proxy already signs people in, printpit can trust the username it passes on:
+
+```sh
+PRINTPIT_AUTH_HEADER=Remote-User
+PRINTPIT_AUTH_PROXY_CIDRS=172.30.0.2        # the proxy's address as printpit sees it
+PRINTPIT_AUTH_LOGOUT_URL=https://auth.example.com/logout   # optional
+```
+
+- The header is believed only on connections coming **directly** from an address in `PRINTPIT_AUTH_PROXY_CIDRS`. `X-Forwarded-For` doesn't count, and requests from anywhere else are treated normally.
+- It only signs in users that already exist in printpit and are enabled: create them on the Users tab with the same usernames. Anyone else gets a "no enabled user by that name" page. printpit never creates users from the header.
+- Header sign-ins skip printpit's own two-factor step (the proxy does MFA). Password sign-in keeps working for everyone, for example when the proxy is down.
+- If the header names a different user from the current session, that session ends and the header's user is signed in.
+- Logout sends people to `PRINTPIT_AUTH_LOGOUT_URL` when it's set. Without it, the next request would sign them straight back in.
+
+**The proxy must remove any `Remote-User` header the client sends** and set its own. Otherwise anyone who can reach the proxy can claim to be anyone. With Caddy and Authelia:
+
+```caddyfile
+printpit.example.com {
+	request_header -Remote-User
+	forward_auth authelia:9091 {
+		uri /api/authz/forward-auth
+		copy_headers Remote-User
+	}
+	reverse_proxy printpit:8080 {
+		flush_interval -1
+	}
+}
+```
+
+With Traefik, strip the header before the forward-auth middleware:
+
+```yaml
+labels:
+  - traefik.http.middlewares.strip-user.headers.customrequestheaders.Remote-User=
+  - traefik.http.middlewares.authelia.forwardauth.address=http://authelia:9091/api/authz/forward-auth
+  - traefik.http.middlewares.authelia.forwardauth.authResponseHeaders=Remote-User
+  - traefik.http.routers.printpit.middlewares=strip-user,authelia
+```
+
 ## Configuration
 
 All settings are environment variables.
@@ -114,6 +155,9 @@ All settings are environment variables.
 | `PRINTPIT_MAX_UPLOAD_MB` | `1024` | Largest G-code upload. |
 | `PRINTPIT_NOTIFY_WEBHOOK_URL` | unset | Where print notifications are POSTed (see below). Never logged or shown. |
 | `PRINTPIT_NOTIFY_WEBHOOK_URL_FILE` | unset | Read the webhook URL from a file instead (Docker secrets). |
+| `PRINTPIT_AUTH_HEADER` | unset | Trusted-header single sign-on, e.g. `Remote-User` (see above). |
+| `PRINTPIT_AUTH_PROXY_CIDRS` | unset | Required with `PRINTPIT_AUTH_HEADER`: the only peers whose header is believed. |
+| `PRINTPIT_AUTH_LOGOUT_URL` | unset | Where logout sends people (the auth proxy's logout). |
 | `PRINTPIT_LOG_FORMAT` | `pretty` | `pretty` or `json`. |
 | `RUST_LOG` | `info` | Log filter, e.g. `info,printpit=debug`. |
 
@@ -166,6 +210,7 @@ Restore by extracting into an empty volume. You need the **same `PRINTPIT_SECRET
 ## Security model
 
 - Passwords are hashed with Argon2id. Sessions are server-side, with only a SHA-256 of the session ID stored, in `HttpOnly`, `SameSite=Lax` cookies (`__Host-` prefixed with TLS). Every change needs a CSRF token.
+- Optional trusted-header single sign-on, believed only from the configured proxy addresses (the direct peer, not `X-Forwarded-For`) and only for existing, enabled users.
 - Optional TOTP two-factor sign-in (RFC 6238). Secrets are encrypted with `PRINTPIT_SECRET_KEY`, each code works once, recovery codes are stored hashed, and wrong codes count towards the login rate limit. No session exists until the code step succeeds.
 - Failed logins are rate-limited per IP and per username. First-run setup needs a one-time token from the container log.
 - A strict Content-Security-Policy is applied, with no inline scripts and no third-party assets. Everything is served from the binary.
