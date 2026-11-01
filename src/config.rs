@@ -53,6 +53,48 @@ impl fmt::Debug for WebhookUrl {
     }
 }
 
+/// The slicer worker's base URL (always ending in `/`). Internal, but never printed: like a
+/// printer address it stays out of pages and logs.
+#[derive(Clone)]
+pub struct SlicerUrl(pub url::Url);
+
+impl fmt::Debug for SlicerUrl {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("SlicerUrl(<redacted>)")
+    }
+}
+
+/// The bearer token shared with the slicer worker. Never printed.
+#[derive(Clone)]
+pub struct SlicerToken(String);
+
+impl SlicerToken {
+    pub fn secret(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for SlicerToken {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("SlicerToken(<redacted>)")
+    }
+}
+
+/// Slicing (PLAN §15). Present only when `PRINTPIT_SLICER_URL` is set; otherwise the feature is off.
+#[derive(Debug, Clone)]
+pub struct SlicerConfig {
+    pub url: SlicerUrl,
+    pub token: SlicerToken,
+    /// The whole worker request: upload, slice and G-code download. Dropping it kills the slice.
+    pub timeout: Duration,
+    pub max_model_bytes: u64,
+    /// Models and output under `<data>/slicer` are deleted after this.
+    pub retention: Duration,
+}
+
+/// The worker refuses shorter tokens; checked here too so the mistake shows at printpit's start.
+pub const SLICER_TOKEN_MIN_LEN: usize = 24;
+
 #[derive(Debug, Clone)]
 pub struct Config {
     pub bind: SocketAddr,
@@ -75,6 +117,7 @@ pub struct Config {
     pub auth_proxies: Vec<IpNet>,
     /// Where logout sends SSO users (the proxy's own logout), if set.
     pub auth_logout_url: Option<String>,
+    pub slicer: Option<SlicerConfig>,
 }
 
 pub const DEFAULT_BIND: &str = "0.0.0.0:8080";
@@ -202,6 +245,8 @@ impl Config {
             })
             .transpose()?;
 
+        let slicer = parse_slicer(&get)?;
+
         let log_format = match get("PRINTPIT_LOG_FORMAT").as_deref().map(str::trim) {
             None | Some("pretty") => LogFormat::Pretty,
             Some("json") => LogFormat::Json,
@@ -232,6 +277,7 @@ impl Config {
             auth_header,
             auth_proxies,
             auth_logout_url,
+            slicer,
         })
     }
 }
@@ -260,6 +306,73 @@ fn parse_webhook(raw: &str) -> Result<WebhookUrl, ConfigError> {
         return Err(invalid("must be an http:// or https:// URL"));
     }
     Ok(WebhookUrl(url))
+}
+
+fn parse_slicer(get: &impl Fn(&str) -> Option<String>) -> Result<Option<SlicerConfig>, ConfigError> {
+    let token = secret(get, "PRINTPIT_SLICER_TOKEN")?;
+    let Some(raw_url) = get("PRINTPIT_SLICER_URL") else {
+        if token.is_some() {
+            return Err(ConfigError::Missing {
+                var: "PRINTPIT_SLICER_URL",
+                hint: " when PRINTPIT_SLICER_TOKEN is set (the slicer worker's address, e.g. http://slicer:8090)",
+            });
+        }
+        return Ok(None);
+    };
+    let url_err = |reason: &str| ConfigError::Invalid {
+        var: "PRINTPIT_SLICER_URL",
+        reason: reason.into(),
+    };
+    let mut url = url::Url::parse(raw_url.trim()).map_err(|_| url_err("not a valid URL"))?;
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        return Err(url_err("must be an http:// or https:// URL"));
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(url_err("must not contain credentials; use PRINTPIT_SLICER_TOKEN"));
+    }
+    if url.query().is_some() || url.fragment().is_some() {
+        return Err(url_err("must not have a query or fragment"));
+    }
+    if !url.path().ends_with('/') {
+        let path = format!("{}/", url.path());
+        url.set_path(&path);
+    }
+
+    let token = token.ok_or(ConfigError::Missing {
+        var: "PRINTPIT_SLICER_TOKEN",
+        hint: " when PRINTPIT_SLICER_URL is set (the same token the worker has; `openssl rand -hex 32`)",
+    })?;
+    let token_err = |reason: String| ConfigError::Invalid {
+        var: "PRINTPIT_SLICER_TOKEN",
+        reason,
+    };
+    let token = token.trim();
+    if token.len() < SLICER_TOKEN_MIN_LEN {
+        return Err(token_err(format!(
+            "must be at least {SLICER_TOKEN_MIN_LEN} characters"
+        )));
+    }
+    if !token.bytes().all(|b| b.is_ascii_graphic()) {
+        return Err(token_err("must be printable ASCII without spaces".into()));
+    }
+
+    let positive = |var: &'static str, default: &str| -> Result<u64, ConfigError> {
+        let n: u64 = parse_or(var, get(var), default)?;
+        if n == 0 {
+            return Err(ConfigError::Invalid {
+                var,
+                reason: "must be greater than zero".into(),
+            });
+        }
+        Ok(n)
+    };
+    Ok(Some(SlicerConfig {
+        url: SlicerUrl(url),
+        token: SlicerToken(token.to_string()),
+        timeout: Duration::from_secs(positive("PRINTPIT_SLICER_TIMEOUT_SECS", "1800")?),
+        max_model_bytes: positive("PRINTPIT_SLICER_MAX_MODEL_MB", "200")? * 1024 * 1024,
+        retention: Duration::from_secs(3600 * positive("PRINTPIT_SLICER_RETENTION_HOURS", "72")?),
+    }))
 }
 
 fn parse_secret_key(raw: &str) -> Result<SecretKey, ConfigError> {
@@ -455,6 +568,107 @@ mod tests {
                 .auth_header
                 .is_none()
         );
+    }
+
+    const SLICER_TOKEN: &str = "slicer-token-0123456789abcdef0123";
+
+    #[test]
+    fn slicer_is_off_by_default() {
+        assert!(load(&[("PRINTPIT_SECRET_KEY", KEY)]).unwrap().slicer.is_none());
+    }
+
+    #[test]
+    fn slicer_config() {
+        let c = load(&[
+            ("PRINTPIT_SECRET_KEY", KEY),
+            ("PRINTPIT_SLICER_URL", "http://slicer:8090"),
+            ("PRINTPIT_SLICER_TOKEN", SLICER_TOKEN),
+        ])
+        .unwrap();
+        let s = c.slicer.as_ref().unwrap();
+        assert_eq!(s.url.0.as_str(), "http://slicer:8090/");
+        assert_eq!(s.token.secret(), SLICER_TOKEN);
+        assert_eq!(s.timeout, Duration::from_secs(1800));
+        assert_eq!(s.max_model_bytes, 200 * 1024 * 1024);
+        assert_eq!(s.retention, Duration::from_secs(72 * 3600));
+        let debug = format!("{c:?}");
+        assert!(
+            !debug.contains(SLICER_TOKEN) && !debug.contains("slicer:8090"),
+            "{debug}"
+        );
+
+        let c = load(&[
+            ("PRINTPIT_SECRET_KEY", KEY),
+            ("PRINTPIT_SLICER_URL", "https://tools.lan/slicer"),
+            ("PRINTPIT_SLICER_TOKEN", SLICER_TOKEN),
+            ("PRINTPIT_SLICER_TIMEOUT_SECS", "60"),
+            ("PRINTPIT_SLICER_MAX_MODEL_MB", "5"),
+            ("PRINTPIT_SLICER_RETENTION_HOURS", "1"),
+        ])
+        .unwrap();
+        let s = c.slicer.unwrap();
+        assert_eq!(s.url.0.as_str(), "https://tools.lan/slicer/");
+        assert_eq!(s.timeout, Duration::from_secs(60));
+        assert_eq!(s.max_model_bytes, 5 * 1024 * 1024);
+        assert_eq!(s.retention, Duration::from_secs(3600));
+    }
+
+    #[test]
+    fn slicer_token_from_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("token");
+        std::fs::write(&path, format!("{SLICER_TOKEN}\n")).unwrap();
+        let c = load(&[
+            ("PRINTPIT_SECRET_KEY", KEY),
+            ("PRINTPIT_SLICER_URL", "http://slicer:8090"),
+            ("PRINTPIT_SLICER_TOKEN_FILE", path.to_str().unwrap()),
+        ])
+        .unwrap();
+        assert_eq!(c.slicer.unwrap().token.secret(), SLICER_TOKEN);
+    }
+
+    #[test]
+    fn slicer_config_errors() {
+        let url = ("PRINTPIT_SLICER_URL", "http://slicer:8090");
+        let token = ("PRINTPIT_SLICER_TOKEN", SLICER_TOKEN);
+        let key = ("PRINTPIT_SECRET_KEY", KEY);
+        assert!(matches!(
+            load(&[key, url]).unwrap_err(),
+            ConfigError::Missing {
+                var: "PRINTPIT_SLICER_TOKEN",
+                ..
+            }
+        ));
+        assert!(matches!(
+            load(&[key, token]).unwrap_err(),
+            ConfigError::Missing {
+                var: "PRINTPIT_SLICER_URL",
+                ..
+            }
+        ));
+        for bad_url in [
+            "slicer:8090",
+            "ftp://slicer/",
+            "http://user:pass@slicer:8090",
+            "http://slicer:8090/?x=1",
+            "not a url",
+        ] {
+            let err = load(&[key, token, ("PRINTPIT_SLICER_URL", bad_url)]).unwrap_err();
+            assert!(!err.to_string().contains("pass"), "{err}");
+            assert!(matches!(err, ConfigError::Invalid { .. }), "{bad_url}: {err}");
+        }
+        for bad_token in ["short", "has spaces in the middle of it, too"] {
+            let err = load(&[key, url, ("PRINTPIT_SLICER_TOKEN", bad_token)]).unwrap_err();
+            assert!(!err.to_string().contains(bad_token), "{err}");
+        }
+        for var in [
+            "PRINTPIT_SLICER_TIMEOUT_SECS",
+            "PRINTPIT_SLICER_MAX_MODEL_MB",
+            "PRINTPIT_SLICER_RETENTION_HOURS",
+        ] {
+            assert!(load(&[key, url, token, (var, "0")]).is_err(), "{var}=0");
+            assert!(load(&[key, url, token, (var, "x")]).is_err(), "{var}=x");
+        }
     }
 
     #[test]

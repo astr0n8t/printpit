@@ -220,10 +220,11 @@ Same rules as M8: new protected routes go into `PROTECTED_GET`/`PROTECTED_POST`,
 - [ ] Verify the 3MF `project_settings` path in the golden test (checked by hand with a CLI-made 3MF; add a GUI-made multi-plate project as a fixture)
 
 ### 9.2 printpit plumbing
-- [ ] Config: `PRINTPIT_SLICER_URL` (http(s), redacted in `Debug`), `PRINTPIT_SLICER_TOKEN`(+`_FILE`, required with the URL → config error otherwise), `_TIMEOUT_SECS`, `_MAX_MODEL_MB`, `_RETENTION_HOURS`
-- [ ] `slicer.rs`: own `reqwest::Client` (no redirects, connect timeout, no printer egress), `SlicerError` with `label()`/`detail()` like `MoonrakerError` (offline, unauthorized, busy, failed, timeout), address-free messages
-- [ ] Migration `0007_slicer.sql`: `slicer_profiles`, `printer_slicer`, `slice_jobs` (PLAN §10); `db::slicer` repository
-- [ ] `/data/slicer/{job}/` storage helpers; created 0700, files 0600 (verify in the Docker image, not just locally)
+- [x] Config: `PRINTPIT_SLICER_URL` (http(s), redacted in `Debug`), `PRINTPIT_SLICER_TOKEN`(+`_FILE`, required with the URL → config error otherwise), `_TIMEOUT_SECS`, `_MAX_MODEL_MB`, `_RETENTION_HOURS`. Also: no credentials/query in the URL, token checked like the worker's (≥24 chars), a token without a URL is an error
+- [x] `slicer.rs`: own `reqwest::Client` (no redirects, connect timeout, no printer egress), `SlicerError` with `label()`/`detail()` like `MoonrakerError` (offline, unauthorized, busy, failed, timeout), address-free messages. As `src/slicer/` (`client`, `error`, `storage`); `state.slicing: Option<Arc<Slicing>>` (`state.slicer` is the 8.1 ETA cache). Covers every worker route; `slice()` streams the model up and the G-code to disk. Contract-tested against the real worker (`tests/slicer_client.rs`)
+- [x] Migration `0007_slicer.sql`: `slicer_profiles`, `printer_slicer`, `slice_jobs` (PLAN §10); `db::slicer` repository (guarded status transitions, atomic `claim_next`, delete guard, restart sweep, retention set; `tests/slicer_db.rs`)
+- [x] `/data/slicer/{job}/` storage helpers; created 0700, files 0600 (verify in the Docker image, not just locally). The directory is verified in the image (700, uid 65532; DB still 600); files are 0600 in tests
+- [ ] Verify job files are 0600 inside the Docker image once 9.4 creates them (end-to-end slice in the container)
 
 ### 9.3 Profile library (admin)
 - [ ] `[s]Slicer` admin page (`/ui/slicer`, only when the slicer is configured): list profiles by kind, delete (blocked while a printer or queued job uses it), `test` button → `/v1/health` + `/v1/info`

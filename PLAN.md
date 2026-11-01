@@ -286,11 +286,15 @@ printers(id, name UNIQUE NOCASE, base_url, api_key_enc BLOB NULL /* version||non
 user_prefs(user_id PK, selected_printer_id, theme, auto_refresh BOOL DEFAULT 1)
 audit_log(id, user_id, printer_id NULL, action, detail_json, created_at)
 -- failed-login counters are kept in memory (auth/ratelimit.rs), not in the DB
--- planned in M9 (§15.3, §15.5):
-slicer_profiles(id, kind /* machine|filament|process */, name, source /* system|user */, settings_json, created_at, updated_at)
-printer_slicer(printer_id PK FK, machine_profile_id FK, default_process_id NULL, default_filament_id NULL)
-slice_jobs(id, user_id, printer_id, model_name, model_size, status, process_id, filament_id, options_json,
-           output_name NULL, est_seconds NULL, filament_mm NULL, error NULL, log_tail NULL,
+-- M9 slicing (§15.3, §15.5; migration 0007). Profiles are stored flattened; UNIQUE (kind, name NOCASE).
+slicer_profiles(id, kind /* machine|process|filament */, name, source /* system|user */, vendor NULL,
+                settings_json, created_at, updated_at)
+printer_slicer(printer_id PK FK CASCADE, machine_profile_id FK RESTRICT, default_process_id NULL FK SET NULL,
+               default_filament_id NULL FK SET NULL, updated_at)
+slice_jobs(id, user_id NULL, printer_id NULL /* SET NULL: a job outlives its user or printer */, model_name,
+           model_size, status /* queued|slicing|uploading|done|failed|cancelled */, machine_profile_id NULL,
+           process_id NULL, filament_id NULL, options_json, start_print, output_name NULL, est_seconds NULL,
+           filament_mm NULL, filament_g NULL, layers NULL, gcode_size NULL, error NULL, log_tail NULL,
            created_at, started_at NULL, finished_at NULL)
 ```
 
@@ -316,9 +320,9 @@ slice_jobs(id, user_id, printer_id, model_name, model_size, status, process_id, 
 | `PRINTPIT_AUTH_HEADER` | *(unset)* | Trusted-header SSO header, e.g. `Remote-User` (§3.8) |
 | `PRINTPIT_AUTH_PROXY_CIDRS` | *(unset)* | Required with the header: peers whose header is believed |
 | `PRINTPIT_AUTH_LOGOUT_URL` | *(unset)* | Logout destination behind an auth proxy |
-| `PRINTPIT_SLICER_URL` | *(unset)* | Slicer worker base URL, e.g. `http://slicer:8090`. Unset = slicing off (§15, planned) |
-| `PRINTPIT_SLICER_TOKEN` (+`_FILE`) | *(required with the URL)* | Shared bearer token for the worker |
-| `PRINTPIT_SLICER_TIMEOUT_SECS` | `1800` | Kill a slice that runs longer than this |
+| `PRINTPIT_SLICER_URL` | *(unset)* | Slicer worker base URL, e.g. `http://slicer:8090` (no credentials). Unset = slicing off (§15) |
+| `PRINTPIT_SLICER_TOKEN` (+`_FILE`) | *(required with the URL)* | Shared bearer token for the worker (≥24 printable characters) |
+| `PRINTPIT_SLICER_TIMEOUT_SECS` | `1800` | Give up on a worker request (upload, slice and download) after this; the worker then kills the slice |
 | `PRINTPIT_SLICER_MAX_MODEL_MB` | `200` | Model upload limit |
 | `PRINTPIT_SLICER_RETENTION_HOURS` | `72` | Delete models and output from `/data/slicer` after this |
 | `RUST_LOG` | `info` | Log filter |
