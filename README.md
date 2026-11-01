@@ -2,7 +2,7 @@
 
 Warning: vibe coded
 
-A minimal web interface for running several [Moonraker](https://github.com/Arksine/moonraker)/Klipper 3D printers from one place. It is written in Rust, ships as one small Docker image (~18 MB), and looks like a terminal UI.
+A minimal web interface for running several [Moonraker](https://github.com/Arksine/moonraker)/Klipper 3D printers from one place. It is written in Rust, ships as one small Docker image (~19 MB), and looks like a terminal UI.
 
 - **Built-in authentication.** First-run setup, users with viewer / operator / admin roles, and an audit log.
 - **Many printers.** Add printers by Moonraker URL and optional API key. Keys are encrypted at rest.

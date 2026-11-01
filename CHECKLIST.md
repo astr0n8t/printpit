@@ -16,7 +16,7 @@ See `PLAN.md` for design details and `CLAUDE.md` for rules.
 - [x] Placeholder tab partials (`/ui/{dashboard,files,logs,system,printers}`), partial vs full page + OOB tab strip
 - [x] Keyboard tab shortcuts (`1`–`4`, `p`) in `app.js`
 - [x] `GET /healthz` and a `healthcheck` CLI subcommand
-- [x] Dockerfile (multi-stage, static musl binary, distroless/static nonroot, read-only rootfs friendly, HEALTHCHECK); image 11.9 MB at M0, 17.1 MB at M1 (SQLite), 16.7 MB at M2 (HTTP client + size-optimised build), 17.3 MB at M3, 18.0 MB at M4, 18.1 MB at M5, 18.4 MB at M6; RSS ~3.5 MB with three live printers
+- [x] Dockerfile (multi-stage, static musl binary, distroless/static nonroot, read-only rootfs friendly, HEALTHCHECK); image 11.9 MB at M0, 17.1 MB at M1 (SQLite), 16.7 MB at M2 (HTTP client + size-optimised build), 17.3 MB at M3, 18.0 MB at M4, 18.1 MB at M5, 18.4 MB at M6, 19.0 MB at M8; RSS ~3.5 MB with three live printers
 - [x] `docker-compose.yml` (simple single-network variant first)
 - [x] CI workflow: fmt, clippy, test, docker build + container smoke test
 - [x] README quickstart
@@ -188,5 +188,5 @@ New mock endpoints go in both `tests/common/moonraker.rs` and `examples/mock_moo
 - [x] Tests: untrusted peer ignored (incl. spoofed X-Forwarded-For and no peer), unknown user 403, disabled user refused, user switch, CSRF still enforced, audit entry
 
 ### Wrap-up
-- [ ] README/docs config reference for the new env vars; CLAUDE.md decision log entries
-- [ ] Re-check image size and the lazy-load contract test after M8
+- [x] README/docs config reference for the new env vars (README table + sections, PLAN §9 routes and §11 config); CLAUDE.md decision log entries for 8.1–8.7
+- [x] Re-check image size and the lazy-load contract test after M8: amd64 image 19.0 MB (was 18.3), runs read-only, healthcheck ok, DB files 0600, idle cgroup memory 1.5 MiB (RSS 6.9 MB of which 5.7 MB is file-backed binary pages). The contract test now opens every tab (incl. History, Account with the 2FA panel) as page and partial with zero printer calls

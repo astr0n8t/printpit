@@ -77,9 +77,20 @@ async fn opening_the_dashboard_makes_no_printer_calls() {
         assert!(!body.contains(&mock.url()), "printer address leaked");
         assert!(!body.contains("/webcam/"), "webcam URL leaked");
     }
-    // Other tabs are placeholders and stay silent too.
-    for tab in ["/ui/files", "/ui/logs", "/ui/system"] {
-        c.get_hx(tab).await;
+    // Every other tab's shell stays silent too, as full pages and as htmx partials. (Their
+    // per-printer boxes load from /p/{id}/... afterwards; that's the lazy part.)
+    for tab in [
+        "/ui/files",
+        "/ui/logs",
+        "/ui/system",
+        "/ui/history",
+        "/ui/printers",
+        "/ui/users",
+        "/ui/audit",
+        "/ui/account",
+    ] {
+        assert_eq!(c.get_hx(tab).await.status, StatusCode::OK, "{tab}");
+        assert_eq!(c.get(tab).await.status, StatusCode::OK, "{tab}");
     }
     assert!(
         mock.paths().is_empty(),

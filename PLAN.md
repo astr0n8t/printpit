@@ -254,6 +254,15 @@ GET  /p/{id}/status                     one-shot status snapshot (manual refresh
 GET  /ui/audit (admin)
 GET  /healthz                           liveness (no auth, no printer calls)
 GET  /static/*                          embedded assets, long cache + content hash
+-- added in M8 --
+GET  /p/{id}/camera/tile                camera tile with orientation (loaded when scrolled into view)
+GET  /p/{id}/temps                      temperatures modal (operator)
+POST /p/{id}/temp | /preset/{pid} | /cooldown
+POST /presets, POST|DELETE /presets/{id}   temperature presets (admin)
+GET  /ui/history, /p/{id}/history?start=, /p/{id}/history/job?uid=
+GET  /login/totp, POST /login/totp      second sign-in step (public, needs the pending cookie)
+GET  /account/totp/setup, POST /account/totp/{enable|disable|recovery}
+POST /users/{id}/totp/reset             (admin)
 ```
 
 Every `/ui/*` route returns a partial when `HX-Request` is present, or the full shell with that tab pre-rendered otherwise, so deep links and reloads work.
@@ -290,6 +299,10 @@ audit_log(id, user_id, printer_id NULL, action, detail_json, created_at)
 | `PRINTPIT_WS_IDLE_GRACE_SECS` | `30` | Keep the Moonraker WebSocket open after the last viewer leaves |
 | `PRINTPIT_MAX_UPLOAD_MB` | `1024` | Upload size limit |
 | `PRINTPIT_TRUSTED_PROXIES` | *(unset)* | CIDRs whose `X-Forwarded-For` is trusted (for rate limiting and audit IPs) |
+| `PRINTPIT_NOTIFY_WEBHOOK_URL` (+`_FILE`) | *(unset)* | Webhook for print notifications (§6.8) |
+| `PRINTPIT_AUTH_HEADER` | *(unset)* | Trusted-header SSO header, e.g. `Remote-User` (§3.8) |
+| `PRINTPIT_AUTH_PROXY_CIDRS` | *(unset)* | Required with the header: peers whose header is believed |
+| `PRINTPIT_AUTH_LOGOUT_URL` | *(unset)* | Logout destination behind an auth proxy |
 | `RUST_LOG` | `info` | Log filter |
 
 ---
