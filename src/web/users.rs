@@ -29,6 +29,7 @@ struct Row {
     sessions: i64,
     created: String,
     is_self: bool,
+    totp: bool,
 }
 
 #[derive(Template)]
@@ -63,6 +64,7 @@ async fn render(
             role: u.role.as_str(),
             disabled: u.disabled,
             sessions: u.sessions,
+            totp: u.totp,
             created: widgets::age(u.created_at as f64),
         })
         .collect();
@@ -319,6 +321,41 @@ pub async fn reset_password(
         hx,
         &admin,
         Some(format!("Reset {}'s password and signed them out.", user.username)),
+        None,
+    )
+    .await
+}
+
+/// Turns off a user's two-factor sign-in (lost phone and recovery codes) and signs them out.
+pub async fn reset_totp(
+    State(state): State<AppState>,
+    hx: HxRequest,
+    ip: ClientIp,
+    admin: RequireRole<Admin>,
+    Path(id): Path<i64>,
+) -> Result<Response, AppError> {
+    let user = match target(&state, &admin, id, false).await? {
+        Ok(u) => u,
+        Err(msg) => return render(&state, hx, &admin, None, Some(msg.into())).await,
+    };
+    crate::db::totp::disable(&state.db, id).await?;
+    let revoked = sessions::delete_all_for_user(&state.db, id).await?;
+    record(
+        &state,
+        ip,
+        &admin,
+        "totp_reset",
+        format!("username={} revoked_sessions={revoked}", user.username),
+    )
+    .await;
+    render(
+        &state,
+        hx,
+        &admin,
+        Some(format!(
+            "Turned off two-factor sign-in for {} and signed them out.",
+            user.username
+        )),
         None,
     )
     .await

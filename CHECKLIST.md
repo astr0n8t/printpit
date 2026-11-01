@@ -166,14 +166,16 @@ New mock endpoints go in both `tests/common/moonraker.rs` and `examples/mock_moo
 - [x] Tests: transitions fire once; baseline doesn't fire; disabled printer/flag drops the subscription; webhook URL absent from logs and pages; local test webhook receiver
 
 ### 8.6 TOTP 2FA
-- [ ] Deps: `hmac` + `sha1` (RustCrypto, RFC 6238 hand-rolled: 6 digits, 30 s, ±1 step), `qrcode` (SVG, no image deps) for the enrolment QR, checked against CSP (no `style=` in the SVG)
-- [ ] Migration: `users.totp_secret_enc BLOB NULL`, `users.totp_last_step INTEGER` (replay guard), `totp_recovery(user_id, code_hash)`
-- [ ] Secret sealed with `Cipher` (AAD `totp-secret`); recovery codes (10, random, shown once) stored as SHA-256
-- [ ] Account page: enrol (QR + manual key, confirm with a code before enabling), disable (needs password + code), regenerate recovery codes
-- [ ] Login step 2: after the password succeeds for a 2FA user, set a short-lived (5 min) HMAC-signed pending-login cookie and show `/login/totp`. The session is created only after a valid code or recovery code. Failures count in the login rate limiter
-- [ ] Admin: reset a user's 2FA on the Users page (revokes their sessions)
-- [ ] Audit: `totp_enable`, `totp_disable`, `totp_failed`, `totp_recovery_used`, `totp_reset`
-- [ ] Tests: RFC 6238 vectors, replay rejected, window, recovery single-use, pending cookie expiry/tamper, no session before step 2, rate limit, admin reset, secret never rendered after enrolment
+- [x] Deps: `hmac` 0.13 + `sha1` 0.11 (already in the lock graph via other crates; RFC 6238 hand-rolled in `auth::totp`: 6 digits, 30 s, ±1 step), `qrcode` 0.14 with only the `svg` feature (the one new package); the inline SVG has no `style=` (unit-tested)
+- [x] Migration: `users.totp_secret_enc BLOB NULL`, `users.totp_last_step INTEGER` (replay guard), `totp_recovery(user_id, code_hash)`
+- [x] Secret sealed with `Cipher` (AAD `totp-secret:<user id>`, so blobs can't be swapped between users); during setup the unconfirmed secret round-trips through the form sealed with AAD `totp-enroll:<user id>` (nothing stored until confirmed); recovery codes (10 × 50 bits, `abcde-fghij`, shown once) stored as SHA-256
+- [x] Account page: enrol (QR + manual key, confirm with a code before enabling; turning it on signs out other sessions), disable and regenerate recovery codes (both need password + code, failures count in the rate limiter); warns when < 3 recovery codes remain
+- [x] Login step 2: after the password succeeds for a 2FA user, set a short-lived (5 min) sealed (AES-GCM) pending-login cookie carrying user id, expiry and `next` and show `/login/totp`. The session is created only after a valid code or recovery code. Failures count in the login rate limiter
+- [x] Admin: reset a user's 2FA on the Users page (revokes their sessions)
+- [x] Audit: `totp_enable`, `totp_disable`, `totp_failed`, `totp_recovery_used`, `totp_reset`
+- [x] Replay guard is an atomic conditional `UPDATE … WHERE totp_last_step < ?` (`db::totp::claim_step`), so two concurrent requests can't both use one code
+- [x] Checked in Chromium at 390 px: QR renders (no CSP errors), enrol → sign out → password → code (computed by Node's own HMAC) → dashboard
+- [x] Tests: RFC 6238 vectors, replay rejected, window, recovery single-use, pending cookie expiry/tamper, no session before step 2, rate limit, admin reset, secret never rendered after enrolment
 
 ### 8.7 Trusted-header SSO
 - [ ] Config: `PRINTPIT_AUTH_HEADER` (e.g. `Remote-User`) requires `PRINTPIT_AUTH_PROXY_CIDRS` (config error otherwise); optional `PRINTPIT_AUTH_LOGOUT_URL`

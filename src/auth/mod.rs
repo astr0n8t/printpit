@@ -7,6 +7,7 @@ pub mod password;
 pub mod ratelimit;
 pub mod session;
 pub mod setup;
+pub mod totp;
 
 pub use crate::db::users::Role;
 pub use client_ip::ClientIp;

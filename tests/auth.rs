@@ -19,6 +19,7 @@ const PROTECTED_GET: &[&str] = &[
     "/ui/printers/new",
     "/ui/printers/1",
     "/ui/account",
+    "/account/totp/setup",
     "/ui/dashboard/stream",
     "/p/1/status",
     "/p/1/start",
@@ -46,6 +47,10 @@ const PROTECTED_POST: &[&str] = &[
     "/logout",
     "/account/password",
     "/account/theme",
+    "/account/totp/enable",
+    "/account/totp/disable",
+    "/account/totp/recovery",
+    "/users/2/totp/reset",
     "/printers",
     "/printers/1",
     "/printers/1/toggle",
@@ -656,6 +661,7 @@ const ADMIN_POST: &[&str] = &[
     "/users/1/role",
     "/users/1/toggle",
     "/users/1/password",
+    "/users/1/totp/reset",
 ];
 const ADMIN_DELETE: &[&str] = &["/printers/1", "/users/1", "/presets/1"];
 

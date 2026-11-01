@@ -16,6 +16,7 @@ pub mod security;
 mod select;
 mod system;
 mod temps;
+mod totp;
 mod users;
 pub mod widgets;
 
@@ -99,6 +100,11 @@ pub fn router(state: AppState) -> Router {
         .route("/ui/account", get(account::show))
         .route("/account/password", post(account::change_password))
         .route("/account/theme", post(account::set_theme))
+        .route("/account/totp/setup", get(totp::setup))
+        .route("/account/totp/enable", post(totp::enable))
+        .route("/account/totp/disable", post(totp::disable))
+        .route("/account/totp/recovery", post(totp::new_recovery))
+        .route("/users/{id}/totp/reset", post(users::reset_totp))
         .route("/logout", post(auth::logout))
         .route_layer(middleware::from_fn(csrf::verify))
         .route_layer(middleware::from_fn_with_state(
@@ -108,6 +114,7 @@ pub fn router(state: AppState) -> Router {
 
     let public = Router::new()
         .route("/login", get(auth::login_page).post(auth::login))
+        .route("/login/totp", get(auth::totp_page).post(auth::totp_submit))
         .route("/setup", get(auth::setup_page).post(auth::setup))
         .route("/static/{hash}/{*path}", get(assets::serve));
 

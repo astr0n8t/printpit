@@ -6,6 +6,7 @@ pub mod prefs;
 pub mod presets;
 pub mod printers;
 pub mod sessions;
+pub mod totp;
 pub mod users;
 
 use std::path::Path;

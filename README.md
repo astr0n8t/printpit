@@ -142,6 +142,8 @@ Normally printpit only talks to a printer while someone is looking at it. A prin
 | operator | Also start, pause, resume, cancel and e-stop prints, set heater temperatures and apply presets, and upload, move and delete files. |
 | admin | Also manage printers, temperature presets and users, and read the audit log. Only admins see printer addresses. |
 
+Anyone can turn on **two-factor sign-in** on the **[a] Account** tab: scan the QR code with an authenticator app (any TOTP app: Aegis, 2FAS, Google Authenticator, 1Password…), confirm with a code, and save the ten one-time recovery codes. Turning it off or making new recovery codes needs both your password and a code. If someone loses their phone and their recovery codes, an admin can **reset 2fa** for them on the Users tab.
+
 Admins manage users on the **[u] Users** tab. Disabling a user, resetting their password or deleting them signs them out at once. Every control action and change is recorded on the **[l] Audit** tab.
 
 ## Keyboard
@@ -164,6 +166,7 @@ Restore by extracting into an empty volume. You need the **same `PRINTPIT_SECRET
 ## Security model
 
 - Passwords are hashed with Argon2id. Sessions are server-side, with only a SHA-256 of the session ID stored, in `HttpOnly`, `SameSite=Lax` cookies (`__Host-` prefixed with TLS). Every change needs a CSRF token.
+- Optional TOTP two-factor sign-in (RFC 6238). Secrets are encrypted with `PRINTPIT_SECRET_KEY`, each code works once, recovery codes are stored hashed, and wrong codes count towards the login rate limit. No session exists until the code step succeeds.
 - Failed logins are rate-limited per IP and per username. First-run setup needs a one-time token from the container log.
 - A strict Content-Security-Policy is applied, with no inline scripts and no third-party assets. Everything is served from the binary.
 - Printer URLs, hostnames, IP addresses and API keys never reach non-admin browsers. API keys never reach any browser.

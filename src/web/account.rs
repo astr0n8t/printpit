@@ -13,6 +13,7 @@ use crate::db::{audit, sessions, users};
 use crate::error::AppError;
 use crate::state::AppState;
 use crate::web::layout::{HxRequest, Tab, page};
+use crate::web::totp::TotpPanel;
 
 #[derive(Template)]
 #[template(path = "tabs/account.html")]
@@ -21,6 +22,7 @@ struct AccountTemplate<'a> {
     role: &'static str,
     theme: &'static str,
     password_form: String,
+    totp_panel: String,
 }
 
 #[derive(Template)]
@@ -41,7 +43,11 @@ pub struct ChangePassword {
     confirm: String,
 }
 
-pub async fn show(hx: HxRequest, user: CurrentUser) -> Result<Response, AppError> {
+pub async fn show(
+    State(state): State<AppState>,
+    hx: HxRequest,
+    user: CurrentUser,
+) -> Result<Response, AppError> {
     let content = AccountTemplate {
         username: &user.username,
         role: user.role.as_str(),
@@ -52,6 +58,7 @@ pub async fn show(hx: HxRequest, user: CurrentUser) -> Result<Response, AppError
             success: None,
         }
         .render()?,
+        totp_panel: TotpPanel::load(&state, &user).await?.render()?,
     }
     .render()?;
     page(hx, &user, Tab::Account, content)

@@ -413,3 +413,9 @@ kbd::after { content: "]"; color: var(--dim); }
 .preset-row > input[name="name"] { width: 18ch; }
 .preset-row label { display: inline-flex; gap: 1ch; align-items: center; }
 .preset-row input[type="number"] { width: 8ch; }
+
+/* ── Two-factor ───────────────────────────────────────────────────── */
+
+.totp-qr svg { display: block; width: 200px; height: 200px; margin: 0.4em 0; }
+.totp-key { overflow-wrap: anywhere; }
+pre.recovery-codes { columns: 2; max-width: 30ch; }
