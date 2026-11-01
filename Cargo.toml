@@ -5,6 +5,9 @@ edition = "2024"
 license-file = "LICENSE"
 publish = false
 
+[workspace]
+members = [".", "slicer-worker"]
+
 [dependencies]
 aes-gcm = "0.11.1"
 argon2 = "0.6.0"

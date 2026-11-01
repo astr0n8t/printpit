@@ -1,0 +1,11 @@
+{
+ "type": "machine",
+ "name": "fdm_acme_common",
+ "inherits": "fdm_machine_common",
+ "from": "system",
+ "instantiation": "false",
+ "gcode_flavor": "klipper",
+ "retraction_length": [
+  "0.8"
+ ]
+}

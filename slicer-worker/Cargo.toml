@@ -1,0 +1,31 @@
+[package]
+name = "slicer-worker"
+version = "0.1.0"
+edition = "2024"
+license-file = "../LICENSE"
+publish = false
+description = "printpit-slicer: a small HTTP API around the OrcaSlicer CLI"
+
+[[bin]]
+name = "printpit-slicer"
+path = "src/main.rs"
+
+[dependencies]
+axum = { version = "0.8.9", features = ["multipart"] }
+futures-util = "0.3.34"
+libc = "0.2.191"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+subtle = "2.6.1"
+tempfile = "3.27.0"
+thiserror = "2.0.21"
+tokio = { version = "1.54.1", features = ["full"] }
+tokio-util = { version = "0.7.20", features = ["io"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+
+[dev-dependencies]
+# Only for the tests' HTTP client. printpit enables reqwest's `rustls-no-provider`, and features unify
+# across the workspace, so the tests install the same `ring` provider.
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "multipart", "stream"] }

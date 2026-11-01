@@ -1,0 +1,13 @@
+{
+ "type": "filament",
+ "name": "fdm_filament_common",
+ "from": "system",
+ "instantiation": "false",
+ "filament_density": [
+  "1.24"
+ ],
+ "nozzle_temperature": [
+  "200"
+ ],
+ "compatible_printers": []
+}

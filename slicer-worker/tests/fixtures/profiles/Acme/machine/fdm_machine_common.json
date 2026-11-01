@@ -1,0 +1,16 @@
+{
+ "type": "machine",
+ "name": "fdm_machine_common",
+ "from": "system",
+ "instantiation": "false",
+ "gcode_flavor": "marlin",
+ "retraction_length": [
+  "1"
+ ],
+ "printable_area": [
+  "0x0",
+  "100x0",
+  "100x100",
+  "0x100"
+ ]
+}
