@@ -196,16 +196,21 @@ Design: PLAN.md §15. An optional `printpit-slicer` sidecar runs the OrcaSlicer 
 Same rules as M8: new protected routes go into `PROTECTED_GET`/`PROTECTED_POST`, admin routes into the authz matrix, mock endpoints into both `tests/common` and `examples/`.
 
 ### 9.0 Spike (do first; record findings in the CLAUDE.md decision log)
-- [ ] Pin an OrcaSlicer release; confirm the Linux build runs headless in Debian-slim (extracted AppImage, which shared libs are needed, whether it needs Xvfb/OSMesa at all)
-- [ ] Confirm the CLI flags for this version: `--load-settings`, `--load-filaments`, `--slice`, `--outputdir`, `--arrange`, `--orient`, exit codes, where it writes the G-code and log
-- [ ] Do G-code thumbnails render without a GPU (needed for Moonraker/Files thumbnails)? If not: Xvfb+Mesa in the image, or ship without thumbnails and note it
-- [ ] arm64: is there an upstream aarch64 Linux build? If not, decide: amd64-only worker (documented: run it on another host) vs. building Orca from source in CI
-- [ ] How `inherits` resolution must work for CLI use (does the CLI resolve against bundled `resources/profiles` itself, or must we flatten?), and the preset bundle zip layout
-- [ ] Measure: image size, RAM peak and time for a 20 mm cube and a ~50 MB STL (amd64; arm64 if available)
+- [x] Pin an OrcaSlicer release; confirm the Linux build runs headless in Debian-slim (extracted AppImage, which shared libs are needed, whether it needs Xvfb/OSMesa at all). **v2.4.2 on `ubuntu:24.04`** (needs glibc 2.38), no Xvfb/OSMesa; GUI libs replaced by generated abort-stubs (PLAN §15.10)
+- [x] Confirm the CLI flags for this version: `--load-settings`, `--load-filaments`, `--slice`, `--outputdir`, `--arrange`, `--orient`, exit codes, where it writes the G-code and log. `out/plate_<n>.gcode` + `out/result.json` (trust it, not the exit status); `--debug 3 --logfile`
+- [x] Do G-code thumbnails render without a GPU (needed for Moonraker/Files thumbnails)? If not: Xvfb+Mesa in the image, or ship without thumbnails and note it. **No, not even with Xvfb+Mesa** (CLI passes a null thumbnail callback; 3MF path has a GL-version bug). Ship without
+- [x] arm64: is there an upstream aarch64 Linux build? If not, decide: amd64-only worker (documented: run it on another host) vs. building Orca from source in CI. **Yes**, same deps and glibc floor; build both arches
+- [x] How `inherits` resolution must work for CLI use (does the CLI resolve against bundled `resources/profiles` itself, or must we flatten?), and the preset bundle zip layout. **Must flatten** (vendor index, then `OrcaFilamentLibrary`); bundle layouts from source
+- [x] Measure: image size, RAM peak and time for a 20 mm cube and a ~50 MB STL (amd64; arm64 if available). amd64: cube 0.2 s/87 MB, 50 MB STL 15.5 s/637 MB (20.7 s/725 MB with arrange+orient); image est. ~280 MB + worker
+- [ ] arm64: run the golden test and the 50 MB measurement on real arm64 (couldn't run arm64 in the sandbox)
+- [ ] Verify the flattener with a real GUI-exported user preset and an `.orca_printer` bundle (only system profiles were tested)
 
 ### 9.1 Worker (`slicer-worker/` crate, `Dockerfile.slicer`)
 - [ ] Cargo workspace with `slicer-worker` as a member (shares `rustfmt.toml`, `deny.toml`, lockfile); printpit's build and image unchanged
-- [ ] `Dockerfile.slicer`: Debian-slim, pinned Orca download checked by SHA-256, non-root user, read-only root FS, `HEALTHCHECK` via the worker's own subcommand
+- [ ] `Dockerfile.slicer`: `ubuntu:24.04`, pinned Orca download checked by SHA-256 per `TARGETARCH`, `unsquashfs` extraction on `$BUILDPLATFORM`, stripped binary + `lib/orca-runtime` + profile JSON only, non-root user, read-only root FS, `HEALTHCHECK` via the worker's own subcommand
+- [ ] GUI-library stubs generated at build time from `readelf --dyn-syms` (empty SONAME stubs + one `abort()` stub lib + the imported data symbols); version nodes for the `libdbus-1`/`libxkbcommon` stubs so stderr is clean
+- [ ] `inherits` flattener in the worker (vendor index → `OrcaFilamentLibrary`, loop/depth guard), used by `/v1/profiles` and preset import; unit-tested against fixture profiles
+- [ ] Slice outcome from `out/result.json` (`return_code`/`error_string` → 422), never from the exit status; also pass `--mstpp` below the hard timeout; `--arrange 1` whenever a machine is enforced on a 3MF
 - [ ] Bearer-token auth (`PRINTPIT_SLICER_TOKEN`/`_FILE`, constant-time compare; refuse to start without one)
 - [ ] `GET /v1/health`, `GET /v1/info` (Orca version + system profile index), `GET /v1/profiles/{kind}/{vendor}/{name}` (inherits resolved)
 - [ ] `POST /v1/slice`: multipart to a tmpfs temp dir, one slice at a time (503 + `Retry-After` when busy), hard timeout, kill the process group on timeout or client disconnect, temp dir always removed
