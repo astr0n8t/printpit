@@ -196,7 +196,7 @@ Design: PLAN.md §15. An optional `printpit-slicer` sidecar runs the OrcaSlicer 
 Same rules as M8: new protected routes go into `PROTECTED_GET`/`PROTECTED_POST`, admin routes into the authz matrix, mock endpoints into both `tests/common` and `examples/`.
 
 ### 9.0 Spike (do first; record findings in the CLAUDE.md decision log)
-- [x] Pin an OrcaSlicer release; confirm the Linux build runs headless in Debian-slim (extracted AppImage, which shared libs are needed, whether it needs Xvfb/OSMesa at all). **v2.4.2 on `ubuntu:24.04`** (needs glibc 2.38), no Xvfb/OSMesa; GUI libs replaced by generated abort-stubs (PLAN §15.10)
+- [x] Pin an OrcaSlicer release; confirm the Linux build runs headless in Debian-slim (extracted AppImage, which shared libs are needed, whether it needs Xvfb/OSMesa at all). **v2.4.2 on `ubuntu:24.04`** (needs glibc 2.38), no Xvfb/OSMesa; GUI libs replaced by generated trap stubs (PLAN §15.10)
 - [x] Confirm the CLI flags for this version: `--load-settings`, `--load-filaments`, `--slice`, `--outputdir`, `--arrange`, `--orient`, exit codes, where it writes the G-code and log. `out/plate_<n>.gcode` + `out/result.json` (trust it, not the exit status); `--debug 3 --logfile`
 - [x] Do G-code thumbnails render without a GPU (needed for Moonraker/Files thumbnails)? If not: Xvfb+Mesa in the image, or ship without thumbnails and note it. **No, not even with Xvfb+Mesa** (CLI passes a null thumbnail callback; 3MF path has a GL-version bug). Ship without
 - [x] arm64: is there an upstream aarch64 Linux build? If not, decide: amd64-only worker (documented: run it on another host) vs. building Orca from source in CI. **Yes**, same deps and glibc floor; build both arches
@@ -206,16 +206,18 @@ Same rules as M8: new protected routes go into `PROTECTED_GET`/`PROTECTED_POST`,
 - [ ] Verify the flattener with a real GUI-exported user preset and an `.orca_printer` bundle (only system profiles were tested)
 
 ### 9.1 Worker (`slicer-worker/` crate, `Dockerfile.slicer`)
-- [ ] Cargo workspace with `slicer-worker` as a member (shares `rustfmt.toml`, `deny.toml`, lockfile); printpit's build and image unchanged
-- [ ] `Dockerfile.slicer`: `ubuntu:24.04`, pinned Orca download checked by SHA-256 per `TARGETARCH`, `unsquashfs` extraction on `$BUILDPLATFORM`, stripped binary + `lib/orca-runtime` + profile JSON only, non-root user, read-only root FS, `HEALTHCHECK` via the worker's own subcommand
-- [ ] GUI-library stubs generated at build time from `readelf --dyn-syms` (empty SONAME stubs + one `abort()` stub lib + the imported data symbols); version nodes for the `libdbus-1`/`libxkbcommon` stubs so stderr is clean
-- [ ] `inherits` flattener in the worker (vendor index → `OrcaFilamentLibrary`, loop/depth guard), used by `/v1/profiles` and preset import; unit-tested against fixture profiles
-- [ ] Slice outcome from `out/result.json` (`return_code`/`error_string` → 422), never from the exit status; also pass `--mstpp` below the hard timeout; `--arrange 1` whenever a machine is enforced on a 3MF
-- [ ] Bearer-token auth (`PRINTPIT_SLICER_TOKEN`/`_FILE`, constant-time compare; refuse to start without one)
-- [ ] `GET /v1/health`, `GET /v1/info` (Orca version + system profile index), `GET /v1/profiles/{kind}/{vendor}/{name}` (inherits resolved)
-- [ ] `POST /v1/slice`: multipart to a tmpfs temp dir, one slice at a time (503 + `Retry-After` when busy), hard timeout, kill the process group on timeout or client disconnect, temp dir always removed
-- [ ] Success: stream G-code back, stats (time, filament mm/g, layers) parsed from the G-code footer into response headers; failure: 422 `{error, log_tail}` with paths scrubbed
-- [ ] Unit tests with a fake `orca-slicer` script: arg building, timeout, disconnect kills child, busy → 503, cleanup; golden test with real Orca slicing a 20 mm cube (worker image CI job only)
+- [x] Cargo workspace with `slicer-worker` as a member (shares `rustfmt.toml`, `deny.toml`, lockfile); printpit's build and image unchanged. CI runs fmt/clippy/test with `--workspace`
+- [x] `Dockerfile.slicer`: `ubuntu:24.04`, pinned Orca download checked by SHA-256 per `TARGETARCH`, `unsquashfs` extraction on `$BUILDPLATFORM` (offset from the ELF header), stripped binary + `lib/orca-runtime` + profile JSON only, non-root user, read-only root FS, `HEALTHCHECK` via the worker's own subcommand. amd64 image 325 MB
+- [x] GUI-library stubs generated at build time (`slicer-worker/docker/gui_stubs.py`): one SONAME stub per GUI library, every imported function traps (`__builtin_trap()`, no libc), data symbols are zeroed buffers, versioned symbols under their version node (stderr is clean); refuses BIND_NOW binaries and thread-local imports
+- [x] `inherits` flattener in the worker (vendor index → `OrcaFilamentLibrary`, loop/depth guard), used by `/v1/profiles` and `/v1/profiles/resolve`; user presets keep their nearest system parent in `inherits` (the CLI's compatibility check needs it); unit-tested against fixture profiles
+- [x] Slice outcome from `out/result.json` (`return_code`/`error_string` → 422 with a `kind`), never from the exit status; `--mstpp` below the hard timeout; `--arrange 1` whenever a machine is enforced on a 3MF; the chosen process is made to accept the machine
+- [x] Bearer-token auth on every route incl. unknown ones (`PRINTPIT_SLICER_TOKEN`/`_FILE`, ≥24 chars, constant-time compare; refuses to start without one)
+- [x] `GET /v1/health`, `GET /v1/info` (versions, limits, busy, vendors), `GET /v1/vendors/{vendor}` (selectable profiles with compatibility), `GET /v1/profiles/{kind}/{vendor}/{name}` (flattened), `POST /v1/profiles/resolve` (user presets)
+- [x] `POST /v1/slice`: multipart to a 0700 temp dir with fixed file names and a cleared environment, one slice at a time (503 + `Retry-After`, decided before the body is read), hard timeout, process group killed on timeout or client disconnect, temp dir always removed
+- [x] Success: stream G-code back, stats (time, filament mm/g, layers) from the footer in `X-Slice-*` headers; failure: 422 `{error, kind, code, log_tail}` with paths scrubbed
+- [x] Unit tests with a fake `orca-slicer` script (`tests/fake-orca.sh`): args, cleared env, timeout and disconnect kill the group, busy → 503, cleanup, bad uploads; golden test with real Orca (`slicer-worker/golden/run.sh`: system profiles, renamed user presets with their overrides, arrange/orient, garbage model) in `.github/workflows/slicer.yml` (amd64 + arm64 build, golden on amd64)
+- [ ] `copies` (PLAN §15.4): Orca's `--clone-objects`/`--repetitions` semantics untested; check with real Orca and add to `Options`, or drop copies from the form
+- [ ] Verify the 3MF `project_settings` path in the golden test (checked by hand with a CLI-made 3MF; add a GUI-made multi-plate project as a fixture)
 
 ### 9.2 printpit plumbing
 - [ ] Config: `PRINTPIT_SLICER_URL` (http(s), redacted in `Debug`), `PRINTPIT_SLICER_TOKEN`(+`_FILE`, required with the URL → config error otherwise), `_TIMEOUT_SECS`, `_MAX_MODEL_MB`, `_RETENTION_HOURS`

@@ -1,0 +1,51 @@
+name: slicer
+
+# The printpit-slicer worker image (Dockerfile.slicer). Builds both architectures and runs the
+# golden test (real OrcaSlicer) on amd64. Only when the worker or its image changes: the build
+# downloads ~270 MB of OrcaSlicer AppImages.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "slicer-worker/**"
+      - "Dockerfile.slicer"
+      - "Cargo.lock"
+      - ".github/workflows/slicer.yml"
+  pull_request:
+    paths:
+      - "slicer-worker/**"
+      - "Dockerfile.slicer"
+      - "Cargo.lock"
+      - ".github/workflows/slicer.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build amd64 + arm64 (cross-built, no emulation)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.slicer
+          platforms: linux/amd64,linux/arm64
+          push: false
+          cache-from: type=gha,scope=slicer
+          cache-to: type=gha,mode=max,scope=slicer
+      - name: Load amd64 for the golden test
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.slicer
+          platforms: linux/amd64
+          load: true
+          tags: printpit-slicer:ci
+          cache-from: type=gha,scope=slicer
+      - name: Golden test (slices a 20 mm cube with real OrcaSlicer)
+        run: slicer-worker/golden/run.sh printpit-slicer:ci
+      - name: Image size
+        run: docker image ls printpit-slicer:ci
