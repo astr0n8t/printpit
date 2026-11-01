@@ -8,7 +8,7 @@
 {%- endif %}
   <div class="scroll-x">
   <table>
-    <thead><tr><th>user</th><th>role</th><th>status</th><th class="num">sessions</th><th>created</th><th>actions</th></tr></thead>
+    <thead><tr><th>user</th><th>role</th><th>status</th><th>2fa</th><th class="num">sessions</th><th>created</th><th>actions</th></tr></thead>
     <tbody>
 {%- for r in rows %}
       <tr>
@@ -25,6 +25,7 @@
 {%- endif %}
         </td>
         <td>{% if r.disabled %}<span class="badge badge-err">DISABLED</span>{% else %}<span class="badge badge-ok">ACTIVE</span>{% endif %}</td>
+        <td>{% if r.totp %}<span class="badge badge-ok">ON</span>{% else %}<span class="dim">off</span>{% endif %}</td>
         <td class="num">{{ r.sessions }}</td>
         <td class="dim">{{ r.created }}</td>
         <td class="row-actions">
@@ -38,6 +39,9 @@
               <button class="primary">set</button>
             </form>
           </details>
+{%- if r.totp %}
+          <button hx-post="/users/{{ r.id }}/totp/reset" hx-target="#main" hx-confirm="Turn off two-factor sign-in for {{ r.username }}? They are signed out and can sign in with just their password.">reset 2fa</button>
+{%- endif %}
           <button class="danger" hx-delete="/users/{{ r.id }}" hx-target="#main" hx-confirm="Delete user {{ r.username }}? This can't be undone.">delete</button>
 {%- endif %}
         </td>

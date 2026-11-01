@@ -1,0 +1,54 @@
+<section class="panel" id="totp-panel">
+  <h2 class="panel-title">two-factor sign-in</h2>
+{%- if let Some(msg) = notice %}
+  <p class="ok" role="status">✓ {{ msg }}</p>
+{%- endif %}
+{%- if let Some(msg) = error %}
+  <p class="err" role="alert">! {{ msg }}</p>
+{%- endif %}
+{%- if !codes.is_empty() %}
+  <p class="warn">Save these recovery codes somewhere safe now. Each works once if you lose your phone, and they won't be shown again.</p>
+  <pre class="recovery-codes">{% for c in codes %}{{ c }}
+{% endfor %}</pre>
+{%- endif %}
+{%- if let Some(s) = setup %}
+  <p>Scan this with an authenticator app (Aegis, 2FAS, Google Authenticator, 1Password…), then enter the 6-digit code it shows.</p>
+  <div class="totp-qr">{{ s.qr|safe }}</div>
+  <p class="dim">Can't scan? Enter this key instead: <code class="totp-key">{{ s.key }}</code></p>
+  <form method="post" action="/account/totp/enable" hx-post="/account/totp/enable" hx-target="#totp-panel" hx-swap="outerHTML">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <input type="hidden" name="enroll" value="{{ s.sealed }}">
+    <div class="field">
+      <label for="totp-code">code from the app</label>
+      <input id="totp-code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,7}" maxlength="7" required autofocus>
+    </div>
+    <div class="actions"><button type="submit" class="primary">turn on</button></div>
+  </form>
+{%- else if enabled %}
+  <p><span class="badge badge-ok">ON</span> <span class="dim">{{ recovery_left }} recovery code{% if recovery_left != 1 %}s{% endif %} left</span></p>
+{%- if recovery_left < 3 %}
+  <p class="warn">You're running out of recovery codes. Make new ones below.</p>
+{%- endif %}
+  <details class="inline-form">
+    <summary>new recovery codes</summary>
+    <form method="post" action="/account/totp/recovery" hx-post="/account/totp/recovery" hx-target="#totp-panel" hx-swap="outerHTML">
+      <input type="hidden" name="_csrf" value="{{ csrf }}">
+      <input name="password" type="password" autocomplete="current-password" placeholder="password" aria-label="Password" required>
+      <input name="code" inputmode="numeric" autocomplete="one-time-code" placeholder="code" aria-label="Code from your app" required>
+      <button class="primary">replace codes</button>
+    </form>
+  </details>
+  <details class="inline-form">
+    <summary>turn off</summary>
+    <form method="post" action="/account/totp/disable" hx-post="/account/totp/disable" hx-target="#totp-panel" hx-swap="outerHTML">
+      <input type="hidden" name="_csrf" value="{{ csrf }}">
+      <input name="password" type="password" autocomplete="current-password" placeholder="password" aria-label="Password" required>
+      <input name="code" inputmode="numeric" autocomplete="one-time-code" placeholder="code or recovery code" aria-label="Code from your app or a recovery code" required>
+      <button class="danger">turn off</button>
+    </form>
+  </details>
+{%- else %}
+  <p><span class="badge badge-dim">OFF</span> <span class="dim">Sign-in needs only your password.</span></p>
+  <div class="actions"><button type="button" class="primary" hx-get="/account/totp/setup" hx-target="#totp-panel" hx-swap="outerHTML">set up</button></div>
+{%- endif %}
+</section>

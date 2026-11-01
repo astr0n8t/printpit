@@ -32,6 +32,7 @@ pub enum Tab {
     Files,
     Logs,
     System,
+    History,
     Printers,
     Users,
     Audit,
@@ -39,11 +40,12 @@ pub enum Tab {
 }
 
 impl Tab {
-    pub const ALL: [Tab; 8] = [
+    pub const ALL: [Tab; 9] = [
         Tab::Dashboard,
         Tab::Files,
         Tab::Logs,
         Tab::System,
+        Tab::History,
         Tab::Printers,
         Tab::Users,
         Tab::Audit,
@@ -56,6 +58,7 @@ impl Tab {
             Tab::Files => "/ui/files",
             Tab::Logs => "/ui/logs",
             Tab::System => "/ui/system",
+            Tab::History => "/ui/history",
             Tab::Printers => "/ui/printers",
             Tab::Users => "/ui/users",
             Tab::Audit => "/ui/audit",
@@ -69,6 +72,7 @@ impl Tab {
             Tab::Files => "Files",
             Tab::Logs => "Logs",
             Tab::System => "System",
+            Tab::History => "History",
             Tab::Printers => "Printers",
             Tab::Users => "Users",
             Tab::Audit => "Audit",
@@ -82,6 +86,7 @@ impl Tab {
             Tab::Files => "files",
             Tab::Logs => "logs",
             Tab::System => "system",
+            Tab::History => "history",
             Tab::Printers => "printers",
             Tab::Users => "users",
             Tab::Audit => "audit",
@@ -95,6 +100,7 @@ impl Tab {
             Tab::Files => "2",
             Tab::Logs => "3",
             Tab::System => "4",
+            Tab::History => "5",
             Tab::Printers => "p",
             Tab::Users => "u",
             Tab::Audit => "l",

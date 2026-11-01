@@ -12,7 +12,7 @@
 <dl class="kv">
   <dt>file</dt><dd>{{ j.filename }}</dd>
   <dt>progress</dt><dd><span class="bar">[{{ j.filled }}<span class="empty">{{ j.empty }}</span>]</span> {{ j.percent }}</dd>
-  <dt>elapsed</dt><dd>{{ j.elapsed }}{% if let Some(e) = j.eta %} <span class="dim">eta</span> {{ e }}{% endif %}{% if let Some(l) = j.layer %} <span class="dim">layer</span> {{ l }}{% endif %}</dd>
+  <dt>elapsed</dt><dd>{{ j.elapsed }}{% if let Some(e) = j.eta %} <span class="dim">eta</span> {{ e }}{% endif %}{% if let Some(s) = j.slicer %}{% if j.eta.is_some() %} <span class="dim">·</span>{% endif %} <span class="dim">slicer</span> {{ s }}{% endif %}{% if let Some(l) = j.layer %} <span class="dim">layer</span> {{ l }}{% endif %}</dd>
 </dl>
 {%- endif %}
 {%- if !sensors.is_empty() %}

@@ -7,12 +7,16 @@ mod auth;
 pub mod card;
 mod dashboard;
 pub(crate) mod files;
+mod history;
 pub mod layout;
 mod logs;
+mod presets;
 mod printers;
 pub mod security;
 mod select;
 mod system;
+mod temps;
+mod totp;
 mod users;
 pub mod widgets;
 
@@ -46,6 +50,11 @@ pub fn router(state: AppState) -> Router {
         .route("/p/{id}/start", get(dashboard::start_picker))
         .route("/p/{id}/print/{action}", post(dashboard::print_action))
         .route("/p/{id}/estop", post(dashboard::estop))
+        .route("/p/{id}/temps", get(temps::modal))
+        .route("/p/{id}/temp", post(temps::set_target))
+        .route("/p/{id}/preset/{preset_id}", post(temps::apply_preset))
+        .route("/p/{id}/cooldown", post(temps::cooldown))
+        .route("/p/{id}/camera/tile", get(dashboard::camera_tile))
         .route("/p/{id}/camera/snapshot", get(dashboard::camera_snapshot))
         .route("/p/{id}/camera/stream", get(dashboard::camera_stream))
         .route("/ui/files", get(files::tab))
@@ -67,6 +76,9 @@ pub fn router(state: AppState) -> Router {
         .route("/ui/system", get(system::tab))
         .route("/p/{id}/system/info", get(system::info))
         .route("/p/{id}/system/stats", get(system::stats))
+        .route("/ui/history", get(history::tab))
+        .route("/p/{id}/history", get(history::list))
+        .route("/p/{id}/history/job", get(history::job))
         .route("/ui/printers", get(printers::list))
         .route("/ui/printers/new", get(printers::new_form))
         .route("/ui/printers/{id}", get(printers::edit_form))
@@ -76,6 +88,8 @@ pub fn router(state: AppState) -> Router {
         .route("/printers/{id}/toggle", post(printers::toggle))
         .route("/printers/{id}/move/{dir}", post(printers::reorder))
         .route("/printers/{id}/test", post(printers::test))
+        .route("/presets", post(presets::create))
+        .route("/presets/{id}", post(presets::update).delete(presets::delete))
         .route("/ui/users", get(users::list))
         .route("/users", post(users::create))
         .route("/users/{id}", delete(users::delete))
@@ -86,6 +100,11 @@ pub fn router(state: AppState) -> Router {
         .route("/ui/account", get(account::show))
         .route("/account/password", post(account::change_password))
         .route("/account/theme", post(account::set_theme))
+        .route("/account/totp/setup", get(totp::setup))
+        .route("/account/totp/enable", post(totp::enable))
+        .route("/account/totp/disable", post(totp::disable))
+        .route("/account/totp/recovery", post(totp::new_recovery))
+        .route("/users/{id}/totp/reset", post(users::reset_totp))
         .route("/logout", post(auth::logout))
         .route_layer(middleware::from_fn(csrf::verify))
         .route_layer(middleware::from_fn_with_state(
@@ -95,6 +114,7 @@ pub fn router(state: AppState) -> Router {
 
     let public = Router::new()
         .route("/login", get(auth::login_page).post(auth::login))
+        .route("/login/totp", get(auth::totp_page).post(auth::totp_submit))
         .route("/setup", get(auth::setup_page).post(auth::setup))
         .route("/static/{hash}/{*path}", get(assets::serve));
 

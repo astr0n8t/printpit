@@ -12,13 +12,15 @@ use axum::response::{Html, IntoResponse, Redirect, Response};
 use serde::Deserialize;
 
 use crate::auth::{Admin, ClientIp, RequireRole};
-use crate::db::audit;
 use crate::db::printers::{self, API_KEY_CONTEXT, KeyChange, NewPrinter, Printer};
+use crate::db::{audit, presets};
 use crate::error::AppError;
 use crate::moonraker::MoonrakerError;
 use crate::moonraker::net::{base_string, parse_base_url};
+use crate::moonraker::webcam::Transform;
 use crate::state::AppState;
 use crate::web::layout::{HxRequest, Tab, page};
+use crate::web::temps::fmt_temp;
 
 const MAX_NAME: usize = 64;
 const MAX_KEY: usize = 256;
@@ -30,12 +32,23 @@ struct Row {
     key_label: &'static str,
     key_class: &'static str,
     enabled: bool,
+    notify: bool,
+}
+
+struct PresetRow {
+    id: i64,
+    name: String,
+    extruder: String,
+    bed: String,
 }
 
 #[derive(Template)]
 #[template(path = "tabs/printers.html")]
 struct ListTemplate {
     rows: Vec<Row>,
+    presets: Vec<PresetRow>,
+    preset_error: Option<String>,
+    csrf: String,
     notice: Option<String>,
     cidrs: String,
 }
@@ -49,7 +62,11 @@ struct FormTemplate {
     name: String,
     base_url: String,
     webcam_override: String,
+    webcam_transform: String,
     enabled: bool,
+    notify: bool,
+    /// The notify checkbox only shows when a webhook URL is configured.
+    notify_available: bool,
     key_set: bool,
     key_dropped: bool,
     error: Option<String>,
@@ -76,15 +93,21 @@ pub struct PrinterForm {
     #[serde(default)]
     webcam_override: String,
     #[serde(default)]
+    webcam_transform: String,
+    #[serde(default)]
     enabled: Option<String>,
+    #[serde(default)]
+    notify: Option<String>,
 }
 
 struct Valid {
     name: String,
     base_url: String,
     webcam_override: Option<String>,
+    webcam_transform: Option<String>,
     api_key: Option<String>,
     enabled: bool,
+    notify: bool,
 }
 
 fn row(state: &AppState, p: Printer) -> Row {
@@ -100,6 +123,7 @@ fn row(state: &AppState, p: Printer) -> Row {
         key_label,
         key_class,
         enabled: p.enabled,
+        notify: p.notify && state.notifier.enabled(),
     }
 }
 
@@ -108,11 +132,23 @@ async fn list_page(
     hx: HxRequest,
     user: &RequireRole<Admin>,
     notice: Option<String>,
+    preset_error: Option<String>,
 ) -> Result<Response, AppError> {
     let rows = printers::list(&state.db)
         .await?
         .into_iter()
         .map(|p| row(state, p))
+        .collect();
+    let temp = |t: Option<f64>| t.map(fmt_temp).unwrap_or_default();
+    let presets = presets::list(&state.db)
+        .await?
+        .into_iter()
+        .map(|p| PresetRow {
+            id: p.id,
+            name: p.name,
+            extruder: temp(p.extruder),
+            bed: temp(p.bed),
+        })
         .collect();
     let cidrs = state
         .config
@@ -121,12 +157,31 @@ async fn list_page(
         .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join(", ");
-    let html = ListTemplate { rows, notice, cidrs }.render()?;
+    let html = ListTemplate {
+        rows,
+        presets,
+        preset_error,
+        csrf: user.csrf_token.clone(),
+        notice,
+        cidrs,
+    }
+    .render()?;
     page(hx, user, Tab::Printers, html)
 }
 
+/// A rejected preset form: the page again, with the error in the presets panel.
+pub(crate) async fn preset_error(
+    state: &AppState,
+    hx: HxRequest,
+    user: &RequireRole<Admin>,
+    error: String,
+) -> Result<Response, AppError> {
+    let res = list_page(state, hx, user, None, Some(error)).await?;
+    Ok((StatusCode::UNPROCESSABLE_ENTITY, res).into_response())
+}
+
 /// After a successful change: htmx gets the list (and the URL bar fixed); browsers a redirect.
-async fn after_change(
+pub(crate) async fn after_change(
     state: &AppState,
     hx: HxRequest,
     user: &RequireRole<Admin>,
@@ -135,7 +190,7 @@ async fn after_change(
     if !hx.0 {
         return Ok(Redirect::to("/ui/printers").into_response());
     }
-    let mut res = list_page(state, hx, user, Some(notice)).await?;
+    let mut res = list_page(state, hx, user, Some(notice), None).await?;
     res.headers_mut().insert(
         "hx-push-url",
         axum::http::HeaderValue::from_static("/ui/printers"),
@@ -148,10 +203,14 @@ pub async fn list(
     hx: HxRequest,
     user: RequireRole<Admin>,
 ) -> Result<Response, AppError> {
-    list_page(&state, hx, &user, None).await
+    list_page(&state, hx, &user, None, None).await
 }
 
-pub async fn new_form(hx: HxRequest, user: RequireRole<Admin>) -> Result<Response, AppError> {
+pub async fn new_form(
+    State(state): State<AppState>,
+    hx: HxRequest,
+    user: RequireRole<Admin>,
+) -> Result<Response, AppError> {
     let html = FormTemplate {
         id: None,
         action: "/printers".into(),
@@ -159,7 +218,10 @@ pub async fn new_form(hx: HxRequest, user: RequireRole<Admin>) -> Result<Respons
         name: String::new(),
         base_url: String::new(),
         webcam_override: String::new(),
+        webcam_transform: String::new(),
         enabled: true,
+        notify: false,
+        notify_available: state.notifier.enabled(),
         key_set: false,
         key_dropped: false,
         error: None,
@@ -182,7 +244,10 @@ pub async fn edit_form(
         name: p.name,
         base_url: p.base_url,
         webcam_override: p.webcam_override.unwrap_or_default(),
+        webcam_transform: p.webcam_transform.unwrap_or_default(),
         enabled: p.enabled,
+        notify: p.notify,
+        notify_available: state.notifier.enabled(),
         key_set: p.api_key_enc.is_some(),
         key_dropped: false,
         error: None,
@@ -228,6 +293,12 @@ async fn validate(state: &AppState, f: &PrinterForm, except: Option<i64>) -> Res
         Some(webcam.to_string())
     };
 
+    let webcam_transform = match f.webcam_transform.trim() {
+        "" => None,
+        t if Transform::from_setting(t).is_some() => Some(t.to_string()),
+        _ => return Err("Pick a camera orientation from the list.".into()),
+    };
+
     let key = f.api_key.trim();
     if key.len() > MAX_KEY || key.chars().any(|c| c.is_whitespace() || c.is_control()) {
         return Err(
@@ -239,12 +310,15 @@ async fn validate(state: &AppState, f: &PrinterForm, except: Option<i64>) -> Res
         name: name.to_string(),
         base_url: base_string(&url),
         webcam_override,
+        webcam_transform,
         api_key: (!key.is_empty()).then(|| key.to_string()),
         enabled: f.enabled.is_some(),
+        notify: f.notify.is_some(),
     })
 }
 
 fn form_error(
+    state: &AppState,
     user: &RequireRole<Admin>,
     id: Option<i64>,
     key_set: bool,
@@ -258,7 +332,10 @@ fn form_error(
         name: f.name.clone(),
         base_url: f.base_url.clone(),
         webcam_override: f.webcam_override.clone(),
+        webcam_transform: f.webcam_transform.clone(),
         enabled: f.enabled.is_some(),
+        notify: f.notify.is_some(),
+        notify_available: state.notifier.enabled(),
         key_set,
         key_dropped: !f.api_key.trim().is_empty(),
         error: Some(error),
@@ -279,7 +356,7 @@ pub async fn create(
     };
     let v = match validate(&state, &f, None).await {
         Ok(v) => v,
-        Err(e) => return form_error(&user, None, false, &f, e),
+        Err(e) => return form_error(&state, &user, None, false, &f, e),
     };
     let id = printers::create(
         &state.db,
@@ -291,10 +368,14 @@ pub async fn create(
                 .as_deref()
                 .map(|k| state.cipher.seal(k, API_KEY_CONTEXT)),
             webcam_override: v.webcam_override.as_deref(),
+            webcam_transform: v.webcam_transform.as_deref(),
             enabled: v.enabled,
+            // Only settable while a webhook is configured.
+            notify: v.notify && state.notifier.enabled(),
         },
     )
     .await?;
+    state.printer_changed(id);
     audit::record(
         &state.db,
         audit::Entry {
@@ -324,7 +405,7 @@ pub async fn update(
     let key_set = existing.api_key_enc.is_some();
     let v = match validate(&state, &f, Some(id)).await {
         Ok(v) => v,
-        Err(e) => return form_error(&user, Some(id), key_set, &f, e),
+        Err(e) => return form_error(&state, &user, Some(id), key_set, &f, e),
     };
     let key = match (&v.api_key, f.clear_key.is_some()) {
         (Some(k), _) => KeyChange::Set(state.cipher.seal(k, API_KEY_CONTEXT)),
@@ -344,7 +425,14 @@ pub async fn update(
             base_url: &v.base_url,
             api_key_enc: None,
             webcam_override: v.webcam_override.as_deref(),
+            webcam_transform: v.webcam_transform.as_deref(),
             enabled: v.enabled,
+            // Without a webhook the checkbox isn't shown, so keep what was there.
+            notify: if state.notifier.enabled() {
+                v.notify
+            } else {
+                existing.notify
+            },
         },
         key,
     )
@@ -355,7 +443,11 @@ pub async fn update(
             user_id: Some(user.id),
             printer_id: Some(id),
             action: "printer_update",
-            detail: Some(format!("name={} api_key={key_note}", v.name)),
+            detail: Some(format!(
+                "name={} api_key={key_note} notify={}",
+                v.name,
+                if v.notify { "on" } else { "off" }
+            )),
             ip: ip.to_string_opt(),
         },
     )

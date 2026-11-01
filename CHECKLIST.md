@@ -16,7 +16,7 @@ See `PLAN.md` for design details and `CLAUDE.md` for rules.
 - [x] Placeholder tab partials (`/ui/{dashboard,files,logs,system,printers}`), partial vs full page + OOB tab strip
 - [x] Keyboard tab shortcuts (`1`–`4`, `p`) in `app.js`
 - [x] `GET /healthz` and a `healthcheck` CLI subcommand
-- [x] Dockerfile (multi-stage, static musl binary, distroless/static nonroot, read-only rootfs friendly, HEALTHCHECK); image 11.9 MB at M0, 17.1 MB at M1 (SQLite), 16.7 MB at M2 (HTTP client + size-optimised build), 17.3 MB at M3, 18.0 MB at M4, 18.1 MB at M5, 18.4 MB at M6; RSS ~3.5 MB with three live printers
+- [x] Dockerfile (multi-stage, static musl binary, distroless/static nonroot, read-only rootfs friendly, HEALTHCHECK); image 11.9 MB at M0, 17.1 MB at M1 (SQLite), 16.7 MB at M2 (HTTP client + size-optimised build), 17.3 MB at M3, 18.0 MB at M4, 18.1 MB at M5, 18.4 MB at M6, 19.0 MB at M8; RSS ~3.5 MB with three live printers
 - [x] `docker-compose.yml` (simple single-network variant first)
 - [x] CI workflow: fmt, clippy, test, docker build + container smoke test
 - [x] README quickstart
@@ -114,11 +114,79 @@ See `PLAN.md` for design details and `CLAUDE.md` for rules.
 - [x] Security review pass: no secrets/addresses in logs, SSRF via allowlist + egress, CSRF everywhere, authz matrix test for admin routes, HSTS with TLS
 - [x] Docs: configuration reference, reverse proxy examples (Caddy/Traefik/nginx), backup of `/data`, security model
 
-## Later / nice-to-have
-- [ ] Camera flip/rotation from `server.webcams.list` (needs webcam info at render time without a page-load call)
-- [ ] Use slicer `estimated_time` (file metadata) for ETA alongside the progress-based estimate
-- [ ] TOTP 2FA
-- [ ] Trusted-header SSO (behind an auth proxy)
-- [ ] Job history view
-- [ ] Temperature presets / set targets
-- [ ] Notifications (print done/failed) via webhook
+## M8 — Later items (planned 2026-10-31)
+Order: smallest and most self-contained first; the auth changes (TOTP, SSO) last, because they touch the login path every test uses.
+Every new protected route goes into `PROTECTED_GET`/`PROTECTED_POST` in `tests/auth.rs`; every new admin route goes into the authz matrix.
+New mock endpoints go in both `tests/common/moonraker.rs` and `examples/mock_moonraker.rs`.
+
+### 8.1 Slicer ETA
+- [x] Hub: when `print_stats.filename` changes to a non-empty name, fetch `server.files.metadata` once (over the open RPC; in `poll_once` through a small per-printer `filename → estimated_time` cache) and keep it in the `Publisher`
+- [x] `Snapshot` gains `estimated_time: Option<f64>` (cleared when the filename changes or empties; a metadata error just leaves it `None`)
+- [x] Card: `eta 30:00 · slicer 28:12`, where slicer = `estimated_time - print_duration` (clamped ≥ 0; hidden when complete or unknown)
+- [x] The hub's lookup goes over the open WebSocket (`server.files.metadata`), merging status updates that arrive during the call; the HTTP poller and manual refresh use `GET /server/files/metadata`. All share `state.slicer` (`SlicerTimes`, latest file per printer, cleared by `printer_changed`)
+- [x] Tests: card unit tests (with/without slicer time, overrun clamps to 0); hub integration test: one metadata call per file, none when idle
+
+### 8.2 Camera flip/rotation
+- [x] `Webcam` carries `flip_h`, `flip_v`, `rotation` (0/90/180/270; anything else → 0) from `server.webcams.list`
+- [x] Lazy camera tile: `.cam` loads `GET /p/{id}/camera/tile` on `hx-trigger="intersect once"`. It uses `WebcamCache` (the snapshot needs the same lookup, so no extra Moonraker calls) and renders the `<img>` with transform classes, or `[ no camera ]` server-side
+- [x] CSS classes `cam-flip-h`, `cam-flip-v`, `cam-rot-{90,180,270}` (no inline styles, CSP); rotated 90/270 tiles keep the card's aspect box; check at 390 px
+- [x] `app.js`: snapshot refresh and live toggle work on swapped-in tiles (existing `htmx:afterSettle` hook); stream-only cameras (override without `action=stream`) show `[ no snapshots · press live ]` and never load a snapshot
+- [x] Checked in Chromium at 1280 px and 390 px: rotated test card fills the 16:9 frame, live/stop keeps the rotation, no horizontal scroll, no console errors
+- [x] Orientation select in the printer form (migration `0003`, column `webcam_transform`): "auto" (NULL) uses Moonraker's settings, any other choice overrides them, for discovered and override cameras alike
+- [x] Tests: tile HTML has the classes; dashboard page load still makes zero printer calls; mock webcam with flip/rotation
+
+### 8.3 Temperature targets and presets
+- [x] Migration `0004`: `temp_presets(id, name UNIQUE NOCASE, extruder REAL NULL, bed REAL NULL, …)`; NULL = leave that heater alone, at least one set. No manual reordering: listed coolest hotend first (PLA → PETG → ABS), bed-only last
+- [x] `db::presets`: list/get/create/update/delete; "temperature presets" panel on the Printers page (inline edit rows + add row, plain-form fallback), audit `preset_create/update/delete`
+- [x] G-code goes through the existing `run_action` (now `pub(crate)`) to `POST /printer/gcode/script?script=…`; no new client method needed
+- [x] Heater set from Klipper objects: `extruder*`, `heater_bed`, `heater_generic X` → `SET_HEATER_TEMPERATURE HEATER=… TARGET=…`; `temperature_fan X` → `SET_TEMPERATURE_FAN_TARGET`. Validate the heater name against `printer.objects.list` and a strict charset (no G-code injection: `[A-Za-z0-9_ ]`, no newlines); target finite, 0–500 (Klipper enforces `max_temp`)
+- [x] Card control `temps` (operator+, ready printers) opens a modal `GET /p/{id}/temps` (like the start picker; inputs aren't replaced by live updates): per-heater current/target, set-target form, `off`; preset buttons; `cooldown` (`TURN_OFF_HEATERS`). Heater status comes from `hub.peek()` when the dashboard already has a live connection, else one HTTP snapshot; a preset's hotend temperature goes to `extruder` only
+- [x] `POST /p/{id}/temp` (heater, target), `POST /p/{id}/preset/{preset_id}`, `POST /p/{id}/cooldown`; audit `temp_set`, `temp_preset`, `temp_cooldown`
+- [x] Checked in Chromium at 1280 px and 390 px: modal fits, set → flash + modal closes, no console errors
+- [x] Mock: `/printer/gcode/script` records scripts (and refuses targets > 300 like Klipper's `max_temp`), mock gained `heater_generic chamber`; `tests/temps.rs` covers validation (bad heater, injection attempt, out of range), role gating, audit, CSRF
+
+### 8.4 Job history tab
+- [x] `Tab::History` (`[5]History`, key `5`), `/ui/history` renders the printer selector instantly (no printer calls)
+- [x] `/p/{id}/history?start=&limit=50` → `server.history.list` (newest first): end time, file, status badge, duration, filament (m), with prev/next paging and `j/k` selection
+- [x] Totals line from `server.history.totals` (jobs, print time, filament, longest print), fetched concurrently with the page (`tokio::join!`); a totals failure just hides the line
+- [x] Job details `/p/{id}/history/job?uid=` → `server.history.job` (times, durations, filament, slicer facts; thumbnail via the existing files thumb proxy if the file still exists). `files::facts`/`files::thumb_url` are shared with the Files tab. Job ids must be alphanumeric (≤ 32) before they go upstream; deep links `/ui/history?printer=&job=` preload the details
+- [x] Reprint button (operator+, only when `exists`) → existing `print/start` path; confirm dialog
+- [x] History component not loaded (404) → a clean "history is disabled in Moonraker" box
+- [x] Checked in Chromium at 1280 px and 390 px (`5`, `j/k`, Enter, paging, reload of a deep link); on phones the ended/filament columns hide
+- [x] Mock history endpoints (60 generated jobs, `no_history` option); tests: tab lazy (no calls on `/ui/history`), paging, details, reprint role gating, disabled component
+
+### 8.5 Print notifications (webhook)
+- [x] Config: `PRINTPIT_NOTIFY_WEBHOOK_URL` (+ `_FILE`; it usually embeds a token), validated as http(s); never logged or rendered
+- [x] Migration: `printers.notify INTEGER NOT NULL DEFAULT 0`; checkbox in the printer form (shown only when the webhook is configured; without one, saving keeps the stored value), `NOTIFY` badge in the list, audited in `printer_update` (`notify=on|off`)
+- [x] `notify.rs`: a supervisor holds one hub `Subscription` per enabled `notify` printer, **the one documented exception to rule 2**. Resynced on startup and from `state.printer_changed`
+- [x] Edge detection on `print_stats.state` (`notify::Tracker`, pure and unit-tested): `printing|paused → complete|error|cancelled` only. The first state after printpit starts is a baseline. The last state survives reconnects (a print that ended while disconnected is still reported; the same finished job isn't reported twice). A Klipper shutdown mid-print (`Link::NotReady` shutdown/error) counts as `error`
+- [x] Payload: JSON `{printer, event, filename, duration, message}` plus `text`/`content` summary fields so Slack/Discord-style webhooks work. Printer name only, never its address
+- [x] Separate webhook `reqwest::Client` (rustls, no redirects, 10 s timeout, 3 tries: 0/1/3 s), not the printer egress client; failures log the root cause without the URL. Checked in the real app: token absent from logs at debug level
+- [x] Update CLAUDE.md rule 2, PLAN.md §6 (item 8), README (config table + "Print notifications" section) and both compose files (empty `PRINTPIT_NOTIFY_WEBHOOK_URL`)
+- [x] Tests: transitions fire once; baseline doesn't fire; disabled printer/flag drops the subscription; webhook URL absent from logs and pages; local test webhook receiver
+
+### 8.6 TOTP 2FA
+- [x] Deps: `hmac` 0.13 + `sha1` 0.11 (already in the lock graph via other crates; RFC 6238 hand-rolled in `auth::totp`: 6 digits, 30 s, ±1 step), `qrcode` 0.14 with only the `svg` feature (the one new package); the inline SVG has no `style=` (unit-tested)
+- [x] Migration: `users.totp_secret_enc BLOB NULL`, `users.totp_last_step INTEGER` (replay guard), `totp_recovery(user_id, code_hash)`
+- [x] Secret sealed with `Cipher` (AAD `totp-secret:<user id>`, so blobs can't be swapped between users); during setup the unconfirmed secret round-trips through the form sealed with AAD `totp-enroll:<user id>` (nothing stored until confirmed); recovery codes (10 × 50 bits, `abcde-fghij`, shown once) stored as SHA-256
+- [x] Account page: enrol (QR + manual key, confirm with a code before enabling; turning it on signs out other sessions), disable and regenerate recovery codes (both need password + code, failures count in the rate limiter); warns when < 3 recovery codes remain
+- [x] Login step 2: after the password succeeds for a 2FA user, set a short-lived (5 min) sealed (AES-GCM) pending-login cookie carrying user id, expiry and `next` and show `/login/totp`. The session is created only after a valid code or recovery code. Failures count in the login rate limiter
+- [x] Admin: reset a user's 2FA on the Users page (revokes their sessions)
+- [x] Audit: `totp_enable`, `totp_disable`, `totp_failed`, `totp_recovery_used`, `totp_reset`
+- [x] Replay guard is an atomic conditional `UPDATE … WHERE totp_last_step < ?` (`db::totp::claim_step`), so two concurrent requests can't both use one code
+- [x] Checked in Chromium at 390 px: QR renders (no CSP errors), enrol → sign out → password → code (computed by Node's own HMAC) → dashboard
+- [x] Tests: RFC 6238 vectors, replay rejected, window, recovery single-use, pending cookie expiry/tamper, no session before step 2, rate limit, admin reset, secret never rendered after enrolment
+
+### 8.7 Trusted-header SSO
+- [x] Config: `PRINTPIT_AUTH_HEADER` (e.g. `Remote-User`) requires `PRINTPIT_AUTH_PROXY_CIDRS` (config error otherwise); optional `PRINTPIT_AUTH_LOGOUT_URL`
+- [x] Trust the header only when the **direct peer** IP is in `PRINTPIT_AUTH_PROXY_CIDRS` (new `client_ip::PeerIp` extractor, IPv4-mapped addresses canonicalised; never the XFF-derived client IP); ignore it otherwise, and refuse duplicate headers. Checked against the real server with curl (ConnectInfo), not only in tests
+- [x] `require_auth`: no valid session + trusted header → look up an **existing, enabled** user (no auto-create; unknown → 403 page naming no internals; new `AppError::Denied(msg)`). Create a normal session (so CSRF etc. are unchanged), set the cookie, audit `login` with `detail=sso`
+- [x] Session exists but the header names a different user → drop it and switch to the header's user; header missing behind the proxy → fall back to the normal login page
+- [x] Header logins skip TOTP (the proxy does MFA); password login still works; logout redirects to `PRINTPIT_AUTH_LOGOUT_URL` when set (validated: http(s) or a `/path`, not `//host`); `/login` skips the form when the proxy vouches for someone
+- [x] Docs: README "Single sign-on" section with Caddy + Authelia and Traefik examples (both strip client-supplied `Remote-User` first), config table rows, security model; PLAN §3.8
+- [x] Test client can set a peer address (`Client::peer` → `ConnectInfo`)
+- [x] Tests: untrusted peer ignored (incl. spoofed X-Forwarded-For and no peer), unknown user 403, disabled user refused, user switch, CSRF still enforced, audit entry
+
+### Wrap-up
+- [x] README/docs config reference for the new env vars (README table + sections, PLAN §9 routes and §11 config); CLAUDE.md decision log entries for 8.1–8.7
+- [x] Re-check image size and the lazy-load contract test after M8: amd64 image 19.0 MB (was 18.3), runs read-only, healthcheck ok, DB files 0600, idle cgroup memory 1.5 MiB (RSS 6.9 MB of which 5.7 MB is file-backed binary pages). The contract test now opens every tab (incl. History, Account with the 2FA panel) as page and partial with zero printer calls

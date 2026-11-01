@@ -25,7 +25,9 @@ async fn setup(opts: MockOptions) -> (TestApp, Client, MockMoonraker, i64) {
             base_url: &mock.url(),
             api_key_enc: None,
             webcam_override: None,
+            webcam_transform: None,
             enabled: true,
+            notify: false,
         },
     )
     .await
@@ -166,7 +168,9 @@ async fn missing_update_manager_and_offline_printer() {
             base_url: "http://127.0.0.1:1",
             api_key_enc: None,
             webcam_override: None,
+            webcam_transform: None,
             enabled: true,
+            notify: false,
         },
     )
     .await

@@ -118,11 +118,12 @@ pub struct UserSummary {
     pub disabled: bool,
     pub created_at: i64,
     pub sessions: i64,
+    pub totp: bool,
 }
 
 pub async fn list(db: &Db) -> Result<Vec<UserSummary>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT u.id, u.username, u.role, u.disabled, u.created_at,
+        "SELECT u.id, u.username, u.role, u.disabled, u.created_at, u.totp_secret_enc IS NOT NULL AS totp,
                 (SELECT COUNT(*) FROM sessions s WHERE s.user_id = u.id) AS sessions
          FROM users u ORDER BY u.username COLLATE NOCASE",
     )

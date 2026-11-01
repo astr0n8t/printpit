@@ -19,9 +19,12 @@ const PROTECTED_GET: &[&str] = &[
     "/ui/printers/new",
     "/ui/printers/1",
     "/ui/account",
+    "/account/totp/setup",
     "/ui/dashboard/stream",
     "/p/1/status",
     "/p/1/start",
+    "/p/1/temps",
+    "/p/1/camera/tile",
     "/p/1/camera/snapshot",
     "/p/1/camera/stream",
     "/p/1/files",
@@ -34,6 +37,9 @@ const PROTECTED_GET: &[&str] = &[
     "/p/1/logs/download?name=klippy.log",
     "/p/1/system/info",
     "/p/1/system/stats",
+    "/ui/history",
+    "/p/1/history",
+    "/p/1/history/job?uid=000001",
     "/ui/users",
     "/ui/audit",
 ];
@@ -41,6 +47,10 @@ const PROTECTED_POST: &[&str] = &[
     "/logout",
     "/account/password",
     "/account/theme",
+    "/account/totp/enable",
+    "/account/totp/disable",
+    "/account/totp/recovery",
+    "/users/2/totp/reset",
     "/printers",
     "/printers/1",
     "/printers/1/toggle",
@@ -49,6 +59,11 @@ const PROTECTED_POST: &[&str] = &[
     "/account/prefs",
     "/p/1/print/pause",
     "/p/1/estop",
+    "/p/1/temp",
+    "/p/1/preset/1",
+    "/p/1/cooldown",
+    "/presets",
+    "/presets/1",
     "/p/1/files/mkdir",
     "/p/1/files/move",
     "/p/1/files/upload",
@@ -57,7 +72,7 @@ const PROTECTED_POST: &[&str] = &[
     "/users/2/toggle",
     "/users/2/password",
 ];
-const PROTECTED_DELETE: &[&str] = &["/printers/1", "/p/1/files?path=a.gcode", "/users/2"];
+const PROTECTED_DELETE: &[&str] = &["/printers/1", "/p/1/files?path=a.gcode", "/users/2", "/presets/1"];
 
 // ── First-run setup ──────────────────────────────────────────────────
 
@@ -640,12 +655,15 @@ const ADMIN_POST: &[&str] = &[
     "/printers/1/toggle",
     "/printers/1/move/up",
     "/printers/1/test",
+    "/presets",
+    "/presets/1",
     "/users",
     "/users/1/role",
     "/users/1/toggle",
     "/users/1/password",
+    "/users/1/totp/reset",
 ];
-const ADMIN_DELETE: &[&str] = &["/printers/1", "/users/1"];
+const ADMIN_DELETE: &[&str] = &["/printers/1", "/users/1", "/presets/1"];
 
 #[tokio::test]
 async fn admin_routes_reject_operators() {

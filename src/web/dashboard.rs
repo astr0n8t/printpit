@@ -28,7 +28,8 @@ use crate::db::printers::{self, Printer};
 use crate::db::{audit, prefs};
 use crate::error::AppError;
 use crate::moonraker::hub::poll_once;
-use crate::moonraker::status::{Link, Snapshot};
+use crate::moonraker::status::{Link, Snapshot, current_file};
+use crate::moonraker::webcam::CameraSettings;
 use crate::moonraker::{MoonrakerClient, MoonrakerError};
 use crate::state::AppState;
 use crate::web::card;
@@ -211,16 +212,21 @@ pub async fn status(
     Path(id): Path<i64>,
 ) -> Result<Response, AppError> {
     let p = enabled_printer(&state, id).await?;
-    let (link, status) = match state.printer_client(&p) {
-        Ok(client) => poll_once(&client)
-            .await
-            .unwrap_or_else(|e| (Link::Down(e), Default::default())),
-        Err(e) => (Link::Down(e), Default::default()),
+    let (link, status, estimated_time) = match state.printer_client(&p) {
+        Ok(client) => match poll_once(&client).await {
+            Ok((link, status)) => {
+                let estimate = slicer_estimate(&state, id, &client, &status).await;
+                (link, status, estimate)
+            }
+            Err(e) => (Link::Down(e), Default::default(), None),
+        },
+        Err(e) => (Link::Down(e), Default::default(), None),
     };
     let snap = Snapshot {
         link,
         status,
         history: Default::default(),
+        estimated_time,
     };
     let card = card::build(id, &p.name, &snap, user.has(Role::Operator), true);
     let html = format!(
@@ -229,6 +235,29 @@ pub async fn status(
         card.controls.render()?
     );
     Ok(Html(html).into_response())
+}
+
+/// The slicer estimate for the loaded file, from the shared cache or one metadata call.
+async fn slicer_estimate(
+    state: &AppState,
+    id: i64,
+    client: &MoonrakerClient,
+    status: &serde_json::Map<String, serde_json::Value>,
+) -> Option<f64> {
+    let file = current_file(status)?;
+    if let Some(estimate) = state.slicer.get(id, file) {
+        return estimate;
+    }
+    match client.metadata(file).await {
+        Ok(m) => {
+            state.slicer.insert(id, file, m.estimated_time);
+            m.estimated_time
+        }
+        Err(e) => {
+            tracing::debug!(printer_id = id, error = %e, "no slicer metadata");
+            None
+        }
+    }
 }
 
 /// The start-print picker: most recently modified G-code files, rendered into the modal.
@@ -283,15 +312,17 @@ fn valid_filename(name: &str) -> bool {
 }
 
 /// A printer action: the Moonraker endpoint, its audit record and the success message.
-struct Action<'a> {
-    path: &'static str,
-    query: Vec<(&'static str, &'a str)>,
-    audit: &'static str,
-    detail: Option<String>,
-    done: &'static str,
+pub(crate) struct Action<'a> {
+    pub path: &'static str,
+    pub query: Vec<(&'static str, &'a str)>,
+    pub audit: &'static str,
+    pub detail: Option<String>,
+    pub done: String,
 }
 
-async fn run_action(
+/// Sends the action, audits it on success, and answers with a flash for `#msg-{id}`. A
+/// success also closes the modal it came from.
+pub(crate) async fn run_action(
     state: &AppState,
     ip: ClientIp,
     user: &CurrentUser,
@@ -360,7 +391,7 @@ pub async fn print_action(
         query,
         audit,
         detail,
-        done,
+        done: done.into(),
     };
     run_action(&state, ip, &user, &p, action).await
 }
@@ -377,7 +408,7 @@ pub async fn estop(
         query: Vec::new(),
         audit: "emergency_stop",
         detail: None,
-        done: "Emergency stop sent. Klipper needs a FIRMWARE_RESTART.",
+        done: "Emergency stop sent. Klipper needs a FIRMWARE_RESTART.".into(),
     };
     run_action(&state, ip, &user, &p, action).await
 }
@@ -391,6 +422,60 @@ async fn camera_client(state: &AppState, id: i64) -> Result<(MoonrakerClient, Pr
         Ok(c) => Ok((c, p)),
         Err(_) => Err(Box::new(StatusCode::BAD_GATEWAY.into_response())),
     }
+}
+
+fn camera_settings(p: &Printer) -> CameraSettings<'_> {
+    CameraSettings {
+        url: p.webcam_override.as_deref(),
+        transform: p.webcam_transform.as_deref(),
+    }
+}
+
+#[derive(Template)]
+#[template(path = "partials/camera_tile.html")]
+struct CameraTile {
+    id: i64,
+    name: String,
+    /// `None`: nothing to show, with this message.
+    image: Option<String>,
+    snapshot: bool,
+    stream: bool,
+    message: &'static str,
+}
+
+/// The camera tile, loaded when the card scrolls into view. It knows the camera's orientation
+/// without a page-load printer call; the snapshot it embeds reuses the same cached lookup.
+pub async fn camera_tile(
+    State(state): State<AppState>,
+    _user: CurrentUser,
+    Path(id): Path<i64>,
+) -> Result<Response, AppError> {
+    let p = enabled_printer(&state, id).await?;
+    let cam = match state.printer_client(&p) {
+        Ok(client) => state.webcams.get(id, &client, camera_settings(&p)).await,
+        Err(e) => Err(e),
+    };
+    let mut tile = CameraTile {
+        id,
+        name: p.name.clone(),
+        image: None,
+        snapshot: false,
+        stream: false,
+        message: "no camera",
+    };
+    match cam {
+        Ok(Some(cam)) if cam.snapshot.is_some() || cam.stream.is_some() => {
+            tile.image = Some(cam.transform.classes());
+            tile.snapshot = cam.snapshot.is_some();
+            tile.stream = cam.stream.is_some();
+        }
+        Ok(_) => {}
+        Err(e) => {
+            tracing::debug!(error = %e, "camera lookup failed");
+            tile.message = "camera unavailable";
+        }
+    }
+    Ok(Html(tile.render()?).into_response())
 }
 
 fn camera_error(e: &MoonrakerError) -> Response {
@@ -408,7 +493,7 @@ pub async fn camera_snapshot(
         Ok(v) => v,
         Err(res) => return *res,
     };
-    let cam = match state.webcams.get(id, &client, p.webcam_override.as_deref()).await {
+    let cam = match state.webcams.get(id, &client, camera_settings(&p)).await {
         Ok(cam) => cam,
         Err(e) => return camera_error(&e),
     };
@@ -464,7 +549,7 @@ pub async fn camera_stream(
         Ok(v) => v,
         Err(res) => return *res,
     };
-    let cam = match state.webcams.get(id, &client, p.webcam_override.as_deref()).await {
+    let cam = match state.webcams.get(id, &client, camera_settings(&p)).await {
         Ok(cam) => cam,
         Err(e) => return camera_error(&e),
     };

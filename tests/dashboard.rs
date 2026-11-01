@@ -34,7 +34,9 @@ async fn add_printer(app: &TestApp, name: &str, url: &str) -> i64 {
             base_url: url,
             api_key_enc: None,
             webcam_override: None,
+            webcam_transform: None,
             enabled: true,
+            notify: false,
         },
     )
     .await
@@ -69,13 +71,26 @@ async fn opening_the_dashboard_makes_no_printer_calls() {
     ] {
         assert!(body.contains(r#"data-sse="/ui/dashboard/stream""#));
         assert!(body.contains(&format!(r#"id="live-{id}""#)));
-        assert!(body.contains(&format!("/p/{id}/camera/snapshot")));
+        assert!(body.contains(&format!(
+            r#"hx-get="/p/{id}/camera/tile" hx-trigger="intersect once""#
+        )));
         assert!(!body.contains(&mock.url()), "printer address leaked");
         assert!(!body.contains("/webcam/"), "webcam URL leaked");
     }
-    // Other tabs are placeholders and stay silent too.
-    for tab in ["/ui/files", "/ui/logs", "/ui/system"] {
-        c.get_hx(tab).await;
+    // Every other tab's shell stays silent too, as full pages and as htmx partials. (Their
+    // per-printer boxes load from /p/{id}/... afterwards; that's the lazy part.)
+    for tab in [
+        "/ui/files",
+        "/ui/logs",
+        "/ui/system",
+        "/ui/history",
+        "/ui/printers",
+        "/ui/users",
+        "/ui/audit",
+        "/ui/account",
+    ] {
+        assert_eq!(c.get_hx(tab).await.status, StatusCode::OK, "{tab}");
+        assert_eq!(c.get(tab).await.status, StatusCode::OK, "{tab}");
     }
     assert!(
         mock.paths().is_empty(),
@@ -184,11 +199,21 @@ async fn auto_refresh_off_means_manual_snapshots_only() {
             .body
             .contains(&format!(r#"id="ctl-{id}" class="controls" hx-swap-oob="true""#))
     );
+    assert!(status.body.contains("slicer</span> 40:00"), "{}", status.body);
     assert_eq!(mock.ws_total(), 0);
     assert_eq!(
         mock.paths(),
-        ["/server/info", "/printer/objects/list", "/printer/objects/query"]
+        [
+            "/server/info",
+            "/printer/objects/list",
+            "/printer/objects/query",
+            "/server/files/metadata"
+        ]
     );
+    // The estimate is cached: a second refresh only re-reads the status.
+    let again = c.get_hx(&format!("/p/{id}/status")).await;
+    assert!(again.body.contains("slicer</span> 40:00"));
+    assert_eq!(metadata_calls(&mock), 1);
     assert!(app.state.hub.active().is_empty());
 
     // Remembered across page loads, and can be switched back on.
@@ -251,6 +276,59 @@ async fn falls_back_to_http_polling_without_websocket() {
     let live = s.wait_for(&format!("live-{id}"), "(polling)").await;
     assert!(live.contains("PRINTING"));
     assert!(mock.paths().contains(&"/printer/objects/query".to_string()));
+    s.wait_for(&format!("live-{id}"), "slicer</span> 40:00").await;
+    assert_eq!(metadata_calls(&mock), 1);
+}
+
+fn metadata_calls(mock: &MockMoonraker) -> usize {
+    mock.paths()
+        .iter()
+        .filter(|p| p.ends_with("files/metadata") || p.ends_with("files.metadata"))
+        .count()
+}
+
+#[tokio::test]
+async fn slicer_estimate_is_fetched_once_per_file() {
+    let (app, mut c, mock, id) = setup(MockOptions::default()).await;
+    let mut a = c.open_stream("/ui/dashboard/stream").await;
+    // 3000 s estimated, 600 s printed.
+    let live = a.wait_for(&format!("live-{id}"), "slicer</span> 40:00").await;
+    assert!(live.contains("eta</span> 30:00"), "{live}");
+    // Many updates later, and with a second viewer, still one lookup, over the WebSocket.
+    let mut viewer = user(&app, "viewer", Role::Viewer).await;
+    let mut v = viewer.open_stream("/ui/dashboard/stream").await;
+    v.wait_for(&format!("live-{id}"), "slicer</span> 40:00").await;
+    for _ in 0..5 {
+        a.wait_for(&format!("live-{id}"), "°C").await;
+    }
+    assert_eq!(
+        mock.paths()
+            .iter()
+            .filter(|p| *p == "ws:server.files.metadata")
+            .count(),
+        1,
+        "{:?}",
+        mock.paths()
+    );
+    assert_eq!(metadata_calls(&mock), 1);
+
+    // Manual refresh reuses what the live connection fetched.
+    let csrf = c.session_csrf().await;
+    c.post_hx("/account/prefs", &csrf, &[]).await;
+    let status = c.get_hx(&format!("/p/{id}/status")).await;
+    assert!(status.body.contains("slicer</span> 40:00"));
+    assert_eq!(metadata_calls(&mock), 1);
+
+    // Editing the printer drops the cached estimate, so manual refresh looks it up again.
+    app.state.printer_changed(id);
+    c.get_hx(&format!("/p/{id}/status")).await;
+    let http = |m: &MockMoonraker| {
+        m.paths()
+            .iter()
+            .filter(|p| *p == "/server/files/metadata")
+            .count()
+    };
+    assert_eq!(http(&mock), 1);
 }
 
 #[tokio::test]
@@ -428,6 +506,88 @@ async fn stream_frame(s: &mut common::SseStream) -> Vec<u8> {
         .unwrap()
         .unwrap();
     frame.into_data().map(|b| b.to_vec()).unwrap_or_default()
+}
+
+#[tokio::test]
+async fn camera_tile_carries_orientation() {
+    let (app, mut c, mock, id) = setup(MockOptions::default()).await;
+    let tile = c.get_hx(&format!("/p/{id}/camera/tile")).await;
+    assert_eq!(tile.status, StatusCode::OK);
+    assert!(
+        tile.body
+            .contains(&format!(r#"<img class="cam-img" src="/p/{id}/camera/snapshot""#)),
+        "{}",
+        tile.body
+    );
+    assert!(
+        tile.body
+            .contains(&format!(r#"data-live="/p/{id}/camera/stream""#))
+    );
+    assert!(!tile.body.contains("/webcam/") && !tile.body.contains(&mock.url()));
+    // The snapshot the tile embeds reuses the tile's webcam lookup.
+    c.get(&format!("/p/{id}/camera/snapshot")).await;
+    let lookups = |m: &MockMoonraker| m.paths().iter().filter(|p| *p == "/server/webcams/list").count();
+    assert_eq!(lookups(&mock), 1);
+
+    // Moonraker's flip/rotation become CSS classes.
+    let (_app2, mut c2, _mock2, id2) = setup(MockOptions {
+        webcam_flip_h: true,
+        webcam_rotation: 90,
+        ..MockOptions::default()
+    })
+    .await;
+    let tile = c2.get_hx(&format!("/p/{id2}/camera/tile")).await;
+    assert!(
+        tile.body.contains(r#"class="cam-img cam-flip-h cam-rot-90""#),
+        "{}",
+        tile.body
+    );
+
+    // The admin's choice wins over Moonraker's (after the cache is dropped on edit).
+    sqlx::query("UPDATE printers SET webcam_transform = 'rot_180' WHERE id = ?")
+        .bind(id)
+        .execute(&app.state.db)
+        .await
+        .unwrap();
+    app.state.printer_changed(id);
+    let tile = c.get_hx(&format!("/p/{id}/camera/tile")).await;
+    assert!(
+        tile.body.contains(r#"class="cam-img cam-rot-180""#),
+        "{}",
+        tile.body
+    );
+
+    // A stream-only override (no `action=stream` to derive a snapshot from): no snapshot is
+    // loaded until the user presses live.
+    sqlx::query("UPDATE printers SET webcam_override = '/webcam/live' WHERE id = ?")
+        .bind(id)
+        .execute(&app.state.db)
+        .await
+        .unwrap();
+    app.state.printer_changed(id);
+    let tile = c.get_hx(&format!("/p/{id}/camera/tile")).await;
+    assert!(
+        !tile.body.contains("src=") && !tile.body.contains("data-snapshot"),
+        "{}",
+        tile.body
+    );
+    assert!(tile.body.contains("press live") && tile.body.contains("data-live="));
+}
+
+#[tokio::test]
+async fn camera_tile_without_camera_or_printer() {
+    let (app, mut c, _mock, id) = setup(MockOptions {
+        webcam: false,
+        ..MockOptions::default()
+    })
+    .await;
+    let tile = c.get_hx(&format!("/p/{id}/camera/tile")).await;
+    assert!(tile.body.contains("[ no camera ]") && !tile.body.contains("<img"));
+
+    let gone = add_printer(&app, "Gone", "http://127.0.0.1:1").await;
+    let tile = c.get_hx(&format!("/p/{gone}/camera/tile")).await;
+    assert_eq!(tile.status, StatusCode::OK);
+    assert!(tile.body.contains("[ camera unavailable ]") && !tile.body.contains("127.0.0.1"));
 }
 
 #[tokio::test]

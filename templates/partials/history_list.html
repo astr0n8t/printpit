@@ -1,0 +1,45 @@
+<div class="history-layout">
+<section class="panel">
+  <h2 class="panel-title">jobs</h2>
+{%- if let Some(e) = error %}
+  <p class="err" role="alert">! {{ e }}</p>
+{%- else %}
+{%- if let Some(t) = totals %}
+  <p class="dim">{{ t }}</p>
+{%- endif %}
+{%- if jobs.is_empty() %}
+  <p class="dim">No jobs yet.</p>
+{%- else %}
+  <div class="scroll-x">
+  <table data-list>
+    <thead><tr><th>file</th><th>status</th><th class="col-opt">ended</th><th class="num">time</th><th class="num col-opt">filament</th></tr></thead>
+    <tbody>
+{%- for j in jobs %}
+      <tr data-name="{{ j.filename|lower }}">
+        <td class="wrap"><a href="{{ self.push_url(j.uid) }}" hx-get="{{ self.job_url(j.uid) }}" hx-target="#job-view" hx-swap="outerHTML" hx-push-url="{{ self.push_url(j.uid) }}">{{ j.filename }}</a></td>
+        <td><span class="badge {{ j.class }}">{{ j.label }}</span></td>
+        <td class="dim col-opt">{{ j.ended }}</td>
+        <td class="num">{{ j.duration }}</td>
+        <td class="num dim col-opt">{{ j.filament }}</td>
+      </tr>
+{%- endfor %}
+    </tbody>
+  </table>
+  </div>
+  <div class="actions pager">
+    <button type="button" hx-get="{% if let Some(s) = prev %}{{ self.page_url(s) }}{% endif %}" hx-target="#history"{% if prev.is_none() %} disabled{% endif %}>‹ newer</button>
+    <span class="dim">{{ range }}</span>
+    <button type="button" hx-get="{% if let Some(s) = next %}{{ self.page_url(s) }}{% endif %}" hx-target="#history"{% if next.is_none() %} disabled{% endif %}>older ›</button>
+  </div>
+{%- endif %}
+{%- endif %}
+</section>
+{%- if let Some(d) = details %}
+{{ d|safe }}
+{%- else %}
+<section class="panel" id="job-view">
+  <h2 class="panel-title">job</h2>
+  <p class="dim">Pick a job to see its details. Use j/k and Enter to choose from the keyboard.</p>
+</section>
+{%- endif %}
+</div>

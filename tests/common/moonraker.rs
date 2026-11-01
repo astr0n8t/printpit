@@ -27,12 +27,17 @@ pub struct MockOptions {
     pub required_key: Option<&'static str>,
     pub klippy_state: &'static str,
     pub webcam: bool,
+    /// The webcam's configured orientation (`flip_horizontal`, `rotation`).
+    pub webcam_flip_h: bool,
+    pub webcam_rotation: i32,
     /// Answer the WebSocket upgrade with 404 (forces the HTTP polling fallback).
     pub no_websocket: bool,
     /// Ignore `Range` headers on log downloads (forces the streaming tail fallback).
     pub no_range: bool,
     /// Answer `/machine/update/status` with 404, as when `[update_manager]` isn't configured.
     pub no_update_manager: bool,
+    /// Answer `/server/history/*` with 404, as when `[history]` isn't configured.
+    pub no_history: bool,
 }
 
 impl Default for MockOptions {
@@ -41,9 +46,12 @@ impl Default for MockOptions {
             required_key: None,
             klippy_state: "ready",
             webcam: true,
+            webcam_flip_h: false,
+            webcam_rotation: 0,
             no_websocket: false,
             no_range: false,
             no_update_manager: false,
+            no_history: false,
         }
     }
 }
@@ -63,6 +71,7 @@ struct Inner {
     streams_open: AtomicUsize,
     log_bytes_sent: AtomicUsize,
     fs: Mutex<MockFs>,
+    scripts: Mutex<Vec<String>>,
 }
 
 /// In-memory `gcodes` root: file path → (bytes, modified), plus directories.
@@ -143,6 +152,7 @@ impl MockMoonraker {
             streams_open: AtomicUsize::new(0),
             log_bytes_sent: AtomicUsize::new(0),
             fs: Mutex::new(MockFs::default()),
+            scripts: Mutex::new(Vec::new()),
         });
         let app = Router::new()
             .route("/server/info", get(server_info))
@@ -169,6 +179,10 @@ impl MockMoonraker {
             .route("/machine/update/status", get(update_status))
             .route("/printer/print/{action}", post(print_action))
             .route("/printer/emergency_stop", post(estop))
+            .route("/printer/gcode/script", post(gcode_script))
+            .route("/server/history/list", get(history_list))
+            .route("/server/history/totals", get(history_totals))
+            .route("/server/history/job", get(history_job))
             .route("/webcam/", get(webcam))
             .route("/websocket", get(websocket))
             .layer(axum::middleware::from_fn_with_state(
@@ -228,8 +242,18 @@ impl MockMoonraker {
         self.inner.fs.lock().unwrap().dirs.contains(path)
     }
 
+    /// G-code scripts received on `/printer/gcode/script`, in order.
+    pub fn scripts(&self) -> Vec<String> {
+        self.inner.scripts.lock().unwrap().clone()
+    }
+
     pub fn print_state(&self) -> String {
         self.inner.print_state.lock().unwrap().clone()
+    }
+
+    /// Changes `print_stats.state` (pushed to WebSocket subscribers within 50 ms).
+    pub fn set_print_state(&self, state: &str) {
+        *self.inner.print_state.lock().unwrap() = state.into();
     }
 }
 
@@ -286,6 +310,7 @@ const OBJECTS: &[&str] = &[
     "virtual_sdcard",
     "extruder",
     "heater_bed",
+    "heater_generic chamber",
     "fan",
     "toolhead",
     "gcode_macro PRINT_START",
@@ -293,12 +318,13 @@ const OBJECTS: &[&str] = &[
 
 fn status_json(mock: &Mock, temperature: f64) -> Value {
     json!({
-        "print_stats": {"state": mock.print_state.lock().unwrap().clone(), "filename": "benchy.gcode",
+        "print_stats": {"state": mock.print_state.lock().unwrap().clone(), "filename": PRINTING_FILE,
                         "print_duration": 600.0, "total_duration": 660.0, "message": "",
                         "info": {"current_layer": 12, "total_layer": 120}},
         "virtual_sdcard": {"progress": 0.25, "is_active": true, "file_position": 1000},
         "extruder": {"temperature": temperature, "target": 215.0, "power": 0.42},
         "heater_bed": {"temperature": 60.0, "target": 60.0, "power": 0.18},
+        "heater_generic chamber": {"temperature": 38.0, "target": 0.0, "power": 0.0},
         "fan": {"speed": 0.5},
     })
 }
@@ -326,7 +352,9 @@ async fn objects_query(State(mock): State<Mock>) -> impl IntoResponse {
 async fn webcams(State(mock): State<Mock>) -> impl IntoResponse {
     let cams = if mock.opts.webcam {
         json!([{"name": "cam", "enabled": true, "service": "mjpegstreamer",
-                "snapshot_url": "/webcam/?action=snapshot", "stream_url": "/webcam/?action=stream"}])
+                "snapshot_url": "/webcam/?action=snapshot", "stream_url": "/webcam/?action=stream",
+                "flip_horizontal": mock.opts.webcam_flip_h, "flip_vertical": false,
+                "rotation": mock.opts.webcam_rotation}])
     } else {
         json!([])
     };
@@ -405,24 +433,40 @@ async fn directory(State(mock): State<Mock>, Query(q): Query<BTreeMap<String, St
               "disk_usage": {"total": 30_000_000_000u64, "used": 10_000_000_000u64, "free": 20_000_000_000u64}}))
 }
 
-async fn metadata(State(mock): State<Mock>, Query(q): Query<BTreeMap<String, String>>) -> Response {
-    let name = q.get("filename").cloned().unwrap_or_default();
+/// The file the mock is "printing" (see `status_json`). It isn't in the `gcodes` root, so the
+/// file listings stay as they are, but it has metadata like a real job would.
+pub const PRINTING_FILE: &str = "benchy.gcode";
+pub const PRINTING_ESTIMATE: f64 = 3000.0;
+
+fn metadata_json(mock: &Mock, name: &str) -> Option<Value> {
+    if name == PRINTING_FILE {
+        return Some(
+            json!({"size": 123_456, "modified": 1_700_000_000.0, "slicer": "OrcaSlicer",
+                           "estimated_time": PRINTING_ESTIMATE, "thumbnails": []}),
+        );
+    }
     let fs = mock.fs.lock().unwrap();
-    let Some((data, modified)) = fs.files.get(&name) else {
-        return not_found("Metadata not available");
-    };
+    let (data, modified) = fs.files.get(name)?;
     let thumbs = if name == "parts/clip.gcode" {
         json!([{"width": 32, "height": 32, "size": 900, "relative_path": ".thumbs/clip-32x32.png"},
                {"width": 300, "height": 300, "size": 1768, "relative_path": ".thumbs/clip-300x300.png"}])
     } else {
         json!([])
     };
-    ok(
+    Some(
         json!({"size": data.len(), "modified": modified, "slicer": "PrusaSlicer", "slicer_version": "2.8.1",
-              "estimated_time": 3725.0, "filament_total": 1520.5, "filament_weight_total": 4.6,
-              "layer_height": 0.2, "object_height": 12.4, "nozzle_diameter": 0.4,
-              "first_layer_extr_temp": 215.0, "first_layer_bed_temp": 60.0, "thumbnails": thumbs}),
+                "estimated_time": 3725.0, "filament_total": 1520.5, "filament_weight_total": 4.6,
+                "layer_height": 0.2, "object_height": 12.4, "nozzle_diameter": 0.4,
+                "first_layer_extr_temp": 215.0, "first_layer_bed_temp": 60.0, "thumbnails": thumbs}),
     )
+}
+
+async fn metadata(State(mock): State<Mock>, Query(q): Query<BTreeMap<String, String>>) -> Response {
+    let name = q.get("filename").cloned().unwrap_or_default();
+    match metadata_json(&mock, &name) {
+        Some(m) => ok(m),
+        None => not_found("Metadata not available"),
+    }
 }
 
 async fn download(State(mock): State<Mock>, Path(path): Path<String>) -> Response {
@@ -675,6 +719,88 @@ async fn webcam(
     }
 }
 
+/// How many jobs the mock's history holds.
+pub const HISTORY_JOBS: usize = 60;
+
+/// Job `i` (0 = oldest). Every third file has since been deleted; statuses rotate.
+fn history_job_json(i: usize) -> Value {
+    let (filename, exists) = match i % 3 {
+        0 => ("parts/clip.gcode", true),
+        1 => ("old.gcode", true),
+        _ => ("gone.gcode", false),
+    };
+    let status = ["completed", "cancelled", "klippy_shutdown"][i % 3];
+    let thumbs = if exists && filename == "parts/clip.gcode" {
+        json!([{"width": 300, "height": 300, "size": 1768, "relative_path": ".thumbs/clip-300x300.png"}])
+    } else {
+        json!([])
+    };
+    let start = 1_700_000_000.0 + i as f64 * 7200.0;
+    json!({"job_id": format!("{i:06X}"), "exists": exists, "filename": filename, "status": status,
+           "start_time": start, "end_time": start + 3700.0, "print_duration": 3600.0 + i as f64,
+           "total_duration": 3700.0, "filament_used": 1520.5,
+           "metadata": {"size": 1000, "modified": 1_600_000_000.0, "slicer": "PrusaSlicer",
+                        "estimated_time": 3725.0, "layer_height": 0.2, "thumbnails": thumbs}})
+}
+
+fn history_off(mock: &Mock) -> Option<Response> {
+    mock.opts.no_history.then(|| not_found("Not Found"))
+}
+
+async fn history_list(State(mock): State<Mock>, Query(q): Query<BTreeMap<String, String>>) -> Response {
+    if let Some(res) = history_off(&mock) {
+        return res;
+    }
+    let start: usize = q.get("start").and_then(|s| s.parse().ok()).unwrap_or(0);
+    let limit: usize = q.get("limit").and_then(|s| s.parse().ok()).unwrap_or(50);
+    assert_eq!(q.get("order").map(String::as_str), Some("desc"));
+    let jobs: Vec<Value> = (0..HISTORY_JOBS)
+        .rev()
+        .skip(start)
+        .take(limit)
+        .map(history_job_json)
+        .collect();
+    ok(json!({"count": HISTORY_JOBS, "jobs": jobs}))
+}
+
+async fn history_totals(State(mock): State<Mock>) -> Response {
+    if let Some(res) = history_off(&mock) {
+        return res;
+    }
+    ok(
+        json!({"job_totals": {"total_jobs": HISTORY_JOBS, "total_time": 222_000.0,
+              "total_print_time": 217_770.0, "total_filament_used": 91_230.0,
+              "longest_job": 3700.0, "longest_print": 3659.0}}),
+    )
+}
+
+async fn history_job(State(mock): State<Mock>, Query(q): Query<BTreeMap<String, String>>) -> Response {
+    if let Some(res) = history_off(&mock) {
+        return res;
+    }
+    let uid = q.get("uid").cloned().unwrap_or_default();
+    match usize::from_str_radix(&uid, 16).ok().filter(|i| *i < HISTORY_JOBS) {
+        Some(i) => ok(json!({"job": history_job_json(i)})),
+        None => not_found(&format!("Invalid job uid: {uid}")),
+    }
+}
+
+/// Records the script; like Klipper, refuses targets above the heater's `max_temp` (300 here).
+async fn gcode_script(State(mock): State<Mock>, Query(q): Query<BTreeMap<String, String>>) -> Response {
+    let script = q.get("script").cloned().unwrap_or_default();
+    for line in script.lines() {
+        if let Some(t) = line.split("TARGET=").nth(1).and_then(|t| t.parse::<f64>().ok())
+            && t > 300.0
+        {
+            let msg = format!("Requested temperature ({t:.1}) out of range (0.0:300.0)");
+            let body = json!({"error": {"code": 400, "message": msg}});
+            return (StatusCode::BAD_REQUEST, axum::Json(body)).into_response();
+        }
+    }
+    mock.scripts.lock().unwrap().push(script);
+    ok(json!("ok"))
+}
+
 async fn websocket(State(mock): State<Mock>, ws: WebSocketUpgrade) -> Response {
     if mock.opts.no_websocket {
         return StatusCode::NOT_FOUND.into_response();
@@ -706,9 +832,18 @@ async fn session(mock: Mock, mut socket: WebSocket) {
                         subscribed = true;
                         json!({"eventtime": 1.0, "status": status_json(&mock, temperature)})
                     }
+                    "server.files.metadata" => {
+                        metadata_json(&mock, req["params"]["filename"].as_str().unwrap_or_default())
+                            .unwrap_or(Value::Null)
+                    }
                     _ => json!(null),
                 };
-                let reply = json!({"jsonrpc": "2.0", "result": result, "id": req["id"]});
+                let reply = if result.is_null() && method == "server.files.metadata" {
+                    json!({"jsonrpc": "2.0", "error": {"code": 404, "message": "Metadata not available"},
+                           "id": req["id"]})
+                } else {
+                    json!({"jsonrpc": "2.0", "result": result, "id": req["id"]})
+                };
                 if socket.send(Message::Text(reply.to_string().into())).await.is_err() { break; }
             }
             _ = tick.tick(), if subscribed => {

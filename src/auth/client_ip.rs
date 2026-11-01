@@ -36,6 +36,24 @@ impl FromRequestParts<AppState> for ClientIp {
     }
 }
 
+/// The address of the TCP peer itself, ignoring `X-Forwarded-For`. Used where only the
+/// directly connected proxy may be trusted (trusted-header SSO).
+#[derive(Debug, Clone, Copy)]
+pub struct PeerIp(pub Option<IpAddr>);
+
+impl<S: Send + Sync> FromRequestParts<S> for PeerIp {
+    type Rejection = Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Self, Self::Rejection> {
+        Ok(Self(
+            parts
+                .extensions
+                .get::<ConnectInfo<SocketAddr>>()
+                .map(|c| c.0.ip().to_canonical()),
+        ))
+    }
+}
+
 /// If the peer is a trusted proxy, walk `X-Forwarded-For` from the right and return the first
 /// address that isn't itself a trusted proxy. Otherwise the peer address is the client.
 pub fn resolve(peer: Option<IpAddr>, xff: &str, trusted: &[IpNet]) -> Option<IpAddr> {

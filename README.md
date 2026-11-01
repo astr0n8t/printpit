@@ -2,7 +2,7 @@
 
 Warning: vibe coded
 
-A minimal web interface for running several [Moonraker](https://github.com/Arksine/moonraker)/Klipper 3D printers from one place. It is written in Rust, ships as one small Docker image (~18 MB), and looks like a terminal UI.
+A minimal web interface for running several [Moonraker](https://github.com/Arksine/moonraker)/Klipper 3D printers from one place. It is written in Rust, ships as one small Docker image (~19 MB), and looks like a terminal UI.
 
 - **Built-in authentication.** First-run setup, users with viewer / operator / admin roles, and an audit log.
 - **Many printers.** Add printers by Moonraker URL and optional API key. Keys are encrypted at rest.
@@ -92,6 +92,47 @@ labels:
 
 Traefik streams SSE without extra settings. Raise its read timeout if you use long camera streams.
 
+### Single sign-on (auth proxy)
+
+If an auth proxy such as Authelia, authentik or oauth2-proxy already signs people in, printpit can trust the username it passes on:
+
+```sh
+PRINTPIT_AUTH_HEADER=Remote-User
+PRINTPIT_AUTH_PROXY_CIDRS=172.30.0.2        # the proxy's address as printpit sees it
+PRINTPIT_AUTH_LOGOUT_URL=https://auth.example.com/logout   # optional
+```
+
+- The header is believed only on connections coming **directly** from an address in `PRINTPIT_AUTH_PROXY_CIDRS`. `X-Forwarded-For` doesn't count, and requests from anywhere else are treated normally.
+- It only signs in users that already exist in printpit and are enabled: create them on the Users tab with the same usernames. Anyone else gets a "no enabled user by that name" page. printpit never creates users from the header.
+- Header sign-ins skip printpit's own two-factor step (the proxy does MFA). Password sign-in keeps working for everyone, for example when the proxy is down.
+- If the header names a different user from the current session, that session ends and the header's user is signed in.
+- Logout sends people to `PRINTPIT_AUTH_LOGOUT_URL` when it's set. Without it, the next request would sign them straight back in.
+
+**The proxy must remove any `Remote-User` header the client sends** and set its own. Otherwise anyone who can reach the proxy can claim to be anyone. With Caddy and Authelia:
+
+```caddyfile
+printpit.example.com {
+	request_header -Remote-User
+	forward_auth authelia:9091 {
+		uri /api/authz/forward-auth
+		copy_headers Remote-User
+	}
+	reverse_proxy printpit:8080 {
+		flush_interval -1
+	}
+}
+```
+
+With Traefik, strip the header before the forward-auth middleware:
+
+```yaml
+labels:
+  - traefik.http.middlewares.strip-user.headers.customrequestheaders.Remote-User=
+  - traefik.http.middlewares.authelia.forwardauth.address=http://authelia:9091/api/authz/forward-auth
+  - traefik.http.middlewares.authelia.forwardauth.authResponseHeaders=Remote-User
+  - traefik.http.routers.printpit.middlewares=strip-user,authelia
+```
+
 ## Configuration
 
 All settings are environment variables.
@@ -112,6 +153,11 @@ All settings are environment variables.
 | `PRINTPIT_WS_IDLE_GRACE_SECS` | `30` | Keep a printer's live connection open this long after the last viewer leaves. |
 | `PRINTPIT_SYSTEM_REFRESH_SECS` | `5` | System tab refresh interval (when auto-refresh is on). |
 | `PRINTPIT_MAX_UPLOAD_MB` | `1024` | Largest G-code upload. |
+| `PRINTPIT_NOTIFY_WEBHOOK_URL` | unset | Where print notifications are POSTed (see below). Never logged or shown. |
+| `PRINTPIT_NOTIFY_WEBHOOK_URL_FILE` | unset | Read the webhook URL from a file instead (Docker secrets). |
+| `PRINTPIT_AUTH_HEADER` | unset | Trusted-header single sign-on, e.g. `Remote-User` (see above). |
+| `PRINTPIT_AUTH_PROXY_CIDRS` | unset | Required with `PRINTPIT_AUTH_HEADER`: the only peers whose header is believed. |
+| `PRINTPIT_AUTH_LOGOUT_URL` | unset | Where logout sends people (the auth proxy's logout). |
 | `PRINTPIT_LOG_FORMAT` | `pretty` | `pretty` or `json`. |
 | `RUST_LOG` | `info` | Log filter, e.g. `info,printpit=debug`. |
 
@@ -119,19 +165,34 @@ All settings are environment variables.
 
 Add printers on the **[p] Printers** tab with Moonraker's address *as seen from the container*. Installs with Mainsail or Fluidd usually proxy Moonraker on port 80, so `http://printer.local` often works; otherwise use port `7125`. If Moonraker doesn't already trust printpit's address (`[authorization] trusted_clients`), create an API key in Moonraker and paste it in. **Test** shows Klipper's state and versions, or why it can't connect.
 
+### Print notifications
+
+Set `PRINTPIT_NOTIFY_WEBHOOK_URL` and a **notify** checkbox appears on each printer's settings. For printers with it ticked, printpit POSTs JSON when a print finishes, fails (including a Klipper shutdown mid-print) or is cancelled:
+
+```json
+{"printer": "Voron", "event": "complete", "filename": "benchy.gcode", "duration": 3725.0,
+ "message": "", "text": "Voron: finished benchy.gcode in 1:02:05", "content": "…same as text…"}
+```
+
+`text` suits Slack-style incoming webhooks and `content` suits Discord, so those work as they are; anything else can read the structured fields. Failed deliveries are retried twice.
+
+Normally printpit only talks to a printer while someone is looking at it. A printer with notifications on is the exception: printpit keeps its connection open all the time so it can see the print end. The webhook request goes out through the container's normal network, not the printer network (`PRINTPIT_EGRESS_BIND` and `PRINTPIT_PRINTER_CIDRS` don't apply to it).
+
 ## Users and roles
 
 | Role | Can |
 |---|---|
 | viewer | Watch the dashboard and camera, browse and download files, read logs and system info. |
-| operator | Also start, pause, resume, cancel and e-stop prints, and upload, move and delete files. |
-| admin | Also manage printers and users and read the audit log. Only admins see printer addresses. |
+| operator | Also start, pause, resume, cancel and e-stop prints, set heater temperatures and apply presets, and upload, move and delete files. |
+| admin | Also manage printers, temperature presets and users, and read the audit log. Only admins see printer addresses. |
+
+Anyone can turn on **two-factor sign-in** on the **[a] Account** tab: scan the QR code with an authenticator app (any TOTP app: Aegis, 2FAS, Google Authenticator, 1Password…), confirm with a code, and save the ten one-time recovery codes. Turning it off or making new recovery codes needs both your password and a code. If someone loses their phone and their recovery codes, an admin can **reset 2fa** for them on the Users tab.
 
 Admins manage users on the **[u] Users** tab. Disabling a user, resetting their password or deleting them signs them out at once. Every control action and change is recorded on the **[l] Audit** tab.
 
 ## Keyboard
 
-`1`–`4` switch tabs, `a` opens your account, and admins have `p`/`u`/`l`. `r` refreshes what's on screen, `/` filters a list, `j`/`k`/`Enter` move through it, and `y`/`n` answer confirmations. Press `?` for the full list.
+`1`–`5` switch tabs (dashboard, files, logs, system, history), `a` opens your account, and admins have `p`/`u`/`l`. `r` refreshes what's on screen, `/` filters a list, `j`/`k`/`Enter` move through it, and `y`/`n` answer confirmations. Press `?` for the full list.
 
 ## Backup and restore
 
@@ -149,6 +210,8 @@ Restore by extracting into an empty volume. You need the **same `PRINTPIT_SECRET
 ## Security model
 
 - Passwords are hashed with Argon2id. Sessions are server-side, with only a SHA-256 of the session ID stored, in `HttpOnly`, `SameSite=Lax` cookies (`__Host-` prefixed with TLS). Every change needs a CSRF token.
+- Optional trusted-header single sign-on, believed only from the configured proxy addresses (the direct peer, not `X-Forwarded-For`) and only for existing, enabled users.
+- Optional TOTP two-factor sign-in (RFC 6238). Secrets are encrypted with `PRINTPIT_SECRET_KEY`, each code works once, recovery codes are stored hashed, and wrong codes count towards the login rate limit. No session exists until the code step succeeds.
 - Failed logins are rate-limited per IP and per username. First-run setup needs a one-time token from the container log.
 - A strict Content-Security-Policy is applied, with no inline scripts and no third-party assets. Everything is served from the binary.
 - Printer URLs, hostnames, IP addresses and API keys never reach non-admin browsers. API keys never reach any browser.

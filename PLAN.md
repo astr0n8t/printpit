@@ -129,7 +129,7 @@ docker-compose.yml
    - `viewer`: read-only (dashboard, camera, file list, logs, system).
 6. **Password changes** for yourself, and **admin resets** for others. Changing a password revokes that user's other sessions.
 7. **Audit log.** Control actions (start, pause, cancel, e-stop, file delete/upload, printer and user changes) are recorded with user, printer, action and timestamp, and can be viewed by admins.
-8. *(Later)* Optional TOTP second factor, and optional trusted-header authentication for setups behind an SSO proxy.
+8. Optional TOTP second factor (account tab; see `auth::totp`), and optional trusted-header authentication for setups behind an SSO proxy (`auth::sso`: `PRINTPIT_AUTH_HEADER`, believed only from `PRINTPIT_AUTH_PROXY_CIDRS` as the direct peer, existing enabled users only, skips TOTP).
 
 ---
 
@@ -181,6 +181,7 @@ This is the core rule: **printpit talks to a printer only because a logged-in us
    - **Off:** no SSE stream and no timers. Each card and the System tab show a `[r] refresh` action that fetches a single snapshot (`/printer/objects/query` for cards). This is the lowest-traffic mode.
    - Toggling the box saves the setting (`POST /account/prefs`, CSRF-protected) and starts or stops the live stream right away, without a page reload.
    - The Logs tab's follow mode stays a separate toggle on that tab and is not remembered.
+8. **The one exception: print notifications.** A printer an admin has opted in to notifications (`printers.notify`, only offered when `PRINTPIT_NOTIFY_WEBHOOK_URL` is set) is watched permanently: `notify.rs` holds a hub subscription for it, so its WebSocket stays open with or without viewers, and posts to the webhook when a print leaves `printing`/`paused` for `complete`, `error` or `cancelled`. All other printers stay lazy.
 
 ---
 
@@ -253,6 +254,15 @@ GET  /p/{id}/status                     one-shot status snapshot (manual refresh
 GET  /ui/audit (admin)
 GET  /healthz                           liveness (no auth, no printer calls)
 GET  /static/*                          embedded assets, long cache + content hash
+-- added in M8 --
+GET  /p/{id}/camera/tile                camera tile with orientation (loaded when scrolled into view)
+GET  /p/{id}/temps                      temperatures modal (operator)
+POST /p/{id}/temp | /preset/{pid} | /cooldown
+POST /presets, POST|DELETE /presets/{id}   temperature presets (admin)
+GET  /ui/history, /p/{id}/history?start=, /p/{id}/history/job?uid=
+GET  /login/totp, POST /login/totp      second sign-in step (public, needs the pending cookie)
+GET  /account/totp/setup, POST /account/totp/{enable|disable|recovery}
+POST /users/{id}/totp/reset             (admin)
 ```
 
 Every `/ui/*` route returns a partial when `HX-Request` is present, or the full shell with that tab pre-rendered otherwise, so deep links and reloads work.
@@ -289,6 +299,10 @@ audit_log(id, user_id, printer_id NULL, action, detail_json, created_at)
 | `PRINTPIT_WS_IDLE_GRACE_SECS` | `30` | Keep the Moonraker WebSocket open after the last viewer leaves |
 | `PRINTPIT_MAX_UPLOAD_MB` | `1024` | Upload size limit |
 | `PRINTPIT_TRUSTED_PROXIES` | *(unset)* | CIDRs whose `X-Forwarded-For` is trusted (for rate limiting and audit IPs) |
+| `PRINTPIT_NOTIFY_WEBHOOK_URL` (+`_FILE`) | *(unset)* | Webhook for print notifications (§6.8) |
+| `PRINTPIT_AUTH_HEADER` | *(unset)* | Trusted-header SSO header, e.g. `Remote-User` (§3.8) |
+| `PRINTPIT_AUTH_PROXY_CIDRS` | *(unset)* | Required with the header: peers whose header is believed |
+| `PRINTPIT_AUTH_LOGOUT_URL` | *(unset)* | Logout destination behind an auth proxy |
 | `RUST_LOG` | `info` | Log filter |
 
 ---
