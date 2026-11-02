@@ -235,18 +235,19 @@ Same rules as M8: new protected routes go into `PROTECTED_GET`/`PROTECTED_POST`,
 - [ ] Profile details: view a stored profile's key settings / download its JSON (admins currently see only name, source and age)
 
 ### 9.4 Slice tab and jobs (operator)
-- [ ] `Tab::Slice` (`[6]Slice`, key `6`), shown only when the slicer is configured; `/ui/slice` renders from the DB only (printer selector via `select::select()`, form, recent jobs). Viewers see jobs but not the form
-- [ ] Form (fields before the file input): process, filament (filtered by `compatible_printers` where simple), whitelisted overrides (layer height, infill %, walls, supports off/normal/tree, brim, copies, arrange, orient), output name, "start print when done" (only when the printer is idle); 3MF "use project settings"
-- [ ] `slicer::options`: typed fields → fixed Orca config keys with range checks; unknown keys impossible by construction; unit-tested
-- [ ] `POST /slice/jobs`: streamed upload to disk with its own `DefaultBodyLimit`, magic-byte check (STL ascii/binary, 3MF zip, STEP, OBJ), `clean_name`, per-user queued-job cap
-- [ ] `slicer::Queue` in `AppState` (started at boot like the notifier; tests start it themselves): queued → slicing → uploading → done/failed/cancelled; restart marks `slicing`/`uploading` as `failed (interrupted)` and resumes `queued`
-- [ ] Upload to `gcodes/printpit/<name>.gcode` with the existing streaming client upload; ask before overwriting; invalidate the Files cache
-- [ ] Job panel `GET /slice/jobs/{id}`: status, stats, log tail on failure; refresh button with `data-every` only while running and auto-refresh is on
-- [ ] Actions: cancel (any stage), reslice (same model, new options), upload again, print (confirm; reuses `print/start`; refused while the printer is busy), delete (removes files)
-- [ ] Retention sweep for `/data/slicer` (on the queue's tick, not a new per-view timer)
-- [ ] Optional webhook events `slice_done`/`slice_failed` when notifications are configured
-- [ ] Audit `slice_job_create/cancel/upload/print/delete`
-- [ ] Checked in Chromium at 390 px: phone upload from the file picker, progress, done → print; no horizontal scroll, no console/CSP errors
+- [x] `Tab::Slice` (`[6]Slice`, key `6`), shown only when the slicer is configured; `/ui/slice` renders from the DB only (printer selector via `select::select()`, form, recent jobs). Viewers see jobs but not the form
+- [x] Form (fields before the file input): process, filament (filtered by `compatible_printers` where simple), whitelisted overrides (layer height, infill %, walls, supports off/normal/tree, brim, copies, arrange, orient), output name, "start print when done" (only when the printer is idle); 3MF "use project settings". Profiles that fit are listed first, others marked "(other printer)". **Copies left out** until Orca's semantics are checked (see 9.1). "Start print" is checked against the printer at submit and again before starting
+- [x] `slicer::options`: typed fields → fixed Orca config keys with range checks; unknown keys impossible by construction; unit-tested. Keys and values checked against Orca 2.4.2's `PrintConfig.cpp`; layer height is also checked against the machine's `min/max_layer_height`
+- [x] `POST /slice/jobs`: streamed upload to disk with its own `DefaultBodyLimit`, magic-byte check (STL ascii/binary, 3MF zip, STEP, OBJ), `clean_name`, per-user queued-job cap (5 unfinished). The model goes to `.incoming-*` first and is moved into the job's folder in the same transaction that creates the job, so the queue never sees a job without its model
+- [x] `slicer::Queue` in `AppState` (started at boot like the notifier; tests start it themselves): queued → slicing → uploading → done/failed/cancelled; restart marks `slicing`/`uploading` as `failed (interrupted)` and resumes `queued`. In `Slicing.queue`, started by `state.start_slicing()`. A busy or offline worker keeps the job queued with a "waiting: …" note, retrying with backoff (5 s doubling to 60 s)
+- [x] Upload to `gcodes/printpit/<name>.gcode` with the existing streaming client upload; ask before overwriting; invalidate the Files cache. The overwrite check is at submit ("tick replace or rename"); "upload again" confirms before replacing
+- [x] Job panel `GET /slice/jobs/{id}`: status, stats, log tail on failure; refresh button with `data-every` only while running and auto-refresh is on. Each refresh also updates the job's badge in the recent-jobs list (OOB, only when the list shows it)
+- [x] Actions: cancel (any stage), reslice (same model, new options), upload again, print (confirm; reuses `print/start`; refused while the printer is busy), delete (removes files)
+- [x] Retention sweep for `/data/slicer` (on the queue's tick, not a new per-view timer). Every 10 minutes and at start; orphan folders and stale `.incoming-*` uploads go too; the job's row stays, without reslice/upload
+- [x] Optional webhook events `slice_done`/`slice_failed` when notifications are configured (`Notifier::send`)
+- [x] Audit `slice_job_create/cancel/upload/print/delete`
+- [ ] Audit "upload again" under the user who clicked it (the queue's upload record names the job's owner)
+- [x] Checked in Chromium at 390 px: phone upload from the file picker, progress, done → print; no horizontal scroll, no console/CSP errors. Fixed on the way: long checkbox labels split the `[ ]` glyph (global CSS), and the recent-jobs badge went stale
 
 ### 9.5 Tests, deploy, docs
 - [ ] Mock worker (`tests/common/slicer.rs` + `examples/mock_slicer.rs`): canned G-code with footer stats, fail/stall/busy modes, records requests

@@ -33,6 +33,7 @@ pub enum Tab {
     Logs,
     System,
     History,
+    Slice,
     Printers,
     Slicer,
     Users,
@@ -41,12 +42,13 @@ pub enum Tab {
 }
 
 impl Tab {
-    pub const ALL: [Tab; 10] = [
+    pub const ALL: [Tab; 11] = [
         Tab::Dashboard,
         Tab::Files,
         Tab::Logs,
         Tab::System,
         Tab::History,
+        Tab::Slice,
         Tab::Printers,
         Tab::Slicer,
         Tab::Users,
@@ -61,6 +63,7 @@ impl Tab {
             Tab::Logs => "/ui/logs",
             Tab::System => "/ui/system",
             Tab::History => "/ui/history",
+            Tab::Slice => "/ui/slice",
             Tab::Printers => "/ui/printers",
             Tab::Slicer => "/ui/slicer",
             Tab::Users => "/ui/users",
@@ -76,6 +79,7 @@ impl Tab {
             Tab::Logs => "Logs",
             Tab::System => "System",
             Tab::History => "History",
+            Tab::Slice => "Slice",
             Tab::Printers => "Printers",
             Tab::Slicer => "Slicer",
             Tab::Users => "Users",
@@ -91,6 +95,7 @@ impl Tab {
             Tab::Logs => "logs",
             Tab::System => "system",
             Tab::History => "history",
+            Tab::Slice => "slice",
             Tab::Printers => "printers",
             Tab::Slicer => "slicer",
             Tab::Users => "users",
@@ -106,6 +111,7 @@ impl Tab {
             Tab::Logs => "3",
             Tab::System => "4",
             Tab::History => "5",
+            Tab::Slice => "6",
             Tab::Printers => "p",
             Tab::Slicer => "s",
             Tab::Users => "u",
@@ -124,7 +130,7 @@ impl Tab {
 
     /// Shown only when slicing is configured.
     pub fn needs_slicing(self) -> bool {
-        self == Tab::Slicer
+        matches!(self, Tab::Slice | Tab::Slicer)
     }
 
     /// Pushed to the right-hand end of the strip.

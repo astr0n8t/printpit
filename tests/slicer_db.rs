@@ -273,7 +273,7 @@ async fn job_lifecycle() {
     assert_eq!(claimed.status(), JobStatus::Slicing);
     assert!(claimed.started_at.is_some());
     // A busy worker: back in the queue, still ahead of b.
-    assert!(slicer::requeue(&db, a).await.unwrap());
+    assert!(slicer::requeue(&db, a, Some("waiting: busy")).await.unwrap());
     assert_eq!(slicer::claim_next(&db).await.unwrap().unwrap().id, a);
     assert_eq!(slicer::claim_next(&db).await.unwrap().unwrap().id, b);
     assert!(slicer::claim_next(&db).await.unwrap().is_none());
@@ -311,7 +311,7 @@ async fn job_lifecycle() {
     // b: cancelled mid-slice; the queue's next step then finds nothing to do.
     assert!(slicer::cancel(&db, b).await.unwrap());
     assert!(!slicer::sliced(&db, b, &stats).await.unwrap());
-    assert!(!slicer::requeue(&db, b).await.unwrap());
+    assert!(!slicer::requeue(&db, b, None).await.unwrap());
     assert_eq!(
         slicer::get_job(&db, b).await.unwrap().unwrap().status(),
         JobStatus::Cancelled

@@ -82,6 +82,18 @@ pub async fn get_profile(db: &Db, id: i64) -> Result<Option<StoredProfile>, sqlx
     row.map(|r| stored(&r)).transpose()
 }
 
+/// Every profile of a kind with its settings, by name (for the Slice form's compatibility filter).
+pub async fn profiles_with_settings(db: &Db, kind: Kind) -> Result<Vec<StoredProfile>, sqlx::Error> {
+    let rows = sqlx::query(
+        "SELECT id, kind, name, source, vendor, updated_at, settings_json FROM slicer_profiles
+         WHERE kind = ? ORDER BY name COLLATE NOCASE",
+    )
+    .bind(kind.as_str())
+    .fetch_all(db)
+    .await?;
+    rows.iter().map(stored).collect()
+}
+
 pub async fn find_profile(db: &Db, kind: Kind, name: &str) -> Result<Option<ProfileInfo>, sqlx::Error> {
     sqlx::query_as(
         "SELECT id, kind, name, source, vendor, updated_at FROM slicer_profiles WHERE kind = ? AND name = ?",
@@ -353,8 +365,12 @@ pub struct JobStats {
 /// The reason on jobs a restart cut short.
 pub const INTERRUPTED: &str = "interrupted: printpit restarted while this job was running";
 
-/// Creates a queued job.
-pub async fn create_job(db: &Db, j: &NewJob<'_>) -> Result<i64, sqlx::Error> {
+/// Creates a queued job. Pass a transaction to put its model in place before the queue can
+/// see it (the web submit does).
+pub async fn create_job<'e>(
+    db: impl sqlx::Executor<'e, Database = sqlx::Sqlite>,
+    j: &NewJob<'_>,
+) -> Result<i64, sqlx::Error> {
     sqlx::query_scalar(
         "INSERT INTO slice_jobs (user_id, printer_id, model_name, model_size, status, machine_profile_id,
                                  process_id, filament_id, options_json, start_print, created_at)
@@ -414,14 +430,39 @@ pub async fn claim_next(db: &Db) -> Result<Option<Job>, sqlx::Error> {
 }
 
 /// Puts a slicing job back in the queue (the worker was busy or unreachable).
-pub async fn requeue(db: &Db, id: i64) -> Result<bool, sqlx::Error> {
+/// `note` says why it's waiting (shown on the job; cleared when it's claimed again).
+pub async fn requeue(db: &Db, id: i64, note: Option<&str>) -> Result<bool, sqlx::Error> {
     let res = sqlx::query(
-        "UPDATE slice_jobs SET status = 'queued', started_at = NULL WHERE id = ? AND status = 'slicing'",
+        "UPDATE slice_jobs SET status = 'queued', started_at = NULL, error = ? WHERE id = ? AND status = 'slicing'",
+    )
+    .bind(note)
+    .bind(id)
+    .execute(db)
+    .await?;
+    Ok(res.rows_affected() == 1)
+}
+
+/// A finished job whose G-code is still on disk goes back to uploading ("upload again").
+pub async fn start_upload(db: &Db, id: i64) -> Result<bool, sqlx::Error> {
+    let res = sqlx::query(
+        "UPDATE slice_jobs SET status = 'uploading', error = NULL, log_tail = NULL, output_name = NULL,
+                               finished_at = NULL
+         WHERE id = ? AND status IN ('done', 'failed', 'cancelled') AND gcode_size IS NOT NULL",
     )
     .bind(id)
     .execute(db)
     .await?;
     Ok(res.rows_affected() == 1)
+}
+
+/// A remark on a job, e.g. why a finished one didn't start printing.
+pub async fn note(db: &Db, id: i64, note: &str) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE slice_jobs SET error = ? WHERE id = ?")
+        .bind(note)
+        .bind(id)
+        .execute(db)
+        .await?;
+    Ok(())
 }
 
 /// slicing → uploading, with what the slicer reported.

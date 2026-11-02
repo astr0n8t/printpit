@@ -1,0 +1,110 @@
+{%- if let Some(sel) = select %}
+<div class="tab-head">{{ sel|safe }}</div>
+{%- endif %}
+<section class="panel">
+  <h2 class="panel-title">slice{% if !printer_name.is_empty() %} for {{ printer_name }}{% endif %}</h2>
+{%- if let Some(n) = notice %}
+  <p class="ok" role="status">✓ {{ n }}</p>
+{%- endif %}
+{%- if let Some(e) = error %}
+  <p class="err" role="alert">! {{ e }}</p>
+{%- endif %}
+{%- if let Some(f) = form %}
+  <form class="slice-form" data-upload hx-post="/slice/jobs" hx-encoding="multipart/form-data" hx-target="#main" hx-disabled-elt="find button.primary">
+    <input type="hidden" name="printer" value="{{ f.printer_id }}">
+    <p class="dim">Sliced as <strong>{{ f.machine }}</strong>. The G-code goes to <code>printpit/</code> on the printer.</p>
+    <div class="field">
+      <label for="slice-process">process</label>
+      <select id="slice-process" name="process">
+{%- if f.processes.is_empty() %}
+        <option value="">(none in the library)</option>
+{%- endif %}
+{%- for c in f.processes %}
+        <option value="{{ c.id }}"{% if f.is_default("process", c.id) %} selected{% endif %}>{{ c.name }}{% if !c.fits %} (other printer){% endif %}</option>
+{%- endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label for="slice-filament">filament</label>
+      <select id="slice-filament" name="filament">
+{%- if f.filaments.is_empty() %}
+        <option value="">(none in the library)</option>
+{%- endif %}
+{%- for c in f.filaments %}
+        <option value="{{ c.id }}"{% if f.is_default("filament", c.id) %} selected{% endif %}>{{ c.name }}{% if !c.fits %} (other printer){% endif %}</option>
+{%- endfor %}
+      </select>
+    </div>
+    <details class="slice-overrides">
+      <summary>settings</summary>
+      <p class="dim">Blank keeps the process's own value.</p>
+      <div class="slice-grid">
+        <label>layer height (mm) <input name="layer_height" type="number" min="0.04" max="1" step="0.01" inputmode="decimal"></label>
+        <label>infill (%) <input name="infill" type="number" min="0" max="100" step="1" inputmode="numeric"></label>
+        <label>walls <input name="walls" type="number" min="1" max="20" step="1" inputmode="numeric"></label>
+        <label>supports
+          <select name="supports">
+            <option value="">as the process</option>
+            <option value="off">off</option>
+            <option value="normal">normal (build plate only)</option>
+            <option value="tree">tree (build plate only)</option>
+          </select>
+        </label>
+        <label>brim
+          <select name="brim">
+            <option value="">as the process</option>
+            <option value="auto">auto</option>
+            <option value="off">off</option>
+            <option value="width">this width:</option>
+          </select>
+        </label>
+        <label>brim width (mm) <input name="brim_width" type="number" min="0.5" max="30" step="0.5" inputmode="decimal"></label>
+      </div>
+      <div class="field">
+        <label><input type="checkbox" name="arrange">arrange on the plate</label>
+        <label><input type="checkbox" name="orient">auto-orient</label>
+      </div>
+      <div class="field">
+        <label><input type="checkbox" name="project_settings">3MF: use the project's own settings</label>
+        <label>3MF plate <input name="plate" type="number" min="1" max="64" step="1" inputmode="numeric" placeholder="1"></label>
+      </div>
+    </details>
+    <div class="field">
+      <label for="slice-output">file name <span class="dim">(optional)</span></label>
+      <input id="slice-output" name="output" maxlength="120" placeholder="model_process_filament" spellcheck="false" autocapitalize="none">
+      <label><input type="checkbox" name="replace">replace a file with the same name</label>
+    </div>
+    <div class="field">
+      <label><input type="checkbox" name="start_print">start printing when it's done (only if the printer is idle)</label>
+    </div>
+    <div class="field">
+      <label for="slice-model">model</label>
+      <input id="slice-model" name="model" type="file" required accept=".stl,.3mf,.obj,.step,.stp">
+      <p class="dim">STL, 3MF, OBJ or STEP, up to {{ f.max_mb }} MB.</p>
+    </div>
+    <div class="actions"><button class="primary">slice</button><span class="upload-progress bar"></span></div>
+  </form>
+{%- else if let Some(why) = no_form %}
+  <p>{{ why }}</p>
+{%- endif %}
+</section>
+<div id="job">{% if let Some(j) = job %}{{ j|safe }}{% endif %}</div>
+{%- if select.is_some() %}
+<section class="panel" id="jobs">
+  <h2 class="panel-title">recent jobs</h2>
+{%- if jobs.is_empty() %}
+  <p class="dim">None yet.</p>
+{%- else %}
+  <table class="profiles">
+    <tbody>
+{%- for j in jobs %}
+      <tr>
+        <td class="wrap"><a href="/slice/jobs/{{ j.id }}" hx-get="/slice/jobs/{{ j.id }}" hx-target="#job">{{ j.model }}</a><br><span class="dim">#{{ j.id }} · {{ j.age }}</span></td>
+        <td class="row-actions"><span id="job-badge-{{ j.id }}" class="badge {{ j.class }}">{{ j.label }}</span></td>
+      </tr>
+{%- endfor %}
+    </tbody>
+  </table>
+{%- endif %}
+</section>
+{%- endif %}

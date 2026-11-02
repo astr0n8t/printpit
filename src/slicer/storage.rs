@@ -76,6 +76,45 @@ impl Storage {
         tokio::fs::rename(self.partial_output_path(job), self.output_path(job)).await
     }
 
+    /// A fresh path for an upload that isn't a job yet (moved into place by
+    /// [`Storage::adopt_model`]). Leftovers are removed by [`Storage::sweep_incoming`].
+    pub fn incoming_path(&self) -> PathBuf {
+        let name = hex::encode(crate::crypto::random_bytes::<12>());
+        self.root.join(format!(".incoming-{name}"))
+    }
+
+    /// Moves a checked upload into a job's directory as its model.
+    pub async fn adopt_model(&self, incoming: &Path, job: i64, ext: &str) -> std::io::Result<PathBuf> {
+        let dest = self
+            .model_path(job, ext)
+            .ok_or_else(|| std::io::Error::other("not a model extension"))?;
+        self.create_job_dir(job)?;
+        tokio::fs::rename(incoming, &dest).await?;
+        Ok(dest)
+    }
+
+    /// Removes incoming uploads older than `max_age` (from a crash or a dropped connection).
+    pub async fn sweep_incoming(&self, max_age: std::time::Duration) -> std::io::Result<usize> {
+        let mut removed = 0;
+        let mut dir = tokio::fs::read_dir(&self.root).await?;
+        while let Some(entry) = dir.next_entry().await? {
+            let old = entry
+                .metadata()
+                .await
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|age| age >= max_age);
+            if entry.file_name().to_string_lossy().starts_with(".incoming-")
+                && old
+                && tokio::fs::remove_file(entry.path()).await.is_ok()
+            {
+                removed += 1;
+            }
+        }
+        Ok(removed)
+    }
+
     /// Removes a job's files. Missing is fine.
     pub async fn remove_job(&self, job: i64) -> std::io::Result<()> {
         match tokio::fs::remove_dir_all(self.job_dir(job)).await {
@@ -182,6 +221,29 @@ mod tests {
         s.remove_job(5).await.unwrap();
         s.remove_job(5).await.unwrap();
         assert_eq!(s.job_ids().await.unwrap(), [3, 12]);
+    }
+
+    #[tokio::test]
+    async fn incoming_uploads() {
+        let data = tempfile::tempdir().unwrap();
+        let s = Storage::open(data.path()).unwrap();
+        let a = s.incoming_path();
+        assert_ne!(a, s.incoming_path());
+        drop(s.create(&a).await.unwrap());
+        // Not a job directory.
+        assert!(s.job_ids().await.unwrap().is_empty());
+        let model = s.adopt_model(&a, 9, "stl").await.unwrap();
+        assert!(model.ends_with("9/model.stl") && model.exists() && !a.exists());
+        let b = s.incoming_path();
+        drop(s.create(&b).await.unwrap());
+        assert_eq!(
+            s.sweep_incoming(std::time::Duration::from_secs(3600))
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(s.sweep_incoming(std::time::Duration::ZERO).await.unwrap(), 1);
+        assert!(!b.exists());
     }
 
     #[test]

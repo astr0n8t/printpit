@@ -9,10 +9,14 @@
 pub mod client;
 pub mod error;
 pub mod import;
+pub mod model;
+pub mod options;
+pub mod queue;
 pub mod storage;
 
 pub use client::SlicerClient;
 pub use error::SlicerError;
+pub use queue::Queue;
 pub use storage::Storage;
 
 use crate::config::SlicerConfig;
@@ -55,6 +59,7 @@ pub struct Slicing {
     pub config: SlicerConfig,
     pub client: SlicerClient,
     pub storage: Storage,
+    pub queue: std::sync::Arc<Queue>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -70,6 +75,7 @@ impl Slicing {
         Ok(Self {
             client: SlicerClient::new(&config)?,
             storage: Storage::open(data_dir)?,
+            queue: std::sync::Arc::default(),
             config,
         })
     }

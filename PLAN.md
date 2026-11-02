@@ -263,12 +263,12 @@ GET  /ui/history, /p/{id}/history?start=, /p/{id}/history/job?uid=
 GET  /login/totp, POST /login/totp      second sign-in step (public, needs the pending cookie)
 GET  /account/totp/setup, POST /account/totp/{enable|disable|recovery}
 POST /users/{id}/totp/reset             (admin)
--- planned in M9 (slicing, §15) --
+-- slicing (§15; all 404 when slicing is off) --
 GET  /ui/slice                          Slice tab: printer selector + upload form + recent jobs (no printer or worker calls)
 POST /slice/jobs                        streamed model upload + options -> queued job (operator)
 GET  /slice/jobs/{id}                   job panel (status, log tail, stats); refresh button with data-every while running
-POST /slice/jobs/{id}/{cancel|reslice|upload|print}
-DELETE /slice/jobs/{id}
+POST /slice/jobs/{id}/{cancel|reslice|upload|print}   (operator)
+DELETE /slice/jobs/{id}                 (operator; cancels first if running)
 -- built (9.3, admin; all 404 when slicing is off) --
 GET  /ui/slicer                         [s]Slicer tab: library by kind + import panels (DB only, no worker calls)
 POST /slicer/test                       worker /v1/health + /v1/info, rendered like the printer test

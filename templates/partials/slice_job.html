@@ -1,0 +1,89 @@
+<section class="panel" id="job-{{ id }}">
+  <h2 class="panel-title">job #{{ id }}</h2>
+{%- if let Some(n) = notice %}
+  <p class="ok" role="status">✓ {{ n }}</p>
+{%- endif %}
+{%- if let Some(e) = error %}
+  <p class="err" role="alert">! {{ e }}</p>
+{%- endif %}
+  <p><span class="badge {{ class }}">{{ label }}</span> <strong>{{ model }}</strong> <span class="dim">for {{ printer }} · {{ created }}</span></p>
+{%- if let Some(m) = message %}
+  <p class="{{ message_class }}">{{ m }}</p>
+{%- endif %}
+  <dl class="kv">
+    <dt>profiles</dt><dd class="wrap">{{ profiles|join(" · ") }}</dd>
+{%- if !settings.is_empty() %}
+    <dt>settings</dt><dd class="wrap">{{ settings|join(" · ") }}</dd>
+{%- endif %}
+{%- for (k, v) in stats %}
+    <dt>{{ k }}</dt><dd>{{ v }}</dd>
+{%- endfor %}
+{%- if let Some(o) = output %}
+    <dt>on the printer</dt><dd class="wrap"><code>{{ o }}</code></dd>
+{%- endif %}
+  </dl>
+{%- if !log_tail.is_empty() %}
+  <details>
+    <summary>slicer log</summary>
+    <pre class="log">{% for l in log_tail %}{{ l }}
+{% endfor %}</pre>
+  </details>
+{%- endif %}
+  <div class="actions">
+    <button type="button" hx-get="/slice/jobs/{{ id }}" hx-target="#job" data-refresh{% if let Some(ms) = refresh_ms %} data-every="{{ ms }}"{% endif %}>refresh [r]</button>
+{%- if can_print %}
+    <button class="primary" hx-post="/slice/jobs/{{ id }}/print" hx-target="#job" hx-confirm="Start printing {{ model }} on {{ printer }}?">print</button>
+{%- endif %}
+{%- if can_cancel %}
+    <button class="danger" hx-post="/slice/jobs/{{ id }}/cancel" hx-target="#job" hx-confirm="Cancel slicing {{ model }}?">cancel</button>
+{%- endif %}
+{%- if can_upload %}
+    <button hx-post="/slice/jobs/{{ id }}/upload" hx-target="#job" hx-confirm="Upload {{ model }}'s G-code to {{ printer }} again, replacing the file there?">upload again</button>
+{%- endif %}
+{%- if can_delete %}
+    <button class="danger" hx-delete="/slice/jobs/{{ id }}" hx-target="#main" hx-confirm="Delete job #{{ id }} and its files?">delete</button>
+{%- endif %}
+  </div>
+{%- if can_reslice %}
+  <details class="slice-overrides">
+    <summary>slice again</summary>
+    <form hx-post="/slice/jobs/{{ id }}/reslice" hx-target="#job">
+      <p class="dim">Same model and profiles. Blank keeps the process's own value.</p>
+      <div class="slice-grid">
+        <label>layer height (mm) <input name="layer_height" type="number" min="0.04" max="1" step="0.01" inputmode="decimal" value="{{ form.layer_height }}"></label>
+        <label>infill (%) <input name="infill" type="number" min="0" max="100" step="1" inputmode="numeric" value="{{ form.infill }}"></label>
+        <label>walls <input name="walls" type="number" min="1" max="20" step="1" inputmode="numeric" value="{{ form.walls }}"></label>
+        <label>supports
+          <select name="supports">
+            <option value=""{% if self.sel("supports", "") %} selected{% endif %}>as the process</option>
+            <option value="off"{% if self.sel("supports", "off") %} selected{% endif %}>off</option>
+            <option value="normal"{% if self.sel("supports", "normal") %} selected{% endif %}>normal</option>
+            <option value="tree"{% if self.sel("supports", "tree") %} selected{% endif %}>tree</option>
+          </select>
+        </label>
+        <label>brim
+          <select name="brim">
+            <option value=""{% if self.sel("brim", "") %} selected{% endif %}>as the process</option>
+            <option value="auto"{% if self.sel("brim", "auto") %} selected{% endif %}>auto</option>
+            <option value="off"{% if self.sel("brim", "off") %} selected{% endif %}>off</option>
+            <option value="width"{% if self.sel("brim", "width") %} selected{% endif %}>this width:</option>
+          </select>
+        </label>
+        <label>brim width (mm) <input name="brim_width" type="number" min="0.5" max="30" step="0.5" inputmode="decimal" value="{{ form.brim_width }}"></label>
+      </div>
+      <div class="field">
+        <label><input type="checkbox" name="arrange"{% if form.arrange.is_some() %} checked{% endif %}>arrange on the plate</label>
+        <label><input type="checkbox" name="orient"{% if form.orient.is_some() %} checked{% endif %}>auto-orient</label>
+{%- if is_3mf %}
+        <label><input type="checkbox" name="project_settings"{% if form.project_settings.is_some() %} checked{% endif %}>use the project's own settings</label>
+        <label>plate <input name="plate" type="number" min="1" max="64" step="1" value="{{ form.plate }}" placeholder="1"></label>
+{%- endif %}
+      </div>
+      <div class="actions"><button class="primary">slice again</button></div>
+    </form>
+  </details>
+{%- endif %}
+</section>
+{%- if oob_badge %}
+<span id="job-badge-{{ id }}" class="badge {{ class }}" hx-swap-oob="true">{{ label }}</span>
+{%- endif %}

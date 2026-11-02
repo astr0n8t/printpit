@@ -44,6 +44,8 @@ const PROTECTED_GET: &[&str] = &[
     "/ui/audit",
     "/ui/slicer",
     "/ui/slicer/system",
+    "/ui/slice",
+    "/slice/jobs/1",
 ];
 const PROTECTED_POST: &[&str] = &[
     "/logout",
@@ -77,6 +79,11 @@ const PROTECTED_POST: &[&str] = &[
     "/slicer/test",
     "/slicer/import/system",
     "/slicer/import/user",
+    "/slice/jobs",
+    "/slice/jobs/1/cancel",
+    "/slice/jobs/1/reslice",
+    "/slice/jobs/1/upload",
+    "/slice/jobs/1/print",
 ];
 const PROTECTED_DELETE: &[&str] = &[
     "/printers/1",
@@ -84,6 +91,7 @@ const PROTECTED_DELETE: &[&str] = &[
     "/users/2",
     "/presets/1",
     "/slicer/profiles/1",
+    "/slice/jobs/1",
 ];
 
 // ── First-run setup ──────────────────────────────────────────────────

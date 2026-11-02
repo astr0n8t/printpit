@@ -121,6 +121,14 @@ impl AppState {
         self.notifier.sync().await;
     }
 
+    /// Starts the slice queue (no-op when slicing is off). Jobs a restart cut short are marked
+    /// failed; queued ones resume.
+    pub async fn start_slicing(&self) {
+        if let Some(s) = &self.slicing {
+            s.queue.start(self.clone()).await;
+        }
+    }
+
     /// Periodically purges expired sessions and stale rate-limit windows.
     pub fn spawn_maintenance(&self) {
         let state = self.clone();

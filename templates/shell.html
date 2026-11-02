@@ -15,7 +15,13 @@
   <h2 id="help-title" class="modal-title">keyboard</h2>
   <table class="keys">
     <tbody>
+{%- if let Some(user) = layout.user %}{% if user.slicing %}
+      <tr><td><kbd>1</kbd>–<kbd>6</kbd></td><td>dashboard · files · logs · system · history · slice</td></tr>
+{%- else %}
       <tr><td><kbd>1</kbd>–<kbd>5</kbd></td><td>dashboard · files · logs · system · history</td></tr>
+{%- endif %}{% else %}
+      <tr><td><kbd>1</kbd>–<kbd>5</kbd></td><td>dashboard · files · logs · system · history</td></tr>
+{%- endif %}
       <tr><td><kbd>a</kbd></td><td>account</td></tr>
 {%- if let Some(user) = layout.user %}{% if user.role == "admin" %}
 {%- if user.slicing %}
