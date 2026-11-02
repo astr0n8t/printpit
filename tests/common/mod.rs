@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 
 pub mod moonraker;
+pub mod slicer;
 
 use std::collections::HashMap;
 
@@ -242,6 +243,19 @@ impl Client {
         fields: &[(&str, &str)],
         file: Option<(&str, &[u8])>,
     ) -> Resp {
+        let files: Vec<(&str, &[u8])> = file.into_iter().collect();
+        self.post_files(uri, csrf, fields, "file", &files).await
+    }
+
+    /// Like [`Client::post_multipart`], with any number of files under one field name.
+    pub async fn post_files(
+        &mut self,
+        uri: &str,
+        csrf: &str,
+        fields: &[(&str, &str)],
+        field: &str,
+        files: &[(&str, &[u8])],
+    ) -> Resp {
         const B: &str = "printpit-test-boundary";
         let mut body = Vec::new();
         for (k, v) in fields {
@@ -249,9 +263,9 @@ impl Client {
                 format!("--{B}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n").as_bytes(),
             );
         }
-        if let Some((name, data)) = file {
+        for (name, data) in files {
             body.extend_from_slice(
-                format!("--{B}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{name}\"\r\nContent-Type: application/octet-stream\r\n\r\n").as_bytes(),
+                format!("--{B}\r\nContent-Disposition: form-data; name=\"{field}\"; filename=\"{name}\"\r\nContent-Type: application/octet-stream\r\n\r\n").as_bytes(),
             );
             body.extend_from_slice(data);
             body.extend_from_slice(b"\r\n");

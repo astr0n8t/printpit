@@ -1,0 +1,44 @@
+<section class="panel" id="printer-slicer">
+  <h2 class="panel-title">slicing</h2>
+{%- if let Some(n) = notice %}
+  <p class="ok" role="status">✓ {{ n }}</p>
+{%- endif %}
+{%- if let Some(e) = error %}
+  <p class="err" role="alert">! {{ e }}</p>
+{%- endif %}
+{%- if machines.is_empty() %}
+  <p>The profile library has no machine profiles yet. Import this printer's on the <a href="/ui/slicer" hx-get="/ui/slicer" hx-target="#main" hx-push-url="true">slicer</a> tab.</p>
+{%- else %}
+  <form hx-post="/printers/{{ id }}/slicer" hx-target="#main">
+    <div class="field">
+      <label for="slicer-machine">machine profile</label>
+      <select id="slicer-machine" name="machine">
+        <option value="">(none: can't slice for this printer)</option>
+{%- for (pid, name) in machines %}
+        <option value="{{ pid }}"{% if self.is("machine", pid) %} selected{% endif %}>{{ name }}</option>
+{%- endfor %}
+      </select>
+      <p class="dim">The bed, nozzle, limits and start/end G-code every slice for this printer uses.</p>
+    </div>
+    <div class="field">
+      <label for="slicer-process">default process</label>
+      <select id="slicer-process" name="process">
+        <option value="">(none)</option>
+{%- for (pid, name) in processes %}
+        <option value="{{ pid }}"{% if self.is("process", pid) %} selected{% endif %}>{{ name }}</option>
+{%- endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label for="slicer-filament">default filament</label>
+      <select id="slicer-filament" name="filament">
+        <option value="">(none)</option>
+{%- for (pid, name) in filaments %}
+        <option value="{{ pid }}"{% if self.is("filament", pid) %} selected{% endif %}>{{ name }}</option>
+{%- endfor %}
+      </select>
+    </div>
+    <div class="actions"><button class="primary">save slicing</button></div>
+  </form>
+{%- endif %}
+</section>

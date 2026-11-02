@@ -1,0 +1,63 @@
+{%- if let Some(e) = error %}
+<p><span class="badge {{ e.class }}">{{ e.label }}</span> {{ e.detail }}</p>
+<div class="actions"><button hx-get="/ui/slicer/system" hx-target="#sys-import">start over</button></div>
+{%- else if vendor.is_empty() %}
+<form hx-get="/ui/slicer/system" hx-target="#sys-import">
+  <div class="field">
+    <label for="sys-vendor">vendor</label>
+    <select id="sys-vendor" name="vendor" required>
+{%- for v in vendors %}
+      <option value="{{ v }}">{{ v }}</option>
+{%- endfor %}
+    </select>
+  </div>
+  <div class="actions"><button class="primary">next</button></div>
+</form>
+{%- else if machine.is_empty() %}
+<p class="dim">{{ vendor }}</p>
+{%- if machines.is_empty() %}
+<p>{{ vendor }} has no printer profiles.</p>
+{%- else %}
+<form hx-get="/ui/slicer/system" hx-target="#sys-import">
+  <input type="hidden" name="vendor" value="{{ vendor }}">
+  <div class="field">
+    <label for="sys-machine">printer</label>
+    <select id="sys-machine" name="machine" required>
+{%- for (value, label) in machines %}
+      <option value="{{ value }}">{{ label }}</option>
+{%- endfor %}
+    </select>
+  </div>
+  <div class="actions"><button class="primary">next</button> <button type="button" hx-get="/ui/slicer/system" hx-target="#sys-import">back</button></div>
+</form>
+{%- endif %}
+{%- else %}
+<form hx-post="/slicer/import/system" hx-target="#main" hx-disabled-elt="find button.primary">
+  <input type="hidden" name="vendor" value="{{ vendor }}">
+  <input type="hidden" name="machine" value="{{ machine }}">
+  <p><strong>{{ machine }}</strong> <span class="dim">({{ vendor }}) is imported as the machine profile.</span></p>
+  <h3 class="sub">processes <span class="dim">({{ processes.len() }} that fit)</span></h3>
+{%- if processes.is_empty() %}
+  <p class="dim">None listed for this printer.</p>
+{%- else %}
+  <div class="choices">
+{%- for c in processes %}
+    <label><input type="checkbox" name="process" value="{{ c.name }}"><span>{{ c.name }}{% if !c.note.is_empty() %} <span class="dim">· {{ c.note }}</span>{% endif %}{% if c.maybe %} <span class="dim" title="depends on a condition printpit doesn't check">?</span>{% endif %}{% if c.have %} <span class="badge badge-dim">HAVE</span>{% endif %}</span></label>
+{%- endfor %}
+  </div>
+{%- endif %}
+  <h3 class="sub">filaments <span class="dim">({{ filaments.len() }})</span></h3>
+  <div class="choices">
+{%- for c in filaments %}
+    <label><input type="checkbox" name="filament" value="{{ c.name }}"><span>{{ c.name }}{% if !c.note.is_empty() %} <span class="dim">· {{ c.note }}</span>{% endif %}{% if c.maybe %} <span class="dim" title="depends on a condition printpit doesn't check">?</span>{% endif %}{% if c.have %} <span class="badge badge-dim">HAVE</span>{% endif %}</span></label>
+{%- endfor %}
+  </div>
+{%- if shared_hidden > 0 %}
+  <p class="dim">Showing Orca's generic filaments. <a href="/ui/slicer/system?vendor={{ self.enc(vendor) }}&machine={{ self.enc(machine) }}&all=1" hx-get="/ui/slicer/system?vendor={{ self.enc(vendor) }}&machine={{ self.enc(machine) }}&all=1" hx-target="#sys-import">Show all {{ shared_hidden + filaments.len() }}</a> (brand filaments from Orca's shared library).</p>
+{%- endif %}
+  <div class="actions">
+    <button class="primary">import</button>
+    <button type="button" hx-get="/ui/slicer/system?vendor={{ self.enc(vendor) }}" hx-target="#sys-import">back</button>
+  </div>
+</form>
+{%- endif %}

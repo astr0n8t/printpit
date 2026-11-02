@@ -8,6 +8,7 @@
 
 pub mod client;
 pub mod error;
+pub mod import;
 pub mod storage;
 
 pub use client::SlicerClient;

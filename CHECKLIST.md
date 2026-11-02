@@ -227,11 +227,12 @@ Same rules as M8: new protected routes go into `PROTECTED_GET`/`PROTECTED_POST`,
 - [ ] Verify job files are 0600 inside the Docker image once 9.4 creates them (end-to-end slice in the container)
 
 ### 9.3 Profile library (admin)
-- [ ] `[s]Slicer` admin page (`/ui/slicer`, only when the slicer is configured): list profiles by kind, delete (blocked while a printer or queued job uses it), `test` button → `/v1/health` + `/v1/info`
-- [ ] Import system profiles from the worker's index (vendor → printer/nozzle → matching processes and filaments), stored flat
-- [ ] Import user preset JSON and Orca preset bundles (zip size/entry limits, JSON only, resolved by the worker)
-- [ ] Printers page: per-printer machine profile + default process/filament (`printer_slicer`), audited as `printer_slicer_update`
-- [ ] Audit `slicer_profile_create/update/delete`; tests: admin-only, bad JSON, wrong `type`, bundle with junk entries, delete guard
+- [x] `[s]Slicer` admin page (`/ui/slicer`, only when the slicer is configured): list profiles by kind, delete (blocked while a printer or queued job uses it), `test` button → `/v1/health` + `/v1/info`. Hidden tab + 404 routes when off (`CurrentUser.slicing`); the tab makes no worker calls
+- [x] Import system profiles from the worker's index (vendor → printer/nozzle → matching processes and filaments), stored flat. Compatibility by `compatible_printers` (a bare condition is shown as `?`); from the shared library only `Generic *` unless "show all"; re-import updates in place
+- [x] Import user preset JSON and Orca preset bundles (zip size/entry limits, JSON only, resolved by the worker). `slicer::import`: ≤20 files, 32 MB upload, ≤1000 entries, 4 MB per entry and 64 MB unpacked (counted while reading), `bundle_structure.json` skipped; one `/v1/profiles/resolve` per import; per-preset report
+- [x] Printers page: per-printer machine profile + default process/filament (`printer_slicer`), audited as `printer_slicer_update`. A panel on the printer's edit page (`POST /printers/{id}/slicer`); empty machine clears it
+- [x] Audit `slicer_profile_create/update/delete`; tests: admin-only, bad JSON, wrong `type`, bundle with junk entries, delete guard (`tests/slicer_admin.rs`, against the real worker via `tests/common/slicer.rs`, which records worker requests; zip limits unit-tested in `slicer::import`). Checked in Chromium at 390 px: no horizontal scroll, no console/CSP errors
+- [ ] Profile details: view a stored profile's key settings / download its JSON (admins currently see only name, source and age)
 
 ### 9.4 Slice tab and jobs (operator)
 - [ ] `Tab::Slice` (`[6]Slice`, key `6`), shown only when the slicer is configured; `/ui/slice` renders from the DB only (printer selector via `select::select()`, form, recent jobs). Viewers see jobs but not the form

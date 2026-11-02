@@ -18,7 +18,11 @@
       <tr><td><kbd>1</kbd>–<kbd>5</kbd></td><td>dashboard · files · logs · system · history</td></tr>
       <tr><td><kbd>a</kbd></td><td>account</td></tr>
 {%- if let Some(user) = layout.user %}{% if user.role == "admin" %}
+{%- if user.slicing %}
+      <tr><td><kbd>p</kbd> <kbd>s</kbd> <kbd>u</kbd> <kbd>l</kbd></td><td>printers · slicer · users · audit log</td></tr>
+{%- else %}
       <tr><td><kbd>p</kbd> <kbd>u</kbd> <kbd>l</kbd></td><td>printers · users · audit log</td></tr>
+{%- endif %}
 {%- endif %}{% endif %}
       <tr><td><kbd>r</kbd></td><td>refresh what's on screen</td></tr>
       <tr><td><kbd>/</kbd></td><td>filter the list</td></tr>

@@ -46,6 +46,9 @@ tower-http = { version = "0.7.1", features = ["compression-gzip", "compression-b
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 url = "2.5.8"
+# Orca preset bundles are zips. Deflate only, through flate2's pure-Rust backend (no C on musl).
+zip = { version = "9.2.1", default-features = false, features = ["deflate-flate2"] }
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 
 [dev-dependencies]
 # Contract tests drive the real worker API (with its fake orca-slicer); see tests/slicer_client.rs.

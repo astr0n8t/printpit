@@ -269,7 +269,14 @@ POST /slice/jobs                        streamed model upload + options -> queue
 GET  /slice/jobs/{id}                   job panel (status, log tail, stats); refresh button with data-every while running
 POST /slice/jobs/{id}/{cancel|reslice|upload|print}
 DELETE /slice/jobs/{id}
-GET  /ui/slicer, POST /slicer/profiles, POST|DELETE /slicer/profiles/{id}, POST /slicer/test   (admin)
+-- built (9.3, admin; all 404 when slicing is off) --
+GET  /ui/slicer                         [s]Slicer tab: library by kind + import panels (DB only, no worker calls)
+POST /slicer/test                       worker /v1/health + /v1/info, rendered like the printer test
+GET  /ui/slicer/system?vendor=&machine=&all=   step-by-step system picker (each step one worker call)
+POST /slicer/import/system              vendor + machine + process[] + filament[] -> flattened, stored (upsert)
+POST /slicer/import/user                multipart files[] (.json / Orca zips) -> worker resolve -> stored (upsert)
+DELETE /slicer/profiles/{id}            refused while a printer or unfinished job uses it
+POST /printers/{id}/slicer              machine profile + default process/filament (panel on the printer's edit page)
 ```
 
 Every `/ui/*` route returns a partial when `HX-Request` is present, or the full shell with that tab pre-rendered otherwise, so deep links and reloads work.

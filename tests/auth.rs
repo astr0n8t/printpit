@@ -42,6 +42,8 @@ const PROTECTED_GET: &[&str] = &[
     "/p/1/history/job?uid=000001",
     "/ui/users",
     "/ui/audit",
+    "/ui/slicer",
+    "/ui/slicer/system",
 ];
 const PROTECTED_POST: &[&str] = &[
     "/logout",
@@ -71,8 +73,18 @@ const PROTECTED_POST: &[&str] = &[
     "/users/2/role",
     "/users/2/toggle",
     "/users/2/password",
+    "/printers/1/slicer",
+    "/slicer/test",
+    "/slicer/import/system",
+    "/slicer/import/user",
 ];
-const PROTECTED_DELETE: &[&str] = &["/printers/1", "/p/1/files?path=a.gcode", "/users/2", "/presets/1"];
+const PROTECTED_DELETE: &[&str] = &[
+    "/printers/1",
+    "/p/1/files?path=a.gcode",
+    "/users/2",
+    "/presets/1",
+    "/slicer/profiles/1",
+];
 
 // ── First-run setup ──────────────────────────────────────────────────
 
@@ -648,6 +660,8 @@ const ADMIN_GET: &[&str] = &[
     "/ui/printers/1",
     "/ui/users",
     "/ui/audit",
+    "/ui/slicer",
+    "/ui/slicer/system",
 ];
 const ADMIN_POST: &[&str] = &[
     "/printers",
@@ -662,8 +676,12 @@ const ADMIN_POST: &[&str] = &[
     "/users/1/toggle",
     "/users/1/password",
     "/users/1/totp/reset",
+    "/printers/1/slicer",
+    "/slicer/test",
+    "/slicer/import/system",
+    "/slicer/import/user",
 ];
-const ADMIN_DELETE: &[&str] = &["/printers/1", "/users/1", "/presets/1"];
+const ADMIN_DELETE: &[&str] = &["/printers/1", "/users/1", "/presets/1", "/slicer/profiles/1"];
 
 #[tokio::test]
 async fn admin_routes_reject_operators() {

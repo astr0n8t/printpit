@@ -34,19 +34,21 @@ pub enum Tab {
     System,
     History,
     Printers,
+    Slicer,
     Users,
     Audit,
     Account,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 9] = [
+    pub const ALL: [Tab; 10] = [
         Tab::Dashboard,
         Tab::Files,
         Tab::Logs,
         Tab::System,
         Tab::History,
         Tab::Printers,
+        Tab::Slicer,
         Tab::Users,
         Tab::Audit,
         Tab::Account,
@@ -60,6 +62,7 @@ impl Tab {
             Tab::System => "/ui/system",
             Tab::History => "/ui/history",
             Tab::Printers => "/ui/printers",
+            Tab::Slicer => "/ui/slicer",
             Tab::Users => "/ui/users",
             Tab::Audit => "/ui/audit",
             Tab::Account => "/ui/account",
@@ -74,6 +77,7 @@ impl Tab {
             Tab::System => "System",
             Tab::History => "History",
             Tab::Printers => "Printers",
+            Tab::Slicer => "Slicer",
             Tab::Users => "Users",
             Tab::Audit => "Audit",
             Tab::Account => "Account",
@@ -88,6 +92,7 @@ impl Tab {
             Tab::System => "system",
             Tab::History => "history",
             Tab::Printers => "printers",
+            Tab::Slicer => "slicer",
             Tab::Users => "users",
             Tab::Audit => "audit",
             Tab::Account => "account",
@@ -102,6 +107,7 @@ impl Tab {
             Tab::System => "4",
             Tab::History => "5",
             Tab::Printers => "p",
+            Tab::Slicer => "s",
             Tab::Users => "u",
             Tab::Audit => "l",
             Tab::Account => "a",
@@ -111,9 +117,14 @@ impl Tab {
     /// Lowest role that sees this tab in the strip.
     pub fn min_role(self) -> Role {
         match self {
-            Tab::Printers | Tab::Users | Tab::Audit => Role::Admin,
+            Tab::Printers | Tab::Slicer | Tab::Users | Tab::Audit => Role::Admin,
             _ => Role::Viewer,
         }
+    }
+
+    /// Shown only when slicing is configured.
+    pub fn needs_slicing(self) -> bool {
+        self == Tab::Slicer
     }
 
     /// Pushed to the right-hand end of the strip.
@@ -126,6 +137,7 @@ impl Tab {
 pub struct UserBadge {
     pub username: String,
     pub role: &'static str,
+    pub slicing: bool,
 }
 
 /// Data every full page needs.
@@ -155,6 +167,7 @@ impl Layout {
             user: Some(UserBadge {
                 username: user.username.clone(),
                 role: user.role.as_str(),
+                slicing: user.slicing,
             }),
             csrf: Some(user.csrf_token.clone()),
             theme: Some(user.theme.as_str()).filter(|t| *t != "auto"),
@@ -188,7 +201,10 @@ impl TabsTemplate {
         Self {
             active,
             oob,
-            tabs: Tab::ALL.into_iter().filter(|t| user.has(t.min_role())).collect(),
+            tabs: Tab::ALL
+                .into_iter()
+                .filter(|t| user.has(t.min_role()) && (user.slicing || !t.needs_slicing()))
+                .collect(),
         }
     }
 
