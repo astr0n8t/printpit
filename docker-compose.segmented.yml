@@ -17,6 +17,12 @@
 #   echo "PRINTPIT_SECRET_KEY=$(openssl rand -base64 32)" > .env
 #   docker compose -f docker-compose.segmented.yml up -d
 #
+# Optional slicing with OrcaSlicer (README "Slicing"): the worker sits on a third, internal
+# network that only printpit shares, never on the printer VLAN.
+#   echo "PRINTPIT_SLICER_URL=http://slicer:8090" >> .env
+#   echo "PRINTPIT_SLICER_TOKEN=$(openssl rand -hex 32)" >> .env
+#   docker compose -f docker-compose.segmented.yml --profile slicer up -d
+#
 # Note: with macvlan, the Docker host itself can't reach printpit's printer-side address.
 # That doesn't matter here (nothing on the host needs to), but it surprises people.
 
@@ -50,6 +56,10 @@ services:
       PRINTPIT_TRUSTED_PROXIES: 172.30.0.2
       # Optional print notifications (see README). Empty means off.
       PRINTPIT_NOTIFY_WEBHOOK_URL: ${PRINTPIT_NOTIFY_WEBHOOK_URL:-}
+      # Optional slicing (see README "Slicing"): set both in .env and start with
+      # `docker compose --profile slicer up -d`. Empty means off.
+      PRINTPIT_SLICER_URL: ${PRINTPIT_SLICER_URL:-}
+      PRINTPIT_SLICER_TOKEN: ${PRINTPIT_SLICER_TOKEN:-}
       RUST_LOG: ${RUST_LOG:-info}
     volumes:
       - printpit-data:/data
@@ -58,12 +68,43 @@ services:
         ipv4_address: 172.30.0.10
       printers:
         ipv4_address: 192.168.50.250
+      slicer: {}
     read_only: true
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
 
+  # Optional OrcaSlicer worker. Only started with `--profile slicer`. It parses untrusted model
+  # files, so it gets no network but the internal one shared with printpit (no internet, no
+  # printers), a read-only root, a tmpfs for its work, and CPU/memory limits.
+  slicer:
+    image: printpit-slicer:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.slicer
+    profiles: [slicer]
+    restart: unless-stopped
+    environment:
+      # The same token printpit has. The worker refuses to start without one.
+      PRINTPIT_SLICER_TOKEN: ${PRINTPIT_SLICER_TOKEN:-}
+      PRINTPIT_SLICER_TIMEOUT_SECS: ${PRINTPIT_SLICER_TIMEOUT_SECS:-900}
+      RUST_LOG: ${RUST_LOG:-info}
+    networks:
+      - slicer
+    read_only: true
+    tmpfs:
+      - /tmp:size=2g,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    cpus: 2.0
+    mem_limit: 3g
+    pids_limit: 256
+
 networks:
+  # printpit <-> slicer only; nothing on it can reach anything else.
+  slicer:
+    internal: true
   frontend:
     driver: bridge
     ipam:

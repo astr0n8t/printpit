@@ -24,7 +24,7 @@ It is written in Rust, ships as one Docker container, and has a minimal, fast UI
 
 ### Non-goals (for v1)
 - Replacing Mainsail/Fluidd for deep tuning (macros editor, config file editing, bed mesh visualisation, console).
-- Slicing *inside the printpit binary or image*. Slicing is planned as an optional sidecar worker (§15, M9).
+- Slicing *inside the printpit binary or image*. Slicing runs in an optional sidecar worker instead (§15, M9).
 - OctoPrint or other non-Moonraker backends. The client sits behind a trait so they could be added later.
 - Multiple tenants or organisations.
 
@@ -371,13 +371,13 @@ slice_jobs(id, user_id NULL, printer_id NULL /* SET NULL: a job outlives its use
 8. **M7 – Hardening and polish:** audit log UI, user management, keyboard help, mobile layout, compose examples, multi-arch image, docs.
 
 9. **M8 – Later items:** slicer ETA, camera orientation, temperatures, history, notifications, TOTP, SSO.
-10. **M9 – Slicing (planned):** OrcaSlicer sidecar worker, profile library, Slice tab, slice → upload → print (§15).
+10. **M9 – Slicing:** OrcaSlicer sidecar worker, profile library, Slice tab, slice → upload → print (§15).
 
 See `CHECKLIST.md` for the task-level breakdown.
 
 ---
 
-## 15. Slicing (M9, planned 2026-11-01)
+## 15. Slicing (M9; planned 2026-11-01, built 2026-11-02)
 
 **Goal:** upload an STL/3MF/STEP/OBJ from a phone, pick a printer, process and filament, and have printpit slice it with **OrcaSlicer**, put the G-code on that printer and (optionally) start it. No desktop needed.
 
@@ -425,6 +425,7 @@ Profiles hold G-code (`machine_start_gcode`, filament start G-code, …) that ru
 ### 15.4 Slice options (the phone form)
 A short, whitelisted set of overrides applied to a copy of the process profile. Never arbitrary keys:
 - layer height (from the process's allowed range), infill density %, wall loops, supports (off / normal / tree, build plate only), brim (auto/off/width), copies, auto-arrange, auto-orient.
+- Copies are the CLI's `--clone-objects N`, which also spreads them over the bed (`--repetitions` is rejected by the 2.4.2 CLI; checked with real Orca and covered by the golden test). Not for a 3MF, whose layout is the project's.
 - Each one is a typed field with a range check, written as an Orca config key by a fixed table in `slicer::options`. Out-of-range values are form errors.
 - **3MF projects:** an Orca `.3mf` can be sliced "with project settings" (its plate layout, painted supports, modifiers), with the printer's machine profile still enforced so G-code for the wrong printer can't be produced by accident.
 
@@ -452,8 +453,9 @@ On a restart, jobs left in `slicing`/`uploading` are marked `failed (interrupted
 - Audit: `slice_job_create`, `slice_job_cancel`, `slice_job_upload`, `slice_job_print`, `slice_job_delete`, `slicer_profile_create/update/delete`, `printer_slicer_update`.
 
 ### 15.8 Deployment
-- Both compose files gain an optional `slicer` service (`ghcr.io/<owner>/printpit-slicer`) behind a commented-out block or a compose profile (`docker compose --profile slicer up`), on an internal network with printpit, plus a `slicer-token` secret.
-- `release.yml` builds and pushes `printpit-slicer` for amd64 (and arm64 if an upstream arm64 build exists; see spike). CI builds the worker image on PRs that touch `slicer-worker/` or `Dockerfile.slicer`.
+- Both compose files have an optional `slicer` service behind the `slicer` compose profile (`docker compose --profile slicer up -d`), on an `internal: true` network that only printpit shares, with a read-only root, a 2 GB tmpfs on `/tmp`, no capabilities and CPU/memory/pid limits.
+- The token is an env var from `.env` (like `PRINTPIT_SECRET_KEY`), not a compose secret: compose reads every service's secrets even for inactive profiles, and printpit refuses a token without a URL. Both `PRINTPIT_SLICER_URL` and `PRINTPIT_SLICER_TOKEN` default to empty, which printpit treats as unset, so the plain `docker compose up` is unchanged. `_FILE` variants work for those who prefer secrets.
+- `release.yml` builds and pushes `ghcr.io/<owner>/printpit-slicer` for amd64 and arm64 (upstream ships both). `slicer.yml` builds both on PRs that touch the worker and runs the golden test on amd64.
 - `printpit-slicer` is pinned to one Orca version. Bumping it is a PR that updates the URL + hash and re-runs the golden test.
 
 ### 15.9 Testing

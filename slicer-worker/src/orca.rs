@@ -38,7 +38,12 @@ pub struct Options {
     pub plate: u32,
     /// For a 3MF: keep the project's process and filament settings. The machine is still ours.
     pub project_settings: bool,
+    /// Copies of the model on the plate (`--clone-objects N`, which also spreads them out;
+    /// `--repetitions` is rejected by the 2.4.2 CLI). Not for 3MF projects, whose layout is theirs.
+    pub copies: u32,
 }
+
+pub const MAX_COPIES: u32 = 50;
 
 impl Default for Options {
     fn default() -> Self {
@@ -47,6 +52,7 @@ impl Default for Options {
             orient: false,
             plate: 1,
             project_settings: false,
+            copies: 1,
         }
     }
 }
@@ -58,6 +64,12 @@ impl Options {
         }
         if self.project_settings && model_ext != "3mf" {
             return Err("project_settings only applies to 3MF files".into());
+        }
+        if !(1..=MAX_COPIES).contains(&self.copies) {
+            return Err(format!("copies must be from 1 to {MAX_COPIES}"));
+        }
+        if self.copies > 1 && model_ext == "3mf" {
+            return Err("copies don't apply to a 3MF project; lay them out in the project".into());
         }
         Ok(())
     }
@@ -84,6 +96,9 @@ pub fn args(model: &str, options: &Options, max_secs: u64) -> Vec<OsString> {
     }
     if options.orient {
         a.extend(["--orient".into(), "1".into()]);
+    }
+    if options.copies > 1 {
+        a.extend(["--clone-objects".into(), options.copies.to_string()]);
     }
     a.extend([
         // Orca's own per-plate limit, a gentler stop than our kill.
@@ -361,6 +376,34 @@ mod tests {
             ..Options::default()
         };
         assert!(o.validate("stl").is_err());
+        for (copies, ext, ok) in [
+            (1, "stl", true),
+            (50, "obj", true),
+            (0, "stl", false),
+            (51, "stl", false),
+            (2, "3mf", false),
+            (1, "3mf", true),
+        ] {
+            let o = Options {
+                copies,
+                ..Options::default()
+            };
+            assert_eq!(o.validate(ext).is_ok(), ok, "{copies} copies of a .{ext}");
+        }
+        let o = Options {
+            copies: 3,
+            ..Options::default()
+        };
+        assert!(
+            s(args("model.stl", &o, 60))
+                .join(" ")
+                .contains("--clone-objects 3")
+        );
+        assert!(
+            !s(args("model.stl", &Options::default(), 60))
+                .join(" ")
+                .contains("--clone-objects")
+        );
         assert!(serde_json::from_str::<Options>(r#"{"layer_height": 0.1}"#).is_err());
         assert_eq!(serde_json::from_str::<Options>("{}").unwrap(), Options::default());
     }

@@ -14,6 +14,8 @@ pub const LAYER_HEIGHT: (f64, f64) = (0.04, 1.0);
 pub const WALLS: (u8, u8) = (1, 20);
 pub const BRIM_WIDTH: (f64, f64) = (0.5, 30.0);
 pub const PLATES: u32 = 64;
+/// The worker's own limit (`slicer-worker` `orca::MAX_COPIES`).
+pub const MAX_COPIES: u32 = 50;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -47,6 +49,8 @@ pub struct SliceOptions {
     pub project_settings: bool,
     /// 3MF only: which plate.
     pub plate: u32,
+    /// Copies of the model on the plate (not for a 3MF, whose layout is the project's).
+    pub copies: Option<u32>,
     /// The G-code's file name on the printer (from [`output_name`], decided at submit).
     pub output: Option<String>,
 }
@@ -63,6 +67,7 @@ impl Default for SliceOptions {
             orient: false,
             project_settings: false,
             plate: 1,
+            copies: None,
             output: None,
         }
     }
@@ -91,6 +96,8 @@ pub struct OptionsForm {
     pub project_settings: Option<String>,
     #[serde(default)]
     pub plate: String,
+    #[serde(default)]
+    pub copies: String,
 }
 
 impl OptionsForm {
@@ -108,6 +115,7 @@ impl OptionsForm {
             "orient" => self.orient = Some(value),
             "project_settings" => self.project_settings = Some(value),
             "plate" => self.plate = value,
+            "copies" => self.copies = value,
             _ => {}
         }
     }
@@ -162,6 +170,16 @@ impl OptionsForm {
         if !(1..=PLATES).contains(&plate) {
             return Err(format!("Plate must be 1–{PLATES}."));
         }
+        let copies = match number::<u32>(&self.copies, "Copies")? {
+            None | Some(1) => None,
+            Some(n) if !(1..=MAX_COPIES).contains(&n) => {
+                return Err(format!("Copies must be 1–{MAX_COPIES}."));
+            }
+            Some(_) if is_3mf => {
+                return Err("Copies don't apply to a 3MF project; lay them out in the project.".into());
+            }
+            Some(n) => Some(n),
+        };
         Ok(SliceOptions {
             layer_height,
             infill,
@@ -172,6 +190,7 @@ impl OptionsForm {
             orient: self.orient.is_some(),
             project_settings,
             plate,
+            copies,
             output: None,
         })
     }
@@ -276,6 +295,7 @@ impl SliceOptions {
             orient: self.orient,
             plate: self.plate,
             project_settings: self.project_settings,
+            copies: self.copies.unwrap_or(1),
         }
     }
 
@@ -311,6 +331,9 @@ impl SliceOptions {
         }
         if self.orient {
             out.push("oriented".into());
+        }
+        if let Some(n) = self.copies {
+            out.push(format!("{n} copies"));
         }
         if self.plate > 1 {
             out.push(format!("plate {}", self.plate));
@@ -359,6 +382,7 @@ impl SliceOptions {
             } else {
                 String::new()
             },
+            copies: self.copies.map(|n| n.to_string()).unwrap_or_default(),
         }
     }
 }
@@ -521,6 +545,25 @@ mod tests {
         let machine = obj(json!({"max_layer_height": ["0.32"]}));
         let err = o.apply(&mut Profile::new(), &machine).unwrap_err();
         assert!(err.contains("0.32"), "{err}");
+    }
+
+    #[test]
+    fn copies() {
+        let o = form(&[("copies", "4")]).parse(false).unwrap();
+        assert_eq!(o.copies, Some(4));
+        assert_eq!(o.worker().copies, 4);
+        assert_eq!(o.summary(), ["4 copies"]);
+        assert_eq!(SliceOptions::from_json(&o.to_json()), o);
+        assert_eq!(o.to_form().parse(false).unwrap(), o);
+        // One copy is the default, and isn't stored.
+        assert_eq!(form(&[("copies", "1")]).parse(false).unwrap().copies, None);
+        assert_eq!(SliceOptions::default().worker().copies, 1);
+        for bad in ["0", "51", "two"] {
+            assert!(form(&[("copies", bad)]).parse(false).is_err(), "{bad}");
+        }
+        assert!(form(&[("copies", "2")]).parse(true).is_err(), "not for a 3MF");
+        // Old jobs, stored before copies existed, still read.
+        assert_eq!(SliceOptions::from_json(r#"{"infill": 20}"#).copies, None);
     }
 
     #[test]

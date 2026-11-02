@@ -216,7 +216,7 @@ Same rules as M8: new protected routes go into `PROTECTED_GET`/`PROTECTED_POST`,
 - [x] `POST /v1/slice`: multipart to a 0700 temp dir with fixed file names and a cleared environment, one slice at a time (503 + `Retry-After`, decided before the body is read), hard timeout, process group killed on timeout or client disconnect, temp dir always removed
 - [x] Success: stream G-code back, stats (time, filament mm/g, layers) from the footer in `X-Slice-*` headers; failure: 422 `{error, kind, code, log_tail}` with paths scrubbed
 - [x] Unit tests with a fake `orca-slicer` script (`tests/fake-orca.sh`): args, cleared env, timeout and disconnect kill the group, busy → 503, cleanup, bad uploads; golden test with real Orca (`slicer-worker/golden/run.sh`: system profiles, renamed user presets with their overrides, arrange/orient, garbage model) in `.github/workflows/slicer.yml` (amd64 + arm64 build, golden on amd64)
-- [ ] `copies` (PLAN §15.4): Orca's `--clone-objects`/`--repetitions` semantics untested; check with real Orca and add to `Options`, or drop copies from the form
+- [x] `copies` (PLAN §15.4): Orca's `--clone-objects`/`--repetitions` semantics untested; check with real Orca and add to `Options`, or drop copies from the form. Checked in the worker image: `--clone-objects N` gives N spread-out copies, `--repetitions` is rejected (exit 254). Added (1–50, not for 3MF) and covered by the golden test
 - [ ] Verify the 3MF `project_settings` path in the golden test (checked by hand with a CLI-made 3MF; add a GUI-made multi-plate project as a fixture)
 
 ### 9.2 printpit plumbing
@@ -224,7 +224,7 @@ Same rules as M8: new protected routes go into `PROTECTED_GET`/`PROTECTED_POST`,
 - [x] `slicer.rs`: own `reqwest::Client` (no redirects, connect timeout, no printer egress), `SlicerError` with `label()`/`detail()` like `MoonrakerError` (offline, unauthorized, busy, failed, timeout), address-free messages. As `src/slicer/` (`client`, `error`, `storage`); `state.slicing: Option<Arc<Slicing>>` (`state.slicer` is the 8.1 ETA cache). Covers every worker route; `slice()` streams the model up and the G-code to disk. Contract-tested against the real worker (`tests/slicer_client.rs`)
 - [x] Migration `0007_slicer.sql`: `slicer_profiles`, `printer_slicer`, `slice_jobs` (PLAN §10); `db::slicer` repository (guarded status transitions, atomic `claim_next`, delete guard, restart sweep, retention set; `tests/slicer_db.rs`)
 - [x] `/data/slicer/{job}/` storage helpers; created 0700, files 0600 (verify in the Docker image, not just locally). The directory is verified in the image (700, uid 65532; DB still 600); files are 0600 in tests
-- [ ] Verify job files are 0600 inside the Docker image once 9.4 creates them (end-to-end slice in the container)
+- [x] Verify job files are 0600 inside the Docker image once 9.4 creates them (end-to-end slice in the container). Both images, real OrcaSlicer, a cube sliced from the phone UI: `/data/slicer/1` is 700, `model.stl` and `out.gcode` 600, uid 65532; no token or worker URL in printpit's log
 
 ### 9.3 Profile library (admin)
 - [x] `[s]Slicer` admin page (`/ui/slicer`, only when the slicer is configured): list profiles by kind, delete (blocked while a printer or queued job uses it), `test` button → `/v1/health` + `/v1/info`. Hidden tab + 404 routes when off (`CurrentUser.slicing`); the tab makes no worker calls
@@ -250,8 +250,9 @@ Same rules as M8: new protected routes go into `PROTECTED_GET`/`PROTECTED_POST`,
 - [x] Checked in Chromium at 390 px: phone upload from the file picker, progress, done → print; no horizontal scroll, no console/CSP errors. Fixed on the way: long checkbox labels split the `[ ]` glyph (global CSS), and the recent-jobs badge went stale
 
 ### 9.5 Tests, deploy, docs
-- [ ] Mock worker (`tests/common/slicer.rs` + `examples/mock_slicer.rs`): canned G-code with footer stats, fail/stall/busy modes, records requests
-- [ ] `tests/slice.rs`: lazy tab (zero printer and worker calls), feature off when unconfigured (routes 404, no tab), upload limits and magic checks, queue order, cancel per stage, interrupted on restart, output lands in `gcodes/printpit/`, print gating, role matrix, CSRF, token absent from pages and logs, retention
-- [ ] Compose: optional `slicer` service (compose profile) on an `internal: true` network, token secret, CPU/memory limits, read-only + tmpfs; both compose files
-- [ ] `release.yml`/CI: build and push `printpit-slicer` (arches per the spike); `cargo deny` covers the workspace
-- [ ] Docs: README "Slicing" section (setup, importing your Orca profiles, phone workflow, running the worker on another host), config table, PLAN §9/§10/§11 updated from "planned", CLAUDE.md rule 2 note (background upload after a slice is user-initiated, not polling) + decision log
+- [x] Mock worker (`tests/common/slicer.rs` + `examples/mock_slicer.rs`): canned G-code with footer stats, fail/stall/busy modes, records requests. Both run the real worker API with the fake `orca-slicer` (modes from the model's first line), so the mock can't drift from the worker
+- [x] `tests/slice.rs`: lazy tab (zero printer and worker calls), feature off when unconfigured (routes 404, no tab), upload limits and magic checks, queue order, cancel per stage, interrupted on restart, output lands in `gcodes/printpit/`, print gating, role matrix, CSRF, token absent from pages and logs, retention. 21 tests; cancel is covered queued and slicing (an upload to the mock is too quick to catch); "absent from logs" checked in the container run
+- [x] Compose: optional `slicer` service (compose profile) on an `internal: true` network, token secret, CPU/memory limits, read-only + tmpfs; both compose files. The token is an env var, not a compose secret (why: PLAN §15.8); both files validated with and without the profile
+- [x] `release.yml`/CI: build and push `printpit-slicer` (arches per the spike); `cargo deny` covers the workspace. Ran `cargo deny --workspace check` once locally: only failure was the path dev-dependency (fixed with `allow-wildcard-paths`); licences and advisories passed. Re-checked by CI's deny job
+- [x] Docs: README "Slicing" section (setup, importing your Orca profiles, phone workflow, running the worker on another host), config table, PLAN §9/§10/§11 updated from "planned", CLAUDE.md rule 2 note (background upload after a slice is user-initiated, not polling) + decision log
+- [ ] Cancel during the upload stage: test it with a mock Moonraker upload that can be stalled

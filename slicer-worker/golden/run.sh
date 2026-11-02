@@ -111,6 +111,11 @@ ok "user presets (resolved, renamed) slice with their overrides"
     || fail "arrange/orient: $(cat "$work/arranged.gcode")"
 ok "arrange + orient"
 
+[ "$(slice copies.gcode machine.json process.json filament.json cube.stl '{"copies": 3}')" = 200 ] \
+    || fail "copies: $(cat "$work/copies.gcode")"
+[ "$(grep -c '^EXCLUDE_OBJECT_DEFINE' "$work/copies.gcode")" = 3 ] || fail "copies: not 3 objects"
+ok "3 copies (--clone-objects), $(grep '^EXCLUDE_OBJECT_DEFINE' "$work/copies.gcode" | grep -o 'CENTER=[0-9.,]*' | tr '\n' ' ')"
+
 head -c 4096 /dev/urandom > "$work/junk.stl"
 [ "$(slice junk.out machine.json process.json filament.json junk.stl)" = 422 ] || fail "junk model status"
 grep -q '"kind":"model"' "$work/junk.out" || fail "junk model kind: $(cat "$work/junk.out")"

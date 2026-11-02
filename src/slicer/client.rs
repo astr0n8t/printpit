@@ -97,6 +97,13 @@ pub struct WorkerOptions {
     pub orient: bool,
     pub plate: u32,
     pub project_settings: bool,
+    /// Copies of the model (`--clone-objects`); left out for one, so the worker's default applies.
+    #[serde(skip_serializing_if = "one_or_none")]
+    pub copies: u32,
+}
+
+fn one_or_none(n: &u32) -> bool {
+    *n <= 1
 }
 
 /// What a slice needs. The model is streamed from disk.

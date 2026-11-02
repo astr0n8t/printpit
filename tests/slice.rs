@@ -284,6 +284,10 @@ async fn slices_uploads_and_reports() {
     assert_eq!(p["wall_loops"], "4");
     // Fixed names only on the worker's side, too.
     assert!(s.rec("args.txt").lines().any(|l| l == "model.obj"));
+    assert!(
+        !s.rec("args.txt").contains("--clone-objects"),
+        "one copy by default"
+    );
 
     let panel = s.c.get_hx(&format!("/slice/jobs/{}", job.id)).await;
     assert!(panel.body.contains("DONE"), "{}", panel.body);
@@ -766,4 +770,147 @@ async fn a_busy_worker_keeps_the_job_queued() {
     held.abort();
     let job = s.wait(id, JobStatus::Done).await;
     assert!(job.error.is_none(), "the note is cleared: {:?}", job.error);
+}
+
+#[tokio::test]
+async fn queue_runs_oldest_first_and_queued_jobs_cancel_cleanly() {
+    let mut s = setup().await;
+    // A stalls on the worker; B and C wait behind it.
+    s.submit(&[], "a.obj", &s.model("sleep")).await;
+    let a = s.latest().await.unwrap().id;
+    s.wait(a, JobStatus::Slicing).await;
+    let ok = |dir: &tempfile::TempDir| format!("FAKE ok {}\nv 0 0 0\n", dir.path().display()).into_bytes();
+    let (db, dc, dd) = (
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+    );
+    let body = ok(&db);
+    s.submit(&[("output", "b")], "b.obj", &body).await;
+    let b = s.latest().await.unwrap().id;
+    let body = ok(&dc);
+    s.submit(&[("output", "c")], "c.obj", &body).await;
+    let c = s.latest().await.unwrap().id;
+    let body = ok(&dd);
+    s.submit(&[("output", "d")], "d.obj", &body).await;
+    let d = s.latest().await.unwrap().id;
+    for id in [b, c, d] {
+        let j = store::get_job(&s.app.state.db, id).await.unwrap().unwrap();
+        assert_eq!(j.status(), JobStatus::Queued, "job {id}");
+    }
+    // Cancel C while it's only queued: it never reaches the worker.
+    let res =
+        s.c.post_hx(&format!("/slice/jobs/{c}/cancel"), &s.csrf, &[])
+            .await;
+    assert!(res.body.contains("Cancelled."), "{}", res.body);
+    // Free the queue.
+    s.c.post_hx(&format!("/slice/jobs/{a}/cancel"), &s.csrf, &[])
+        .await;
+    let jb = s.wait(b, JobStatus::Done).await;
+    let jd = s.wait(d, JobStatus::Done).await;
+    assert!(jb.started_at.unwrap() <= jd.started_at.unwrap(), "oldest first");
+    let jc = store::get_job(&s.app.state.db, c).await.unwrap().unwrap();
+    assert_eq!(jc.status(), JobStatus::Cancelled);
+    assert!(jc.started_at.is_none(), "never claimed");
+    assert!(
+        std::fs::read_to_string(dc.path().join("args.txt")).is_err(),
+        "never sliced"
+    );
+    assert!(s.mock.has_file("printpit/b.gcode") && s.mock.has_file("printpit/d.gcode"));
+    assert!(!s.mock.has_file("printpit/c.gcode"));
+}
+
+#[tokio::test]
+async fn state_changes_need_the_csrf_token() {
+    let mut s = setup().await;
+    let (p, pr, f) = (
+        s.printer.to_string(),
+        s.process.to_string(),
+        s.filament.to_string(),
+    );
+    let model = s.model("ok");
+    let fields = [
+        ("printer", p.as_str()),
+        ("process", pr.as_str()),
+        ("filament", f.as_str()),
+    ];
+    let res =
+        s.c.post_files(
+            "/slice/jobs",
+            "wrong-token",
+            &fields,
+            "model",
+            &[("p.obj", &model)],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN);
+    assert!(s.latest().await.is_none());
+    s.submit(&[], "part.obj", &s.model("ok")).await;
+    let id = s.latest().await.unwrap().id;
+    s.wait(id, JobStatus::Done).await;
+    for action in ["cancel", "reslice", "upload", "print"] {
+        let res =
+            s.c.post_hx(&format!("/slice/jobs/{id}/{action}"), "wrong-token", &[])
+                .await;
+        assert_eq!(res.status, StatusCode::FORBIDDEN, "{action}");
+    }
+    assert_eq!(
+        s.c.delete_hx(&format!("/slice/jobs/{id}"), "wrong-token")
+            .await
+            .status,
+        StatusCode::FORBIDDEN
+    );
+    assert!(store::get_job(&s.app.state.db, id).await.unwrap().is_some());
+}
+
+#[tokio::test]
+async fn pages_never_show_the_token_or_addresses() {
+    let mut s = setup().await;
+    s.submit(&[], "part.obj", &s.model("ok")).await;
+    let ok = s.latest().await.unwrap().id;
+    s.wait(ok, JobStatus::Done).await;
+    s.submit(&[("replace", "on")], "part.obj", &s.model("fail")).await;
+    let failed = s.latest().await.unwrap().id;
+    s.wait(failed, JobStatus::Failed).await;
+    let worker = s
+        .worker
+        .url
+        .trim_start_matches("http://")
+        .trim_end_matches('/')
+        .to_string();
+    let printer = s.mock.url().trim_start_matches("http://").to_string();
+    let csrf = s.csrf.clone();
+    let mut bodies = Vec::new();
+    for path in [
+        "/ui/slice".to_string(),
+        format!("/slice/jobs/{ok}"),
+        format!("/slice/jobs/{failed}"),
+        "/ui/slicer".into(),
+        "/ui/slicer/system?vendor=Acme&machine=Acme%20One%200.4%20nozzle".into(),
+        "/ui/audit".into(),
+    ] {
+        bodies.push(s.c.get(&path).await.body);
+        bodies.push(s.c.get_hx(&path).await.body);
+    }
+    bodies.push(s.c.post_hx("/slicer/test", &csrf, &[]).await.body);
+    for b in &bodies {
+        assert!(!b.contains(common::slicer::TOKEN), "token in a page");
+        assert!(!b.contains(&worker), "worker address in a page");
+        assert!(!b.contains(&printer), "printer address in a page");
+    }
+}
+
+#[tokio::test]
+async fn copies_become_clone_objects() {
+    let mut s = setup().await;
+    s.submit(&[("copies", "3")], "part.obj", &s.model("ok")).await;
+    let job = s.wait(s.latest().await.unwrap().id, JobStatus::Done).await;
+    let args: Vec<String> = s.rec("args.txt").lines().map(String::from).collect();
+    assert!(args.windows(2).any(|w| w == ["--clone-objects", "3"]), "{args:?}");
+    let panel = s.c.get_hx(&format!("/slice/jobs/{}", job.id)).await;
+    assert!(panel.body.contains("3 copies"), "{}", panel.body);
+    let res = s
+        .submit(&[("copies", "60"), ("replace", "on")], "part.obj", &s.model("ok"))
+        .await;
+    assert!(res.body.contains("Copies must be 1–50."), "{}", res.body);
 }
