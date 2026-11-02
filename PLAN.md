@@ -24,7 +24,7 @@ It is written in Rust, ships as one Docker container, and has a minimal, fast UI
 
 ### Non-goals (for v1)
 - Replacing Mainsail/Fluidd for deep tuning (macros editor, config file editing, bed mesh visualisation, console).
-- Slicing *inside the printpit binary or image*. Slicing is planned as an optional sidecar worker (§15, M9).
+- Slicing *inside the printpit binary or image*. Slicing runs in an optional sidecar worker instead (§15, M9).
 - OctoPrint or other non-Moonraker backends. The client sits behind a trait so they could be added later.
 - Multiple tenants or organisations.
 
@@ -263,13 +263,20 @@ GET  /ui/history, /p/{id}/history?start=, /p/{id}/history/job?uid=
 GET  /login/totp, POST /login/totp      second sign-in step (public, needs the pending cookie)
 GET  /account/totp/setup, POST /account/totp/{enable|disable|recovery}
 POST /users/{id}/totp/reset             (admin)
--- planned in M9 (slicing, §15) --
+-- slicing (§15; all 404 when slicing is off) --
 GET  /ui/slice                          Slice tab: printer selector + upload form + recent jobs (no printer or worker calls)
 POST /slice/jobs                        streamed model upload + options -> queued job (operator)
 GET  /slice/jobs/{id}                   job panel (status, log tail, stats); refresh button with data-every while running
-POST /slice/jobs/{id}/{cancel|reslice|upload|print}
-DELETE /slice/jobs/{id}
-GET  /ui/slicer, POST /slicer/profiles, POST|DELETE /slicer/profiles/{id}, POST /slicer/test   (admin)
+POST /slice/jobs/{id}/{cancel|reslice|upload|print}   (operator)
+DELETE /slice/jobs/{id}                 (operator; cancels first if running)
+-- built (9.3, admin; all 404 when slicing is off) --
+GET  /ui/slicer                         [s]Slicer tab: library by kind + import panels (DB only, no worker calls)
+POST /slicer/test                       worker /v1/health + /v1/info, rendered like the printer test
+GET  /ui/slicer/system?vendor=&machine=&all=   step-by-step system picker (each step one worker call)
+POST /slicer/import/system              vendor + machine + process[] + filament[] -> flattened, stored (upsert)
+POST /slicer/import/user                multipart files[] (.json / Orca zips) -> worker resolve -> stored (upsert)
+DELETE /slicer/profiles/{id}            refused while a printer or unfinished job uses it
+POST /printers/{id}/slicer              machine profile + default process/filament (panel on the printer's edit page)
 ```
 
 Every `/ui/*` route returns a partial when `HX-Request` is present, or the full shell with that tab pre-rendered otherwise, so deep links and reloads work.
@@ -286,11 +293,15 @@ printers(id, name UNIQUE NOCASE, base_url, api_key_enc BLOB NULL /* version||non
 user_prefs(user_id PK, selected_printer_id, theme, auto_refresh BOOL DEFAULT 1)
 audit_log(id, user_id, printer_id NULL, action, detail_json, created_at)
 -- failed-login counters are kept in memory (auth/ratelimit.rs), not in the DB
--- planned in M9 (§15.3, §15.5):
-slicer_profiles(id, kind /* machine|filament|process */, name, source /* system|user */, settings_json, created_at, updated_at)
-printer_slicer(printer_id PK FK, machine_profile_id FK, default_process_id NULL, default_filament_id NULL)
-slice_jobs(id, user_id, printer_id, model_name, model_size, status, process_id, filament_id, options_json,
-           output_name NULL, est_seconds NULL, filament_mm NULL, error NULL, log_tail NULL,
+-- M9 slicing (§15.3, §15.5; migration 0007). Profiles are stored flattened; UNIQUE (kind, name NOCASE).
+slicer_profiles(id, kind /* machine|process|filament */, name, source /* system|user */, vendor NULL,
+                settings_json, created_at, updated_at)
+printer_slicer(printer_id PK FK CASCADE, machine_profile_id FK RESTRICT, default_process_id NULL FK SET NULL,
+               default_filament_id NULL FK SET NULL, updated_at)
+slice_jobs(id, user_id NULL, printer_id NULL /* SET NULL: a job outlives its user or printer */, model_name,
+           model_size, status /* queued|slicing|uploading|done|failed|cancelled */, machine_profile_id NULL,
+           process_id NULL, filament_id NULL, options_json, start_print, output_name NULL, est_seconds NULL,
+           filament_mm NULL, filament_g NULL, layers NULL, gcode_size NULL, error NULL, log_tail NULL,
            created_at, started_at NULL, finished_at NULL)
 ```
 
@@ -316,9 +327,9 @@ slice_jobs(id, user_id, printer_id, model_name, model_size, status, process_id, 
 | `PRINTPIT_AUTH_HEADER` | *(unset)* | Trusted-header SSO header, e.g. `Remote-User` (§3.8) |
 | `PRINTPIT_AUTH_PROXY_CIDRS` | *(unset)* | Required with the header: peers whose header is believed |
 | `PRINTPIT_AUTH_LOGOUT_URL` | *(unset)* | Logout destination behind an auth proxy |
-| `PRINTPIT_SLICER_URL` | *(unset)* | Slicer worker base URL, e.g. `http://slicer:8090`. Unset = slicing off (§15, planned) |
-| `PRINTPIT_SLICER_TOKEN` (+`_FILE`) | *(required with the URL)* | Shared bearer token for the worker |
-| `PRINTPIT_SLICER_TIMEOUT_SECS` | `1800` | Kill a slice that runs longer than this |
+| `PRINTPIT_SLICER_URL` | *(unset)* | Slicer worker base URL, e.g. `http://slicer:8090` (no credentials). Unset = slicing off (§15) |
+| `PRINTPIT_SLICER_TOKEN` (+`_FILE`) | *(required with the URL)* | Shared bearer token for the worker (≥24 printable characters) |
+| `PRINTPIT_SLICER_TIMEOUT_SECS` | `1800` | Give up on a worker request (upload, slice and download) after this; the worker then kills the slice |
 | `PRINTPIT_SLICER_MAX_MODEL_MB` | `200` | Model upload limit |
 | `PRINTPIT_SLICER_RETENTION_HOURS` | `72` | Delete models and output from `/data/slicer` after this |
 | `RUST_LOG` | `info` | Log filter |
@@ -360,38 +371,46 @@ slice_jobs(id, user_id, printer_id, model_name, model_size, status, process_id, 
 8. **M7 – Hardening and polish:** audit log UI, user management, keyboard help, mobile layout, compose examples, multi-arch image, docs.
 
 9. **M8 – Later items:** slicer ETA, camera orientation, temperatures, history, notifications, TOTP, SSO.
-10. **M9 – Slicing (planned):** OrcaSlicer sidecar worker, profile library, Slice tab, slice → upload → print (§15).
+10. **M9 – Slicing:** OrcaSlicer sidecar worker, profile library, Slice tab, slice → upload → print (§15).
 
 See `CHECKLIST.md` for the task-level breakdown.
 
 ---
 
-## 15. Slicing (M9, planned 2026-11-01)
+## 15. Slicing (M9; planned 2026-11-01, built 2026-11-02)
 
 **Goal:** upload an STL/3MF/STEP/OBJ from a phone, pick a printer, process and filament, and have printpit slice it with **OrcaSlicer**, put the G-code on that printer and (optionally) start it. No desktop needed.
 
 ### 15.1 Where the slicer runs: a sidecar worker
 OrcaSlicer is a large C++/wxWidgets application (hundreds of MB with its GTK/Mesa dependencies). Putting it in the printpit image would break G5 (a ~19 MB distroless image) and would put a big C++ parser of untrusted model files in the same process space as the auth database and the secret key. So:
 
-- A separate image, **`printpit-slicer`**, built from this repo (`slicer-worker/`, a small Rust crate in a cargo workspace plus `Dockerfile.slicer`). It is a Debian-slim image with a pinned OrcaSlicer Linux release (AppImage extracted, checked by SHA-256, like the Zig wheel) and a tiny axum HTTP API wrapping the OrcaSlicer CLI.
+- A separate image, **`printpit-slicer`**, built from this repo (`slicer-worker/`, a small Rust crate in a cargo workspace plus `Dockerfile.slicer`). It is an `ubuntu:24.04` image (the release Orca's Linux AppImage is built for; see §15.10) with a pinned OrcaSlicer Linux release (AppImage extracted, checked by SHA-256, like the Zig wheel) and a tiny axum HTTP API wrapping the OrcaSlicer CLI.
 - printpit reaches it at `PRINTPIT_SLICER_URL` with a shared bearer token (`PRINTPIT_SLICER_TOKEN`). Unset means the feature is off: no Slice tab, no slicer routes, same as the webhook.
 - Because the boundary is HTTP, the worker can run on a beefier machine than a Pi running printpit. Slicing a big model on a Pi 4 can take minutes, and Orca may not ship an arm64 Linux build (see spike).
 - The worker is **stateless**: each request carries the model and the fully resolved profiles. printpit owns the jobs, profiles, auth and audit.
 - The worker gets its own `reqwest::Client` in printpit (`slicer.rs`, like the webhook client), not the printer egress client. Rule 4 is about printer traffic. Its URL is config only, never rendered, and errors are written address-free.
 
 ### 15.2 Worker API (internal, versioned)
+Every route, unknown ones included, needs `Authorization: Bearer <PRINTPIT_SLICER_TOKEN>` (401 otherwise).
 ```
-GET  /v1/health                     liveness
-GET  /v1/info                       { orca_version, vendors: [...] } + the bundled system profile index
-GET  /v1/profiles/{kind}/{vendor}/{name}   one system profile, inherits resolved (for the admin import)
-POST /v1/slice                      multipart: machine, process, filament (JSON parts), options (JSON), model (file, last)
-                                    200: G-code body (streamed); headers carry stats parsed from the G-code footer
-                                    422: { error, log_tail } (bad model, profile conflict, slicer error)
-                                    the slice is killed (process group) if the client disconnects or the timeout hits
+GET  /v1/health                            200 {status, orca_version}; 503 if Orca couldn't run at startup
+GET  /v1/info                              {worker_version, orca_version, busy, timeout_secs, max_model_mb, vendors: [{name, version}]}
+GET  /v1/vendors/{vendor}                  that vendor's selectable machines {name, printer_model, nozzle},
+                                           processes and filaments {name, ..., compatible_printers(_condition)}
+GET  /v1/profiles/{kind}/{vendor}/{name}   one system profile, flattened (kind: machine | process | filament)
+POST /v1/profiles/resolve                  {presets: [...]} → {results: [{name, kind, profile} | {error}]}
+                                           user presets flattened against the system library and each other
+POST /v1/slice                             multipart: machine, process, filament (JSON), options (JSON), model (file, last)
+                                           200: G-code (streamed); X-Slice-Print-Time-S, -Filament-Mm, -Filament-G, -Layers
+                                           4xx/5xx: {error, kind, code?, log_tail?}
 ```
-One slice at a time per worker (a semaphore; extra requests get 503 + `Retry-After` and printpit keeps them queued). The worker runs `orca-slicer` in a per-request temp dir (tmpfs), roughly:
-`orca-slicer --load-settings "machine.json;process.json" --load-filaments "filament.json" [--arrange 1] [--orient 1] --slice 0 --outputdir out model.stl`
-(exact flags are confirmed in the spike, they have changed between Orca releases).
+`options` are only the CLI's own switches: `{arrange?: bool, orient: bool, plate: 1.., project_settings: bool}`. Settings overrides (layer height, infill, …) are applied by printpit to the process JSON before it is sent (§15.4). With `project_settings` (3MF only), only the machine is sent and loaded.
+
+Error `kind`s: `unauthorized`, `not_found`, `bad_request`, `too_large` (413), `busy` (503 + `Retry-After`), and for 422 slicer outcomes `model`, `profile`, `timeout`, `resources`, `slicer`, `crashed`. `code` is Orca's `CLI_*` return code and `log_tail` the last 40 lines of its log with the job's paths removed.
+
+One slice at a time per worker: busy is decided before the body is read, so printpit doesn't upload a big model for nothing, and keeps the job queued. Each slice gets a 0700 temp dir (tmpfs) with fixed file names (`machine.json`, `model.stl`, …), a cleared environment (the token never reaches Orca) and its own process group, which is killed on the hard timeout or when the client disconnects. The command line, for 2.4.2:
+`orca-slicer --datadir data --load-settings "machine.json;process.json" --load-filaments filament.json [--arrange 0|1] [--orient 1] --mstpp <timeout> --slice <plate> --outputdir out --debug 3 --logfile orca.log model.stl`
+A 3MF is always `--arrange 1` unless told otherwise, since our machine replaces its own. The worker also makes the chosen process accept the machine (it adds the machine's system name to `compatible_printers`), since printpit's choice is deliberate and Orca would otherwise refuse it (−17). Flags are re-checked on every Orca bump (§15.10).
 
 ### 15.3 Profiles
 OrcaSlicer's CLI wants complete machine/process/filament JSON. Presets made in the GUI only store the differences and point at a parent with `inherits`. printpit keeps a **profile library** (admin-managed, `slicer_profiles`) with three ways in:
@@ -406,13 +425,14 @@ Profiles hold G-code (`machine_start_gcode`, filament start G-code, …) that ru
 ### 15.4 Slice options (the phone form)
 A short, whitelisted set of overrides applied to a copy of the process profile. Never arbitrary keys:
 - layer height (from the process's allowed range), infill density %, wall loops, supports (off / normal / tree, build plate only), brim (auto/off/width), copies, auto-arrange, auto-orient.
+- Copies are the CLI's `--clone-objects N`, which also spreads them over the bed (`--repetitions` is rejected by the 2.4.2 CLI; checked with real Orca and covered by the golden test). Not for a 3MF, whose layout is the project's.
 - Each one is a typed field with a range check, written as an Orca config key by a fixed table in `slicer::options`. Out-of-range values are form errors.
 - **3MF projects:** an Orca `.3mf` can be sliced "with project settings" (its plate layout, painted supports, modifiers), with the printer's machine profile still enforced so G-code for the wrong printer can't be produced by accident.
 
 ### 15.5 Job flow
 1. **Upload:** `POST /slice/jobs` streams the multipart file to `/data/slicer/{job}/model.<ext>` (size-limited, extension + magic check: binary/ASCII STL, zip for 3MF, `ISO-10303` for STEP), then creates a `slice_jobs` row (`queued`). The name goes through `clean_name`.
 2. **Slice:** a single `slicer::Queue` task (in `AppState`, started at boot like the notifier) runs jobs in order: `slicing` → stream the model + profiles to the worker → stream the G-code back to `/data/slicer/{job}/out.gcode`. Stats (estimated time, filament length/weight, layer count) come from the response headers or the G-code footer.
-3. **Upload to the printer:** `uploading` → the existing streaming `MoonrakerClient` upload to `gcodes/<folder>/<name>.gcode` (default folder `printpit/`, name `<model>_<process>_<filament>.gcode`, no overwrite without a confirm). Moonraker extracts metadata and thumbnails like any upload, so the Files tab and slicer ETA (8.1) just work.
+3. **Upload to the printer:** `uploading` → the existing streaming `MoonrakerClient` upload to `gcodes/<folder>/<name>.gcode` (default folder `printpit/`, name `<model>_<process>_<filament>.gcode`, no overwrite without a confirm). Moonraker extracts metadata like any upload, so the Files tab and slicer ETA (8.1) just work. (No thumbnails: Orca 2.4.2's CLI doesn't write them, §15.10.)
 4. **Done:** `done` with buttons `print` (operator, confirm dialog, reuses `print/start`; disabled while the printer is busy), `files` (link to the Files tab), `reslice` (same model, new options). Optional "start print when done" checkbox on the form, only offered if the printer is idle at submit time and re-checked before starting.
 5. **Failure:** `failed` with the error and the last ~40 lines of the slicer log (worker log, never containing addresses or tokens). **Cancel** at any stage drops the worker request (which kills Orca) or aborts the upload.
 
@@ -433,12 +453,31 @@ On a restart, jobs left in `slicing`/`uploading` are marked `failed (interrupted
 - Audit: `slice_job_create`, `slice_job_cancel`, `slice_job_upload`, `slice_job_print`, `slice_job_delete`, `slicer_profile_create/update/delete`, `printer_slicer_update`.
 
 ### 15.8 Deployment
-- Both compose files gain an optional `slicer` service (`ghcr.io/<owner>/printpit-slicer`) behind a commented-out block or a compose profile (`docker compose --profile slicer up`), on an internal network with printpit, plus a `slicer-token` secret.
-- `release.yml` builds and pushes `printpit-slicer` for amd64 (and arm64 if an upstream arm64 build exists; see spike). CI builds the worker image on PRs that touch `slicer-worker/` or `Dockerfile.slicer`.
+- Both compose files have an optional `slicer` service behind the `slicer` compose profile (`docker compose --profile slicer up -d`), on an `internal: true` network that only printpit shares, with a read-only root, a 2 GB tmpfs on `/tmp`, no capabilities and CPU/memory/pid limits.
+- The token is an env var from `.env` (like `PRINTPIT_SECRET_KEY`), not a compose secret: compose reads every service's secrets even for inactive profiles, and printpit refuses a token without a URL. Both `PRINTPIT_SLICER_URL` and `PRINTPIT_SLICER_TOKEN` default to empty, which printpit treats as unset, so the plain `docker compose up` is unchanged. `_FILE` variants work for those who prefer secrets.
+- `release.yml` builds and pushes `ghcr.io/<owner>/printpit-slicer` for amd64 and arm64 (upstream ships both). `slicer.yml` builds both on PRs that touch the worker and runs the golden test on amd64.
 - `printpit-slicer` is pinned to one Orca version. Bumping it is a PR that updates the URL + hash and re-runs the golden test.
 
 ### 15.9 Testing
 - A **mock worker** (`tests/common/slicer.rs` + `examples/mock_slicer.rs`) that answers `/v1/slice` with canned G-code (with Orca-style footer stats), can be told to fail, stall or 503, and records requests. All printpit tests use it; no test needs Orca.
 - Worker unit tests: `inherits` resolution, option → config key mapping, arg building, timeout/kill, disconnect-kills-child (with a fake `orca-slicer` shell script).
-- One **golden test** in the worker image's CI job: slice a 20 mm calibration cube with a bundled system profile and check that G-code comes out with plausible stats. That is the only test that runs real Orca.
+- One **golden test** in the worker image's CI job: slice a 20 mm calibration cube with a bundled system profile and check that G-code comes out with plausible stats. That is the only test that runs real Orca, and it is also what guards the stubbed GUI libraries (§15.10): a GUI call traps, so the test fails.
 - printpit integration tests: tab lazy (zero printer *and* worker calls on `/ui/slice`), upload limits and magic checks, queue order, cancel at each stage, interrupted jobs on restart, upload lands in `gcodes/printpit/`, print start gated by role and printer state, CSRF/auth matrix, token never in a page or log, retention cleanup.
+
+### 15.10 Spike findings (9.0, 2026-11-01, OrcaSlicer 2.4.2)
+Measured in the Claude cloud sandbox (4 vCPU amd64). arm64 was inspected but could not be run there (no QEMU).
+
+- **Release:** pinned to **v2.4.2**, the latest stable (2.5.0 is at rc). Assets: `OrcaSlicer_Linux_AppImage_Ubuntu2404_V2.4.2.AppImage` (sha256 `d12fb8c8eac1aecd2dfb6377acd48f994f8fa439ed5292fa532dd82880f029fd`) and `OrcaSlicer_Linux_AppImage_Ubuntu2404_aarch64_V2.4.2.AppImage` (sha256 `e1a07275a25f176626c55a5df39e91bc4476d8c28ee4a3192ff758e29dd5c3ba`). Upstream publishes no checksums we could reach, so these are pinned on first download, like the Zig wheel.
+- **arm64:** there is an upstream aarch64 AppImage with the same `NEEDED` set and glibc floor, so one Dockerfile covers both arches (`TARGETARCH` picks URL and hash). Running it and measuring it on arm64 is still to do on real hardware or in CI.
+- **Base image: `ubuntu:24.04`, not Debian-slim.** The binary needs glibc 2.38 (bookworm has 2.36) and is built for Ubuntu 24.04. Trixie would probably work, but 24.04 is an exact ABI match.
+- **Extraction:** `unsquashfs -o <offset>` on the AppImage. The offset is the end of the AppImage's ELF runtime (section header offset + count × size), checked for the `hsqs` magic. Searching for the first `hsqs` is wrong: the x86_64 runtime contains that string earlier. It needs no FUSE and doesn't run the AppImage, so it works when cross-building. The CLI needs only `bin/orca-slicer` and `lib/orca-runtime/` (libz, lzma, expat, mspack). `strip` cuts the binary from 124 to 98 MB. `resources/` is **not needed** when profiles are passed flat. Keep `resources/profiles/**/*.json` (53 MB) only for the worker's `/v1/info` index.
+- **Headless:** no display, Xvfb, network or GPU is needed. It runs as a non-root user with a read-only root FS, `HOME=/tmp`, `--datadir /tmp/...` and `--network none`.
+- **GUI libraries are stubbed.** The binary links GTK3, WebKitGTK 4.1, GStreamer, Soup, libsecret, X11/Wayland and GL, but a CLI slice calls none of them. Installing them costs ~710 MB. Instead, the worker image keeps the real libc/libstdc++/glib and replaces each other `NEEDED` library with an empty stub carrying the right SONAME. One `libprintpit-gui-stub.so` defines every remaining imported function as a trap (`__builtin_trap()`), so a call into GUI code crashes loudly instead of doing nothing. It also defines the imported data symbols (`_gst_debug_min`, nine `wl_*_interface`). Versioned imports (dbus, xkbcommon) go into their own library's stub under their version node. The generator is `slicer-worker/docker/gui_stubs.py`. The spike stubbed glib too: with it, the runtime image needs no apt packages at all. This works because the binary is lazily bound and imports no versioned symbols from those libraries. The result is a 125 MB base instead of 833 MB, and the G-code is **byte-identical** to a full install (cube and 1M-triangle torus, md5 of everything except the `generated by` line). The stubs are generated at build time from `readelf --dyn-syms`, so a version bump regenerates them, and the golden test is the guard. Measured image (9.1): 325 MB for amd64 (78 MB Ubuntu + a 154 MB Orca tree + the worker).
+- **CLI (2.4.2):** `orca-slicer --datadir D --load-settings "machine.json;process.json" --load-filaments "filament.json" [--arrange 1] [--orient 1] --slice 0 --outputdir out model.stl`. The output is `out/plate_<n>.gcode`. Logs: stdout/stderr carry almost nothing. `--debug 3 --logfile F` gives a useful trace.
+- **Result and exit codes:** Orca always writes `out/result.json` with `return_code` (the negative `CLI_*` codes from `libslic3r/Utils.hpp`) and `error_string` (readable English, no paths seen). The process exit status is that code mod 256 (−17 → 239). **The worker trusts `result.json`, not the exit status.** Observed: −3 file not found, −6 unparsable model (random bytes, a single degenerate facet), −17 process not compatible with printer, −50 no object fully on the plate (model bigger than the bed). Also useful: `--mstpp <secs>` (Orca's own per-plate time limit, −58) as a second line behind our hard timeout.
+- **`inherits`: the CLI does not resolve it.** Unflattened system profiles fail with −17, because the compatibility lists live in the parents. **The worker must flatten:** walk `inherits` to the root and merge parent then child. For filaments, look in the vendor's own index first, then `OrcaFilamentLibrary` (Voron, for example, ships no filaments). Vendor indexes are `profiles/<Vendor>.json` with `machine_model_list`/`machine_list`/`process_list`/`filament_list` (`name`, `sub_path`). Entries with `"instantiation": "true"` are selectable; `fdm_*_common` are abstract bases. Flattened profiles slice correctly (a 50-line Python prototype was enough). User presets exported from the GUI use the same `inherits` scheme, but no real GUI export was tested. Verify with one in 9.3.
+- **Preset bundles** (from the 2.4.2 source): `.orca_printer` is a zip with `bundle_structure.json` (`bundle_type: "printer config bundle"`, `printer_preset_name`, `printer_config`, `filament_config[]`, `process_config[]`) and files under `printer/`, `filament/`, `process/`. `.orca_filament` is `bundle_type: "filament config bundle"` with files under `<vendor>/`. The plain "presets (.zip)" exports have no `bundle_structure.json`, just JSON files. The importer accepts all three: if `bundle_structure.json` is present, use it, otherwise take every `*.json`.
+- **3MF projects:** `--slice 0` on an Orca 3MF with no `--load-*` uses the project settings. Adding `--load-settings`/`--load-filaments` enforces our profiles. A different machine works, and Orca re-centres the objects for the new bed. A smaller bed fails with −50, so **always pass `--arrange 1` when enforcing a machine on a 3MF.**
+- **Thumbnails: none in 2.4.2.** The CLI exports G-code with a `nullptr` thumbnail callback (`OrcaSlicer.cpp`), so no thumbnails are written with or without a GPU, even though the profile sets `thumbnails = 48x48/PNG,300x300/PNG`. Thumbnails are rendered only for `--export-3mf`, and that path is broken too: it requests an OpenGL context using the *GLFW library* version (3.4) and fails even under Xvfb + Mesa. Decision: **ship without thumbnails and without Xvfb/Mesa.** Moonraker and the Files tab work without them. A possible later improvement is a worker-side thumbnail (rasterise the mesh, inject a `; thumbnail begin` block).
+- **G-code:** stats are in the footer: `; filament used [mm] =`, `[cm3]`, `[g]`, `; total filament used [g] =`, `; total layers count =`, `; estimated printing time (normal mode) = 9m 55s`. The header has `; total layer number:` and `; max_z_height:`. It emits Klipper `EXCLUDE_OBJECT_DEFINE` and `M73` progress.
+- **Measurements (amd64, 4 vCPU):** 20 mm cube: 0.2 s, 87 MB peak RSS, 368 KB G-code. 50 MB binary STL (1.04M triangles): 15.5 s wall / 37.5 s CPU, 637 MB peak, 27 MB G-code. The same with `--arrange 1 --orient 1`: 20.7 s, 725 MB. **Compose limit: 2 GB memory** with headroom for bigger models. A Pi 4 will be several times slower, so the default timeout is 15 min.

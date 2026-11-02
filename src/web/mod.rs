@@ -14,6 +14,8 @@ mod presets;
 mod printers;
 pub mod security;
 mod select;
+mod slice;
+mod slicer;
 mod system;
 mod temps;
 mod totp;
@@ -39,6 +41,13 @@ pub fn router(state: AppState) -> Router {
     // Multipart framing on top of the file itself.
     let upload_limit = usize::try_from(state.config.max_upload_bytes)
         .unwrap_or(usize::MAX)
+        .saturating_add(1 << 20);
+    // The model, plus the form's fields.
+    let slice_limit = state
+        .config
+        .slicer
+        .as_ref()
+        .map_or(0, |s| usize::try_from(s.max_model_bytes).unwrap_or(usize::MAX))
         .saturating_add(1 << 20);
     // Everything here needs a session; non-GET requests also need the CSRF token.
     let protected = Router::new()
@@ -88,6 +97,28 @@ pub fn router(state: AppState) -> Router {
         .route("/printers/{id}/toggle", post(printers::toggle))
         .route("/printers/{id}/move/{dir}", post(printers::reorder))
         .route("/printers/{id}/test", post(printers::test))
+        .route("/ui/slice", get(slice::tab))
+        .route(
+            "/slice/jobs",
+            post(slice::submit).layer(axum::extract::DefaultBodyLimit::max(slice_limit)),
+        )
+        .route("/slice/jobs/{id}", get(slice::show).delete(slice::delete))
+        .route("/slice/jobs/{id}/cancel", post(slice::cancel))
+        .route("/slice/jobs/{id}/reslice", post(slice::reslice))
+        .route("/slice/jobs/{id}/upload", post(slice::upload))
+        .route("/slice/jobs/{id}/print", post(slice::print))
+        .route("/printers/{id}/slicer", post(slicer::save_printer))
+        .route("/ui/slicer", get(slicer::tab))
+        .route("/ui/slicer/system", get(slicer::system))
+        .route("/slicer/test", post(slicer::test))
+        .route("/slicer/import/system", post(slicer::import_system))
+        .route(
+            "/slicer/import/user",
+            post(slicer::import_user).layer(axum::extract::DefaultBodyLimit::max(
+                crate::slicer::import::MAX_UPLOAD_BYTES + (1 << 20),
+            )),
+        )
+        .route("/slicer/profiles/{id}", delete(slicer::delete_profile))
         .route("/presets", post(presets::create))
         .route("/presets/{id}", post(presets::update).delete(presets::delete))
         .route("/ui/users", get(users::list))

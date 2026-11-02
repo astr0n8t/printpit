@@ -1,0 +1,23 @@
+{
+ "name": "Broken",
+ "version": "01.00.00.00",
+ "machine_model_list": [],
+ "machine_list": [
+  {
+   "name": "Loop A",
+   "sub_path": "machine/a.json"
+  },
+  {
+   "name": "Loop B",
+   "sub_path": "machine/b.json"
+  },
+  {
+   "name": "Bad Json",
+   "sub_path": "machine/bad.json"
+  },
+  {
+   "name": "Escape",
+   "sub_path": "../Acme/machine/fdm_acme_common.json"
+  }
+ ]
+}

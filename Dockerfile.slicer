@@ -1,0 +1,84 @@
+# syntax=docker/dockerfile:1
+
+# printpit-slicer: the OrcaSlicer CLI behind a small token-authenticated HTTP API (slicer-worker/).
+# An optional sidecar for printpit; see PLAN.md §15. Build: docker build -f Dockerfile.slicer .
+#
+# Both build stages run on the build machine's architecture and produce files for the target one,
+# so amd64 and arm64 build without emulation.
+
+# ── orca: fetch the pinned AppImage, verify it, and cut it down to what the CLI needs ─────────
+# To bump Orca: update ORCA_VERSION and both hashes, rebuild, and run slicer-worker/golden/run.sh.
+FROM --platform=$BUILDPLATFORM ubuntu:24.04 AS orca
+ARG BUILDARCH
+ARG TARGETARCH
+ARG ORCA_VERSION=2.4.2
+ARG ORCA_RELEASES=https://github.com/OrcaSlicer/OrcaSlicer/releases/download
+RUN set -eu; \
+    case "$TARGETARCH" in \
+      amd64) echo "x86_64-linux-gnu gcc-x86-64-linux-gnu OrcaSlicer_Linux_AppImage_Ubuntu2404_V${ORCA_VERSION}.AppImage d12fb8c8eac1aecd2dfb6377acd48f994f8fa439ed5292fa532dd82880f029fd" ;; \
+      arm64) echo "aarch64-linux-gnu gcc-aarch64-linux-gnu OrcaSlicer_Linux_AppImage_Ubuntu2404_aarch64_V${ORCA_VERSION}.AppImage e1a07275a25f176626c55a5df39e91bc4476d8c28ee4a3192ff758e29dd5c3ba" ;; \
+      *) echo "unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
+    esac > /orca-target; \
+    set -- $(cat /orca-target); \
+    if [ "$TARGETARCH" = "$BUILDARCH" ]; then cc="gcc libc6-dev"; else cc="$2"; fi; \
+    apt-get update; \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      ca-certificates curl squashfs-tools python3-minimal $cc; \
+    rm -rf /var/lib/apt/lists/*
+RUN set -eu; set -- $(cat /orca-target); \
+    curl -fsSL --retry 3 -o /orca.AppImage "$ORCA_RELEASES/v$ORCA_VERSION/$3"; \
+    echo "$4  /orca.AppImage" | sha256sum -c -
+COPY slicer-worker/docker/ /build/
+RUN set -eu; set -- $(cat /orca-target); \
+    /build/prepare-orca.sh /orca.AppImage "$1" /opt/orca; \
+    rm /orca.AppImage
+
+# ── build: the worker, a static musl binary (same toolchain as printpit's Dockerfile) ─────────
+FROM --platform=$BUILDPLATFORM rust:1.97-alpine AS build
+ARG BUILDARCH
+ARG TARGETARCH
+ARG ZIG_WHEELS=https://files.pythonhosted.org/packages
+RUN set -eu; \
+    case "$BUILDARCH" in \
+      amd64) whl=db/81/f9f5c7fd68d80b8edff2a641a1c95ac4125356387d298374227040b8e1e8/ziglang-0.15.2-py3-none-manylinux_2_12_x86_64.manylinux2010_x86_64.musllinux_1_1_x86_64.whl; \
+             sum=806316453d1ede7174ed3fefb8e5348154629089c3bb5fe812dfd0e172fac130 ;; \
+      arm64) whl=53/7d/8c277208250ffa72f12a10f52dfc1d45850f08244093065b40c5f4628260/ziglang-0.15.2-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.musllinux_1_1_aarch64.whl; \
+             sum=edc0aa60ec964a4cf462d40f68d7de242ddf37fd9a80f2afaee6397059463230 ;; \
+      *) echo "unsupported BUILDARCH: $BUILDARCH" >&2; exit 1 ;; \
+    esac; \
+    wget -qO /tmp/zig.whl "$ZIG_WHEELS/$whl"; \
+    echo "$sum  /tmp/zig.whl" | sha256sum -c -; \
+    mkdir -p /opt/zig && unzip -q /tmp/zig.whl -d /opt/zig && rm /tmp/zig.whl; \
+    chmod +x /opt/zig/ziglang/zig && ln -s /opt/zig/ziglang/zig /usr/local/bin/zig; \
+    zig version; \
+    cargo install --locked cargo-zigbuild@0.24.0
+RUN case "$TARGETARCH" in \
+      amd64) echo x86_64-unknown-linux-musl ;; \
+      arm64) echo aarch64-unknown-linux-musl ;; \
+      *) echo "unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
+    esac > /rust-target \
+ && rustup target add "$(cat /rust-target)"
+WORKDIR /src
+COPY . .
+RUN --mount=type=cache,target=/usr/local/cargo/registry,id=cargo-registry-$TARGETARCH \
+    --mount=type=cache,target=/src/target,id=slicer-target-$TARGETARCH \
+    cargo zigbuild --release --locked -p slicer-worker --target "$(cat /rust-target)" \
+ && cp "target/$(cat /rust-target)/release/printpit-slicer" /printpit-slicer
+
+# ── runtime: Ubuntu 24.04 (the release Orca's Linux build targets), no extra packages ──────────
+# Run it with a read-only root FS, a tmpfs on /tmp and no network but printpit's (see the compose
+# files). Untrusted models are only ever parsed here.
+FROM ubuntu:24.04
+COPY --from=orca /opt/orca /opt/orca
+COPY --from=build /printpit-slicer /usr/local/bin/printpit-slicer
+ENV PRINTPIT_SLICER_BIND=0.0.0.0:8090 \
+    PRINTPIT_SLICER_ORCA=/opt/orca/bin/orca-slicer \
+    PRINTPIT_SLICER_PROFILES=/opt/orca/resources/profiles \
+    PRINTPIT_SLICER_WORK_DIR=/tmp \
+    LD_LIBRARY_PATH=/opt/orca/lib/orca-runtime:/opt/orca/stubs \
+    HOME=/tmp
+USER 65532:65532
+EXPOSE 8090
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+  CMD ["/usr/local/bin/printpit-slicer", "healthcheck"]
+ENTRYPOINT ["/usr/local/bin/printpit-slicer"]

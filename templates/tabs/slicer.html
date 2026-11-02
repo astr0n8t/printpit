@@ -1,0 +1,67 @@
+<section class="panel">
+  <h2 class="panel-title">slicer</h2>
+{%- if let Some(n) = notice %}
+  <p class="ok" role="status">✓ {{ n }}</p>
+{%- endif %}
+{%- if let Some(e) = error %}
+  <p class="err" role="alert">! {{ e }}</p>
+{%- endif %}
+  <p class="dim">OrcaSlicer runs in the separate printpit-slicer worker. Opening this tab doesn't contact it; <code>test</code> does.</p>
+  <div class="actions">
+    <span id="slicer-test" class="wrap"><button hx-post="/slicer/test" hx-target="#slicer-test" hx-disabled-elt="this">test the worker</button></span>
+  </div>
+</section>
+{%- if let Some(r) = report %}
+<section class="panel" id="import-report">
+  <h2 class="panel-title">import</h2>
+{%- if !r.lines.is_empty() %}
+  <ul class="report">
+{%- for l in r.lines %}
+    <li><span class="badge {{ l.class }}">{{ l.outcome }}</span> {{ l.detail }}<br><span class="dim">from {{ l.source }}</span></li>
+{%- endfor %}
+  </ul>
+{%- endif %}
+{%- for s in r.skipped %}
+  <p class="dim">{{ s }}</p>
+{%- endfor %}
+</section>
+{%- endif %}
+<section class="panel" id="library">
+  <h2 class="panel-title">profile library</h2>
+  <p class="dim">Each printer slices with one machine profile (set on its page under <a href="/ui/printers" hx-get="/ui/printers" hx-target="#main" hx-push-url="true">printers</a>). Operators choose a process and a filament when they slice. Profiles carry start and end G-code, so only admins manage them.</p>
+{%- for g in groups %}
+  <h3 class="sub">{{ g.title }} <span class="dim">({{ g.rows.len() }})</span></h3>
+{%- if g.rows.is_empty() %}
+  <p>None yet. Import a printer below.</p>
+{%- else %}
+  <table class="profiles">
+    <tbody>
+{%- for r in g.rows %}
+      <tr>
+        <td class="wrap">{{ r.name }}<br><span class="dim">{{ r.source }} · updated {{ r.updated }}</span></td>
+        <td class="row-actions"><button class="danger" hx-delete="/slicer/profiles/{{ r.id }}" hx-target="#main" hx-confirm="Delete {{ r.name }}?">delete</button></td>
+      </tr>
+{%- endfor %}
+    </tbody>
+  </table>
+{%- endif %}
+{%- endfor %}
+</section>
+<section class="panel" id="import-system">
+  <h2 class="panel-title">import from orca's library</h2>
+  <p class="dim">Pick a printer from the profiles bundled with OrcaSlicer, then the processes and filaments that go with it. Importing one that's already here updates it.</p>
+  <div id="sys-import">
+    <button hx-get="/ui/slicer/system" hx-target="#sys-import" hx-disabled-elt="this">browse printers</button>
+  </div>
+</section>
+<section class="panel" id="import-user">
+  <h2 class="panel-title">import your presets</h2>
+  <p class="dim">Presets exported from OrcaSlicer (<code>.json</code>), or a preset bundle (<em>File → Export → Export preset bundle</em>: <code>.orca_printer</code>, <code>.orca_filament</code>, <code>.zip</code>). The worker fills in what they inherit from Orca's library. Up to {{ max_files }} files at a time.</p>
+  <form hx-post="/slicer/import/user" hx-target="#main" hx-encoding="multipart/form-data" hx-disabled-elt="find button">
+    <div class="field">
+      <label for="preset-files">files</label>
+      <input id="preset-files" type="file" name="files" multiple required accept=".json,.zip,.orca_printer,.orca_filament,.orca_bundle">
+    </div>
+    <div class="actions"><button class="primary">import</button></div>
+  </form>
+</section>

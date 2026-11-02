@@ -15,6 +15,7 @@ use crate::moonraker::status::SlicerTimes;
 use crate::moonraker::webcam::WebcamCache;
 use crate::moonraker::{self, Egress, MoonrakerClient, MoonrakerError};
 use crate::notify::Notifier;
+use crate::slicer::{Slicing, SlicingError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StartupError {
@@ -24,6 +25,8 @@ pub enum StartupError {
     Db(#[from] sqlx::Error),
     #[error("cannot build an HTTP client: {0}")]
     Http(#[from] reqwest::Error),
+    #[error("{0}")]
+    Slicing(#[from] SlicingError),
 }
 
 #[derive(Clone)]
@@ -41,6 +44,8 @@ pub struct AppState {
     pub dirs: Arc<DirCache>,
     pub slicer: Arc<SlicerTimes>,
     pub notifier: Arc<Notifier>,
+    /// The slicer worker, its storage and settings; `None` when slicing is off.
+    pub slicing: Option<Arc<Slicing>>,
 }
 
 impl AppState {
@@ -68,6 +73,11 @@ impl AppState {
             },
         );
         let notifier = Notifier::new(db.clone(), hub.clone(), config.notify_webhook.clone())?;
+        let slicing = config
+            .slicer
+            .clone()
+            .map(|s| Slicing::new(s, &config.data_dir).map(Arc::new))
+            .transpose()?;
         Ok(Self {
             config: Arc::new(config),
             db,
@@ -80,6 +90,7 @@ impl AppState {
             dirs: Arc::default(),
             slicer,
             notifier,
+            slicing,
         })
     }
 
@@ -108,6 +119,14 @@ impl AppState {
     /// `PRINTPIT_NOTIFY_WEBHOOK_URL`).
     pub async fn start_notifications(&self) {
         self.notifier.sync().await;
+    }
+
+    /// Starts the slice queue (no-op when slicing is off). Jobs a restart cut short are marked
+    /// failed; queued ones resume.
+    pub async fn start_slicing(&self) {
+        if let Some(s) = &self.slicing {
+            s.queue.start(self.clone()).await;
+        }
     }
 
     /// Periodically purges expired sessions and stale rate-limit windows.

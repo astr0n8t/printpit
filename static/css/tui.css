@@ -218,6 +218,9 @@ input[type="checkbox"] {
   cursor: pointer;
   color: var(--fg);
   font: inherit;
+  /* The [ ] glyph never splits, and a long label wraps beside it. */
+  flex: none;
+  white-space: pre;
 }
 input[type="checkbox"]::before { content: "[ ]"; }
 input[type="checkbox"]:checked::before { content: "[x]"; color: var(--accent); }
@@ -419,3 +422,20 @@ kbd::after { content: "]"; color: var(--dim); }
 .totp-qr svg { display: block; width: 200px; height: 200px; margin: 0.4em 0; }
 .totp-key { overflow-wrap: anywhere; }
 pre.recovery-codes { columns: 2; max-width: 30ch; }
+
+/* ── Slicer ───────────────────────────────────────────────────────── */
+
+/* Checkbox lists (imports): one per line, scrolling when long. */
+.choices { display: flex; flex-direction: column; gap: 0.15rem; max-height: 22rem; overflow-y: auto; margin-bottom: 0.75rem; }
+.choices label { white-space: normal; align-items: baseline; }
+h3.sub { margin: 1em 0 0.3em; font-size: 1em; }
+table.profiles { width: 100%; }
+table.profiles td { vertical-align: top; }
+table.profiles td.row-actions { width: 1%; white-space: nowrap; text-align: right; }
+ul.report { list-style: none; padding: 0; margin: 0 0 0.6em; }
+ul.report li { margin: 0 0 0.5em; overflow-wrap: anywhere; }
+.slice-form select { max-width: 100%; }
+.slice-overrides { margin: 0.4em 0 0.8em; }
+.slice-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(14ch, 1fr)); gap: 0.4em 1.5ch; margin-bottom: 0.6em; }
+.slice-grid label { display: flex; flex-direction: column; gap: 0.2em; }
+.slice-grid input, .slice-grid select { width: 100%; }

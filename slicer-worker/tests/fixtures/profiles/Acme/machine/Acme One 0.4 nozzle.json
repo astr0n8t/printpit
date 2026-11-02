@@ -1,0 +1,21 @@
+{
+ "type": "machine",
+ "name": "Acme One 0.4 nozzle",
+ "inherits": "fdm_acme_common",
+ "from": "system",
+ "instantiation": "true",
+ "printer_model": "Acme One",
+ "printer_variant": "0.4",
+ "nozzle_diameter": [
+  "0.4"
+ ],
+ "retraction_length": [
+  "0.5"
+ ],
+ "printable_area": [
+  "0x0",
+  "200x0",
+  "200x200",
+  "0x200"
+ ]
+}

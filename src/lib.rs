@@ -6,6 +6,7 @@ pub mod error;
 pub mod healthcheck;
 pub mod moonraker;
 pub mod notify;
+pub mod slicer;
 pub mod state;
 pub mod telemetry;
 pub mod web;

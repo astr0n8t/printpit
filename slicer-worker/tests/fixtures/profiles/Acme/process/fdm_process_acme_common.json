@@ -1,0 +1,10 @@
+{
+ "type": "process",
+ "name": "fdm_process_acme_common",
+ "inherits": "fdm_process_common",
+ "from": "system",
+ "instantiation": "false",
+ "compatible_printers": [
+  "Acme One 0.4 nozzle"
+ ]
+}

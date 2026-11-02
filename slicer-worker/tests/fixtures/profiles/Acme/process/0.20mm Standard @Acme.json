@@ -1,0 +1,8 @@
+{
+ "type": "process",
+ "name": "0.20mm Standard @Acme",
+ "inherits": "fdm_process_acme_common",
+ "from": "system",
+ "instantiation": "true",
+ "wall_loops": "3"
+}

@@ -96,6 +96,8 @@ pub struct CurrentUser {
     pub csrf_token: String,
     pub session_hash: Vec<u8>,
     pub theme: Theme,
+    /// Slicing is configured (`PRINTPIT_SLICER_URL`): shows the slicing tabs.
+    pub slicing: bool,
 }
 
 impl CurrentUser {
@@ -196,6 +198,7 @@ fn current_user(s: sessions::SessionUser, hash: Vec<u8>) -> CurrentUser {
         csrf_token: s.csrf_token,
         session_hash: hash,
         theme: Theme::parse(s.theme.as_deref()),
+        slicing: false,
     }
 }
 
@@ -281,11 +284,13 @@ pub async fn require_auth(
     let sso_name = sso::header_user(&state.config, req.headers(), peer.0);
     let check = check(&state, &jar).await?;
     match (check, sso_name) {
-        (SessionCheck::Valid(user), None) => {
+        (SessionCheck::Valid(mut user), None) => {
+            user.slicing = state.slicing.is_some();
             req.extensions_mut().insert(*user);
             Ok(next.run(req).await)
         }
-        (SessionCheck::Valid(user), Some(name)) if name.eq_ignore_ascii_case(&user.username) => {
+        (SessionCheck::Valid(mut user), Some(name)) if name.eq_ignore_ascii_case(&user.username) => {
+            user.slicing = state.slicing.is_some();
             req.extensions_mut().insert(*user);
             Ok(next.run(req).await)
         }
@@ -299,7 +304,8 @@ pub async fn require_auth(
                 .get(axum::http::header::USER_AGENT)
                 .and_then(|v| v.to_str().ok())
                 .map(str::to_string);
-            let (user, cookie) = sso_session(&state, ip, user_agent.as_deref(), &name).await?;
+            let (mut user, cookie) = sso_session(&state, ip, user_agent.as_deref(), &name).await?;
+            user.slicing = state.slicing.is_some();
             req.extensions_mut().insert(user);
             let mut res = next.run(req).await;
             if let Ok(v) = HeaderValue::from_str(&cookie.to_string()) {

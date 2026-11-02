@@ -1,0 +1,6 @@
+{
+ "type": "machine",
+ "name": "Loop A",
+ "inherits": "Loop B",
+ "instantiation": "true"
+}

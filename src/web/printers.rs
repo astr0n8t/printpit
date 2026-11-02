@@ -236,8 +236,20 @@ pub async fn edit_form(
     user: RequireRole<Admin>,
     Path(id): Path<i64>,
 ) -> Result<Response, AppError> {
+    edit_page(&state, hx, &user, id, None, None).await
+}
+
+/// The edit form, plus the slicing panel when slicing is configured (with its own notice).
+pub(crate) async fn edit_page(
+    state: &AppState,
+    hx: HxRequest,
+    user: &RequireRole<Admin>,
+    id: i64,
+    slicer_notice: Option<String>,
+    slicer_error: Option<String>,
+) -> Result<Response, AppError> {
     let p = printers::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
-    let html = FormTemplate {
+    let mut html = FormTemplate {
         id: Some(p.id),
         action: format!("/printers/{}", p.id),
         csrf: user.csrf_token.clone(),
@@ -253,7 +265,10 @@ pub async fn edit_form(
         error: None,
     }
     .render()?;
-    page(hx, &user, Tab::Printers, html)
+    if let Some(panel) = crate::web::slicer::printer_panel(state, id, slicer_notice, slicer_error).await? {
+        html.push_str(&panel);
+    }
+    page(hx, user, Tab::Printers, html)
 }
 
 async fn validate(state: &AppState, f: &PrinterForm, except: Option<i64>) -> Result<Valid, String> {

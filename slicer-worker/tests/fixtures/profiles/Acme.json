@@ -1,0 +1,39 @@
+{
+ "name": "Acme",
+ "version": "01.00.00.00",
+ "machine_model_list": [],
+ "machine_list": [
+  {
+   "name": "fdm_machine_common",
+   "sub_path": "machine/fdm_machine_common.json"
+  },
+  {
+   "name": "fdm_acme_common",
+   "sub_path": "machine/fdm_acme_common.json"
+  },
+  {
+   "name": "Acme One 0.4 nozzle",
+   "sub_path": "machine/Acme One 0.4 nozzle.json"
+  }
+ ],
+ "process_list": [
+  {
+   "name": "fdm_process_common",
+   "sub_path": "process/fdm_process_common.json"
+  },
+  {
+   "name": "fdm_process_acme_common",
+   "sub_path": "process/fdm_process_acme_common.json"
+  },
+  {
+   "name": "0.20mm Standard @Acme",
+   "sub_path": "process/0.20mm Standard @Acme.json"
+  }
+ ],
+ "filament_list": [
+  {
+   "name": "Acme PLA",
+   "sub_path": "filament/Acme PLA.json"
+  }
+ ]
+}

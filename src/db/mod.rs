@@ -6,6 +6,7 @@ pub mod prefs;
 pub mod presets;
 pub mod printers;
 pub mod sessions;
+pub mod slicer;
 pub mod totp;
 pub mod users;
 

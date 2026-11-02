@@ -1,0 +1,10 @@
+{
+ "type": "filament",
+ "name": "Generic PLA @System",
+ "inherits": "fdm_filament_pla",
+ "from": "system",
+ "instantiation": "true",
+ "filament_vendor": [
+  "Generic"
+ ]
+}

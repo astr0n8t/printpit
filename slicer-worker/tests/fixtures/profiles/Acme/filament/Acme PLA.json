@@ -1,0 +1,13 @@
+{
+ "type": "filament",
+ "name": "Acme PLA",
+ "inherits": "Generic PLA @System",
+ "from": "system",
+ "instantiation": "true",
+ "filament_vendor": [
+  "Acme"
+ ],
+ "nozzle_temperature": [
+  "215"
+ ]
+}

@@ -639,11 +639,19 @@ async fn upload(State(mock): State<Mock>, mut form: Multipart) -> Response {
     } else {
         format!("{dir}/{name}")
     };
-    mock.fs
-        .lock()
-        .unwrap()
-        .files
-        .insert(path.clone(), (data, 1_800_000_000.0));
+    let mut fs = mock.fs.lock().unwrap();
+    // Like Moonraker, an upload creates the folders on its path.
+    let mut parent = String::new();
+    for seg in dir.split('/').filter(|s| !s.is_empty()) {
+        parent = if parent.is_empty() {
+            seg.to_string()
+        } else {
+            format!("{parent}/{seg}")
+        };
+        fs.dirs.insert(parent.clone());
+    }
+    fs.files.insert(path.clone(), (data, 1_800_000_000.0));
+    drop(fs);
     if print {
         *mock.print_state.lock().unwrap() = "printing".into();
     }

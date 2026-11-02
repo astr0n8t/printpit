@@ -169,6 +169,14 @@ impl Notifier {
         self.sender.is_some()
     }
 
+    /// Posts an event that isn't about a watched print (e.g. `slice_done`), if a webhook is
+    /// configured. Delivered in the background with the usual retries; never blocks the caller.
+    pub fn send(&self, body: Value) {
+        if let Some(sender) = self.sender.clone() {
+            tokio::spawn(async move { sender.deliver(body).await });
+        }
+    }
+
     /// Printers currently watched (for tests and diagnostics).
     pub async fn watching(&self) -> Vec<i64> {
         let mut ids: Vec<i64> = self.watches.lock().await.keys().copied().collect();

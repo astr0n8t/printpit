@@ -40,6 +40,8 @@ ignore = true
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# printpit dev-depends on the workspace's own slicer-worker by path (both are publish = false).
+allow-wildcard-paths = true
 deny = [
     { crate = "openssl-sys", reason = "TLS is rustls only" },
     { crate = "aws-lc-sys", reason = "C/CMake build, painful on musl; rustls uses ring" },
