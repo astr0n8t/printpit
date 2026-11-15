@@ -27,10 +27,10 @@
       <p class="dim">Stored encrypted and never shown again. Needed only if Moonraker doesn't trust printpit's address.</p>
     </div>
     <div class="field">
-      <label for="ca_cert">ca certificate <span class="dim">(optional, https only)</span></label>
+      <label for="ca_cert">tls certificate <span class="dim">(optional, https only)</span></label>
       <textarea id="ca_cert" name="ca_cert" rows="4" maxlength="65536" spellcheck="false" autocapitalize="none"
                 placeholder="-----BEGIN CERTIFICATE-----">{{ ca_cert }}</textarea>
-      <p class="dim">PEM certificate(s) of the CA that signed this printer's TLS certificate. When set, printpit trusts only these for this printer (Moonraker and webcam), instead of the system roots. The certificate must still match the host name or IP in the URL. Leave blank for the system roots.</p>
+      <p class="dim">The printer's own certificate if it is self-signed (e.g. <code>openssl s_client -connect host:443 -showcerts</code>, or the <code>.crt</code>/<code>.pem</code> file on the printer, never the <code>.key</code>), or the CA that signed it. PEM, one or more. A pinned certificate is trusted only when the printer presents exactly it; a CA is checked as usual, so the certificate must match the host name or IP in the URL. When set, printpit trusts only these for this printer (Moonraker and webcam), not the system roots. Leave blank for the system roots.</p>
     </div>
     <div class="field">
       <label for="webcam_override">webcam url <span class="dim">(optional)</span></label>
