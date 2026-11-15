@@ -295,9 +295,13 @@ code { font: inherit; color: var(--info); }
 .card .card-state { display: flex; align-items: center; gap: 2ch; margin-bottom: 0.4em; }
 .card .refresh { margin-left: auto; }
 .card .kv { margin-bottom: 0.6em; }
-.sensors { width: auto; margin-bottom: 0.4em; }
+.sensors { margin-bottom: 0.4em; }
 .sensors td { padding: 0 2ch 0 0; }
+/* The sparkline takes whatever width is left (max-width: 0 stops it from widening the table) and
+   clips its oldest samples on the left, so the newest stay visible on a narrow card. */
+.sensors td.spark { width: 100%; max-width: 0; overflow: hidden; }
 .spark { color: var(--accent); letter-spacing: -0.05em; }
+.spark > span { display: flex; justify-content: flex-end; }
 .fans { margin-bottom: 0.4em; }
 .controls .actions { margin: 0.4em 0 0; }
 .estop { font-weight: bold; }
