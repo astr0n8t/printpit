@@ -6,13 +6,19 @@
 //!   runs on every connection, *after* resolution, so DNS rebinding can't steer it elsewhere.
 //! * IP-literal hosts never reach the resolver, so [`Egress::check_url`] covers those.
 //! * No proxies (env proxies would resolve names out of our sight) and no redirects.
+//! * A printer can have its own CA ([`parse_ca`]). It gets a client built the same way but trusting
+//!   only those roots, cached by the PEM's hash so connections are still pooled.
 
+use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use ipnet::IpNet;
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
+use rustls::pki_types::CertificateDer;
+use rustls::pki_types::pem::{self, SectionKind};
+use sha2::{Digest, Sha256};
 use url::{Host, Url};
 
 use super::MoonrakerError;
@@ -25,10 +31,16 @@ pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 #[error("printer address is outside PRINTPIT_PRINTER_CIDRS")]
 pub struct Blocked;
 
+/// Most distinct CAs kept with a built client; past this the cache starts over (edits leave
+/// stale entries behind, and a client is cheap to rebuild).
+const MAX_CA_CLIENTS: usize = 32;
+
 #[derive(Clone)]
 pub struct Egress {
     client: reqwest::Client,
     allow: Arc<Vec<IpNet>>,
+    bind: Option<IpAddr>,
+    ca_clients: Arc<Mutex<HashMap<[u8; 32], reqwest::Client>>>,
 }
 
 impl Egress {
@@ -36,19 +48,46 @@ impl Egress {
         // reqwest is built without a bundled crypto provider; use rustls' pure-Rust `ring`.
         let _ = rustls::crypto::ring::default_provider().install_default();
         let allow = Arc::new(config.printer_cidrs.clone());
-        let client = reqwest::Client::builder()
-            .user_agent(concat!("printpit/", env!("CARGO_PKG_VERSION")))
-            .connect_timeout(CONNECT_TIMEOUT)
-            .no_proxy()
-            .redirect(reqwest::redirect::Policy::none())
-            .local_address(config.egress_bind)
-            .dns_resolver(AllowlistResolver { allow: allow.clone() })
-            .build()?;
-        Ok(Self { client, allow })
+        let client = builder(&allow, config.egress_bind).build()?;
+        Ok(Self {
+            client,
+            allow,
+            bind: config.egress_bind,
+            ca_clients: Arc::default(),
+        })
     }
 
     pub fn client(&self) -> &reqwest::Client {
         &self.client
+    }
+
+    /// The egress client for a printer: the shared one, or, when the printer has its own CA, one
+    /// that trusts only that CA (same resolver, bind address, timeouts and redirect policy).
+    pub fn client_for(&self, ca_pem: Option<&str>) -> Result<reqwest::Client, MoonrakerError> {
+        let Some(pem) = ca_pem.filter(|p| !p.trim().is_empty()) else {
+            return Ok(self.client.clone());
+        };
+        let hash: [u8; 32] = Sha256::digest(pem.as_bytes()).into();
+        let mut cache = self.ca_clients.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(client) = cache.get(&hash) {
+            return Ok(client.clone());
+        }
+        let bad = |e: CaError| MoonrakerError::Config(format!("the printer's CA certificate: {e}"));
+        let certs = parse_ca(pem).map_err(bad)?;
+        let roots = certs
+            .iter()
+            .map(|der| reqwest::Certificate::from_der(der))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| bad(CaError::Invalid))?;
+        let client = builder(&self.allow, self.bind)
+            .tls_certs_only(roots)
+            .build()
+            .map_err(|_| bad(CaError::Invalid))?;
+        if cache.len() >= MAX_CA_CLIENTS {
+            cache.clear();
+        }
+        cache.insert(hash, client.clone());
+        Ok(client)
     }
 
     pub fn is_allowed(&self, ip: IpAddr) -> bool {
@@ -84,6 +123,82 @@ impl Egress {
             Err(_) => Ok(()),
         }
     }
+}
+
+fn builder(allow: &Arc<Vec<IpNet>>, bind: Option<IpAddr>) -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
+        .user_agent(concat!("printpit/", env!("CARGO_PKG_VERSION")))
+        .connect_timeout(CONNECT_TIMEOUT)
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .local_address(bind)
+        .dns_resolver(AllowlistResolver { allow: allow.clone() })
+}
+
+/// Largest CA bundle accepted (a few certificates is all anyone needs).
+pub const MAX_CA_BYTES: usize = 64 * 1024;
+const MAX_CA_CERTS: usize = 16;
+
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+pub enum CaError {
+    #[error("paste one or more PEM certificates (-----BEGIN CERTIFICATE-----).")]
+    NoCertificate,
+    #[error("that contains a private key. Paste only the CA certificate, and treat that key as leaked.")]
+    PrivateKey,
+    #[error("only PEM certificates are accepted (no keys, CSRs or CRLs).")]
+    OtherSection,
+    #[error("it isn't valid PEM, or a certificate in it can't be read.")]
+    Invalid,
+    #[error("it's too large (at most {MAX_CA_CERTS} certificates, 64 KB).")]
+    TooLarge,
+}
+
+/// Parses and checks a pasted CA bundle: PEM certificates only, each usable as a trust anchor.
+/// Text outside PEM blocks (e.g. `openssl x509 -text` output) is ignored, but any other PEM
+/// section is refused, private keys loudly.
+pub fn parse_ca(pem_text: &str) -> Result<Vec<CertificateDer<'static>>, CaError> {
+    if pem_text.len() > MAX_CA_BYTES {
+        return Err(CaError::TooLarge);
+    }
+    let mut rd = pem_text.as_bytes();
+    let mut certs = Vec::new();
+    loop {
+        match pem::from_buf(&mut rd) {
+            Ok(None) => break,
+            Ok(Some((SectionKind::Certificate, der))) => certs.push(CertificateDer::from(der)),
+            Ok(Some((
+                SectionKind::PrivateKey | SectionKind::RsaPrivateKey | SectionKind::EcPrivateKey,
+                _,
+            ))) => {
+                return Err(CaError::PrivateKey);
+            }
+            Ok(Some(_)) => return Err(CaError::OtherSection),
+            // A key with a label rustls doesn't know (e.g. ENCRYPTED PRIVATE KEY) lands here.
+            Err(_) if pem_text.contains("PRIVATE KEY-----") => return Err(CaError::PrivateKey),
+            Err(_) => return Err(CaError::Invalid),
+        }
+        if certs.len() > MAX_CA_CERTS {
+            return Err(CaError::TooLarge);
+        }
+    }
+    if pem_text.contains("PRIVATE KEY-----") {
+        return Err(CaError::PrivateKey);
+    }
+    if certs.is_empty() {
+        return Err(CaError::NoCertificate);
+    }
+    let mut store = rustls::RootCertStore::empty();
+    for der in &certs {
+        store.add(der.clone()).map_err(|_| CaError::Invalid)?;
+    }
+    Ok(certs)
+}
+
+/// The bundle as stored: trimmed, Unix newlines, `None` when empty.
+pub fn normalise_ca(input: &str) -> Option<String> {
+    let text = input.replace("\r\n", "\n").replace('\r', "\n");
+    let text = text.trim();
+    (!text.is_empty()).then(|| format!("{text}\n"))
 }
 
 fn allowed(allow: &[IpNet], ip: IpAddr) -> bool {
@@ -176,6 +291,50 @@ mod tests {
         })
         .unwrap();
         Egress::new(&config).unwrap()
+    }
+
+    const CA: &str = include_str!("../../tests/fixtures/tls/ca.pem");
+    const OTHER_CA: &str = include_str!("../../tests/fixtures/tls/other_ca.pem");
+
+    #[test]
+    fn ca_bundles_are_checked() {
+        assert_eq!(parse_ca(CA).unwrap().len(), 1);
+        assert_eq!(parse_ca(&format!("{CA}{OTHER_CA}")).unwrap().len(), 2);
+        // Text around the blocks (`openssl x509 -text` output) is fine.
+        assert_eq!(parse_ca(&format!("Subject: CN=x\n{CA}")).unwrap().len(), 1);
+        assert_eq!(parse_ca(""), Err(CaError::NoCertificate));
+        assert_eq!(parse_ca("hello"), Err(CaError::NoCertificate));
+        let key = "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIA==\n-----END PRIVATE KEY-----\n";
+        assert_eq!(parse_ca(&format!("{CA}{key}")), Err(CaError::PrivateKey));
+        let enc = "-----BEGIN ENCRYPTED PRIVATE KEY-----\nAAAA\n-----END ENCRYPTED PRIVATE KEY-----\n";
+        assert_eq!(parse_ca(enc), Err(CaError::PrivateKey));
+        let garbage = "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n";
+        assert_eq!(parse_ca(garbage), Err(CaError::Invalid));
+        assert_eq!(parse_ca(&CA.repeat(17)), Err(CaError::TooLarge));
+        assert_eq!(parse_ca(&"x".repeat(MAX_CA_BYTES + 1)), Err(CaError::TooLarge));
+    }
+
+    #[test]
+    fn ca_text_is_normalised() {
+        assert_eq!(normalise_ca("  \r\n "), None);
+        assert_eq!(normalise_ca("\r\na\r\nb\r\n\r\n").as_deref(), Some("a\nb\n"));
+    }
+
+    #[test]
+    fn ca_clients_are_cached_per_bundle() {
+        let e = egress("10.0.0.0/8");
+        e.client_for(None).unwrap();
+        e.client_for(Some("  ")).unwrap();
+        assert!(
+            e.ca_clients.lock().unwrap().is_empty(),
+            "no CA uses the shared client"
+        );
+        e.client_for(Some(CA)).unwrap();
+        e.client_for(Some(CA)).unwrap();
+        e.client_for(Some(OTHER_CA)).unwrap();
+        assert_eq!(e.ca_clients.lock().unwrap().len(), 2);
+        let err = e.client_for(Some("nope")).unwrap_err();
+        assert!(matches!(err, MoonrakerError::Config(_)), "{err:?}");
     }
 
     #[test]

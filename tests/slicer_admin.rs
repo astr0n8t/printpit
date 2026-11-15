@@ -24,6 +24,7 @@ async fn printer(app: &TestApp, name: &str) -> i64 {
             webcam_transform: None,
             enabled: true,
             notify: false,
+            ca_cert: None,
         },
     )
     .await

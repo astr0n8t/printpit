@@ -256,3 +256,12 @@ Same rules as M8: new protected routes go into `PROTECTED_GET`/`PROTECTED_POST`,
 - [x] `release.yml`/CI: build and push `printpit-slicer` (arches per the spike); `cargo deny` covers the workspace. Ran `cargo deny --workspace check` once locally: only failure was the path dev-dependency (fixed with `allow-wildcard-paths`); licences and advisories passed. Re-checked by CI's deny job
 - [x] Docs: README "Slicing" section (setup, importing your Orca profiles, phone workflow, running the worker on another host), config table, PLAN §9/§10/§11 updated from "planned", CLAUDE.md rule 2 note (background upload after a slice is user-initiated, not polling) + decision log
 - [ ] Cancel during the upload stage: test it with a mock Moonraker upload that can be stalled
+
+## Extras
+
+### Per-printer custom CA (2026-11-15)
+- [x] Migration `0008`: `printers.ca_cert TEXT NULL` (PEM)
+- [x] `net::parse_ca` (certificates only, each a valid trust anchor; private keys refused and not echoed back; ≤16 certs, 64 KB) and `Egress::client_for`: a client trusting only that CA, built like the shared one (allowlist resolver, bind, no proxy, no redirects), cached by PEM hash
+- [x] Printer form textarea, `CA` badge in the list, audit `ca=set|kept|replaced|cleared|none` (never the PEM)
+- [x] `tests/printer_ca.rs`: mock Moonraker behind a TLS front (fixtures in `tests/fixtures/tls/`): no CA and wrong CA fail, right CA works for HTTP and the WebSocket, by IP and by name
+- [ ] Optional: "insecure, skip verification" or pin a self-signed leaf cert (webpki refuses a `CA:TRUE` cert as the server cert)
