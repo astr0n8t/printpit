@@ -12,6 +12,12 @@ ignore = [
     # askama's template macro to read an optional askama.toml, which printpit doesn't have;
     # nothing from it ends up in the binary. Revisit when askama drops it.
     { id = "RUSTSEC-2026-0374", reason = "compile-time only, via askama_derive" },
+    # Bundled SQLite < 3.54 can return uninitialised page-cache memory when it opens a database
+    # with a crafted -wal of a different page size. printpit opens only its own printpit.db
+    # (0600, in PRINTPIT_DATA_DIR, -wal/-shm forced to 0600 too); anyone who can write that pair
+    # already owns the data. The fix (libsqlite3-sys >= 0.39) isn't reachable: sqlx-sqlite 0.9.0,
+    # the latest, requires libsqlite3-sys < 0.38. Remove when sqlx allows it.
+    { id = "RUSTSEC-2026-0459", reason = "only printpit's own 0600 DB is opened; fix blocked by sqlx's libsqlite3-sys < 0.38" },
 ]
 
 [licenses]
