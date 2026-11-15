@@ -29,6 +29,7 @@ async fn setup() -> (TestApp, Client, String, MockMoonraker, i64) {
             webcam_transform: None,
             enabled: true,
             notify: false,
+            ca_cert: None,
         },
     )
     .await

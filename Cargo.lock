@@ -1612,6 +1612,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
+ "tokio-rustls",
  "tokio-stream",
  "tokio-tungstenite 0.30.0",
  "tokio-util",

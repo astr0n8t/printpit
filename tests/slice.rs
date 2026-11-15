@@ -53,6 +53,7 @@ async fn setup_with(extra: &[(&str, &str)]) -> S {
             webcam_transform: None,
             enabled: true,
             notify: false,
+            ca_cert: None,
         },
     )
     .await
@@ -632,6 +633,7 @@ async fn interrupted_jobs_fail_on_restart() {
             webcam_transform: None,
             enabled: true,
             notify: false,
+            ca_cert: None,
         },
     )
     .await

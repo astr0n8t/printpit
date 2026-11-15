@@ -91,6 +91,7 @@ async fn setup(webhook: Option<&str>, notify: bool) -> (TestApp, Client, MockMoo
             webcam_transform: None,
             enabled: true,
             notify,
+            ca_cert: None,
         },
     )
     .await

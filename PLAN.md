@@ -289,7 +289,8 @@ Every `/ui/*` route returns a partial when `HX-Request` is present, or the full 
 users(id, username UNIQUE, password_hash, role, created_at, updated_at, disabled)
 sessions(id_hash PK, user_id FK, csrf_token, created_at, last_seen_at, expires_at, user_agent, ip)
 printers(id, name UNIQUE NOCASE, base_url, api_key_enc BLOB NULL /* version||nonce||ciphertext */,
-         webcam_override NULL, enabled, sort_order, created_at, updated_at)
+         webcam_override NULL, enabled, sort_order, created_at, updated_at,
+         ca_cert TEXT NULL /* PEM; when set, the only trust roots for this printer (0008) */)
 user_prefs(user_id PK, selected_printer_id, theme, auto_refresh BOOL DEFAULT 1)
 audit_log(id, user_id, printer_id NULL, action, detail_json, created_at)
 -- failed-login counters are kept in memory (auth/ratelimit.rs), not in the DB

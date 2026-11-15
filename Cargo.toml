@@ -56,6 +56,8 @@ slicer-worker = { path = "slicer-worker" }
 axum = { version = "0.8.9", features = ["ws"] }
 http-body-util = "0.1.5"
 tempfile = "3.27.0"
+# TLS front for the mock Moonraker in tests/printer_ca.rs (ring via rustls; no aws-lc).
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["tls12"] }
 tower = { version = "0.5.3", features = ["util"] }
 
 [profile.release]

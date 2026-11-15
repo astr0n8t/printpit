@@ -16,7 +16,7 @@ use crate::db::printers::{self, API_KEY_CONTEXT, KeyChange, NewPrinter, Printer}
 use crate::db::{audit, presets};
 use crate::error::AppError;
 use crate::moonraker::MoonrakerError;
-use crate::moonraker::net::{base_string, parse_base_url};
+use crate::moonraker::net::{base_string, normalise_ca, parse_base_url, parse_ca};
 use crate::moonraker::webcam::Transform;
 use crate::state::AppState;
 use crate::web::layout::{HxRequest, Tab, page};
@@ -33,6 +33,7 @@ struct Row {
     key_class: &'static str,
     enabled: bool,
     notify: bool,
+    custom_ca: bool,
 }
 
 struct PresetRow {
@@ -69,6 +70,7 @@ struct FormTemplate {
     notify_available: bool,
     key_set: bool,
     key_dropped: bool,
+    ca_cert: String,
     error: Option<String>,
 }
 
@@ -98,6 +100,8 @@ pub struct PrinterForm {
     enabled: Option<String>,
     #[serde(default)]
     notify: Option<String>,
+    #[serde(default)]
+    ca_cert: String,
 }
 
 struct Valid {
@@ -108,6 +112,7 @@ struct Valid {
     api_key: Option<String>,
     enabled: bool,
     notify: bool,
+    ca_cert: Option<String>,
 }
 
 fn row(state: &AppState, p: Printer) -> Row {
@@ -124,6 +129,7 @@ fn row(state: &AppState, p: Printer) -> Row {
         key_class,
         enabled: p.enabled,
         notify: p.notify && state.notifier.enabled(),
+        custom_ca: p.ca_cert.is_some(),
     }
 }
 
@@ -224,6 +230,7 @@ pub async fn new_form(
         notify_available: state.notifier.enabled(),
         key_set: false,
         key_dropped: false,
+        ca_cert: String::new(),
         error: None,
     }
     .render()?;
@@ -262,6 +269,7 @@ pub(crate) async fn edit_page(
         notify_available: state.notifier.enabled(),
         key_set: p.api_key_enc.is_some(),
         key_dropped: false,
+        ca_cert: p.ca_cert.unwrap_or_default(),
         error: None,
     }
     .render()?;
@@ -321,6 +329,11 @@ async fn validate(state: &AppState, f: &PrinterForm, except: Option<i64>) -> Res
         );
     }
 
+    let ca_cert = normalise_ca(&f.ca_cert);
+    if let Some(pem) = &ca_cert {
+        parse_ca(pem).map_err(|e| format!("CA certificate: {e}"))?;
+    }
+
     Ok(Valid {
         name: name.to_string(),
         base_url: base_string(&url),
@@ -329,7 +342,19 @@ async fn validate(state: &AppState, f: &PrinterForm, except: Option<i64>) -> Res
         api_key: (!key.is_empty()).then(|| key.to_string()),
         enabled: f.enabled.is_some(),
         notify: f.notify.is_some(),
+        ca_cert,
     })
+}
+
+/// Audit wording for the CA field (never the certificate itself: its names are printer addresses).
+fn ca_note(old: Option<&str>, new: Option<&str>) -> &'static str {
+    match (old, new) {
+        (None, None) => "none",
+        (Some(_), None) => "cleared",
+        (None, Some(_)) => "set",
+        (Some(a), Some(b)) if a == b => "kept",
+        (Some(_), Some(_)) => "replaced",
+    }
 }
 
 fn form_error(
@@ -353,6 +378,12 @@ fn form_error(
         notify_available: state.notifier.enabled(),
         key_set,
         key_dropped: !f.api_key.trim().is_empty(),
+        // A pasted private key isn't echoed back into the page.
+        ca_cert: if f.ca_cert.contains("PRIVATE KEY") {
+            String::new()
+        } else {
+            f.ca_cert.clone()
+        },
         error: Some(error),
     }
     .render()?;
@@ -387,6 +418,7 @@ pub async fn create(
             enabled: v.enabled,
             // Only settable while a webhook is configured.
             notify: v.notify && state.notifier.enabled(),
+            ca_cert: v.ca_cert.as_deref(),
         },
     )
     .await?;
@@ -397,7 +429,11 @@ pub async fn create(
             user_id: Some(user.id),
             printer_id: Some(id),
             action: "printer_create",
-            detail: Some(format!("name={}", v.name)),
+            detail: Some(format!(
+                "name={} ca={}",
+                v.name,
+                if v.ca_cert.is_some() { "set" } else { "none" }
+            )),
             ip: ip.to_string_opt(),
         },
     )
@@ -448,6 +484,7 @@ pub async fn update(
             } else {
                 existing.notify
             },
+            ca_cert: v.ca_cert.as_deref(),
         },
         key,
     )
@@ -459,8 +496,9 @@ pub async fn update(
             printer_id: Some(id),
             action: "printer_update",
             detail: Some(format!(
-                "name={} api_key={key_note} notify={}",
+                "name={} api_key={key_note} ca={} notify={}",
                 v.name,
+                ca_note(existing.ca_cert.as_deref(), v.ca_cert.as_deref()),
                 if v.notify { "on" } else { "off" }
             )),
             ip: ip.to_string_opt(),
