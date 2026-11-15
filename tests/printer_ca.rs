@@ -1,6 +1,8 @@
-//! Per-printer custom CA: form validation, storage, and that https:// printers are trusted only
-//! through their own CA. The mock Moonraker is put behind a TLS front whose certificate is signed
-//! by `tests/fixtures/tls/ca.pem` (SANs 127.0.0.1 and localhost, valid for 100 years).
+//! Per-printer certificates: form validation, storage, and that https:// printers are trusted only
+//! through their own certificates, pinned or as a CA. The mock Moonraker is put behind a TLS front
+//! (fixtures in `tests/fixtures/tls/`, valid for 100 years): `server.pem` is signed by `ca.pem`
+//! (SANs 127.0.0.1 and localhost); `selfsigned.pem` is what printers usually have: self-signed,
+//! `CA:TRUE`, CN=mainsail and no SANs, so it matches neither host name.
 
 mod common;
 
@@ -20,19 +22,22 @@ const CA: &str = include_str!("fixtures/tls/ca.pem");
 const OTHER_CA: &str = include_str!("fixtures/tls/other_ca.pem");
 const SERVER_CERT: &str = include_str!("fixtures/tls/server.pem");
 const SERVER_KEY: &str = include_str!("fixtures/tls/server.key");
+const SELF_SIGNED: &str = include_str!("fixtures/tls/selfsigned.pem");
+const SELF_SIGNED_KEY: &str = include_str!("fixtures/tls/selfsigned.key");
 
 const LOCAL: &[(&str, &str)] = &[
     ("PRINTPIT_SECURE_COOKIES", "false"),
     ("PRINTPIT_PRINTER_CIDRS", "127.0.0.0/8"),
 ];
 
-/// Terminates TLS on a free port and forwards the plaintext to `backend`. Returns the port.
-async fn tls_front(backend: u16) -> u16 {
+/// Terminates TLS on a free port with `cert`/`key` and forwards the plaintext to `backend`.
+/// Returns the port.
+async fn tls_front(backend: u16, cert: &str, key: &str) -> u16 {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
-    let certs = CertificateDer::pem_slice_iter(SERVER_CERT.as_bytes())
+    let certs = CertificateDer::pem_slice_iter(cert.as_bytes())
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    let key = PrivateKeyDer::from_pem_slice(SERVER_KEY.as_bytes()).unwrap();
+    let key = PrivateKeyDer::from_pem_slice(key.as_bytes()).unwrap();
     let config = rustls::ServerConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .unwrap()
@@ -60,10 +65,14 @@ async fn tls_front(backend: u16) -> u16 {
 }
 
 async fn setup() -> (TestApp, Client, String, MockMoonraker, u16) {
+    setup_with(SERVER_CERT, SERVER_KEY).await
+}
+
+async fn setup_with(cert: &str, key: &str) -> (TestApp, Client, String, MockMoonraker, u16) {
     let (app, mut c) = TestApp::with_admin_env(LOCAL).await;
     let csrf = c.session_csrf().await;
     let mock = MockMoonraker::start().await;
-    let port = tls_front(mock.port).await;
+    let port = tls_front(mock.port, cert, key).await;
     (app, c, csrf, mock, port)
 }
 
@@ -149,6 +158,51 @@ async fn https_printer_is_trusted_only_through_its_own_ca() {
 }
 
 #[tokio::test]
+async fn self_signed_printer_certificate_is_pinned() {
+    let (app, mut c, csrf, _mock, port) = setup_with(SELF_SIGNED, SELF_SIGNED_KEY).await;
+    for host in ["127.0.0.1", "localhost"] {
+        let url = format!("https://{host}:{port}");
+        add(&mut c, &csrf, &url, "").await;
+        let id = only_printer(&app).await.id;
+        let body = test_connection(&mut c, &csrf, id).await;
+        assert!(
+            body.contains("OFFLINE") && body.contains("certificate"),
+            "{host}: {body}"
+        );
+
+        // Another certificate (here a CA that didn't sign it) doesn't help.
+        edit(&mut c, &csrf, id, &url, CA).await;
+        let body = test_connection(&mut c, &csrf, id).await;
+        assert!(body.contains("OFFLINE"), "{host}: {body}");
+
+        // The printer's own certificate does, although it is CA:TRUE and names neither host.
+        edit(&mut c, &csrf, id, &url, SELF_SIGNED).await;
+        let body = test_connection(&mut c, &csrf, id).await;
+        assert!(body.contains("READY"), "{host}: {body}");
+        let client = app.state.printer_client(&only_printer(&app).await).unwrap();
+        client
+            .websocket()
+            .await
+            .expect("websocket with a pinned certificate");
+
+        // Next to unrelated certificates in the same bundle, too.
+        edit(&mut c, &csrf, id, &url, &format!("{OTHER_CA}{SELF_SIGNED}")).await;
+        assert!(test_connection(&mut c, &csrf, id).await.contains("READY"));
+
+        printers::delete(&app.state.db, id).await.unwrap();
+        app.state.printer_changed(id);
+    }
+}
+
+#[tokio::test]
+async fn ca_signed_leaf_can_be_pinned_too() {
+    let (app, mut c, csrf, _mock, port) = setup().await;
+    add(&mut c, &csrf, &format!("https://127.0.0.1:{port}"), SERVER_CERT).await;
+    let id = only_printer(&app).await.id;
+    assert!(test_connection(&mut c, &csrf, id).await.contains("READY"));
+}
+
+#[tokio::test]
 async fn ca_is_stored_shown_and_cleared() {
     let (app, mut c, csrf, _mock, port) = setup().await;
     let url = format!("https://127.0.0.1:{port}");
@@ -159,13 +213,13 @@ async fn ca_is_stored_shown_and_cleared() {
     assert_eq!(p.ca_cert.as_deref(), Some(CA));
 
     let list = c.get("/ui/printers").await.body;
-    assert!(list.contains(">CA</span>"), "{list}");
+    assert!(list.contains(">CERT</span>"), "{list}");
     let form = c.get(&format!("/ui/printers/{}", p.id)).await.body;
     assert!(form.contains("-----BEGIN CERTIFICATE-----"), "{form}");
 
     edit(&mut c, &csrf, p.id, &url, "   ").await;
     assert_eq!(only_printer(&app).await.ca_cert, None);
-    assert!(!c.get("/ui/printers").await.body.contains(">CA</span>"));
+    assert!(!c.get("/ui/printers").await.body.contains(">CERT</span>"));
 
     let details: Vec<String> =
         sqlx::query_scalar("SELECT detail FROM audit_log WHERE action LIKE 'printer_%' ORDER BY id")

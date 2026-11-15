@@ -331,7 +331,7 @@ async fn validate(state: &AppState, f: &PrinterForm, except: Option<i64>) -> Res
 
     let ca_cert = normalise_ca(&f.ca_cert);
     if let Some(pem) = &ca_cert {
-        parse_ca(pem).map_err(|e| format!("CA certificate: {e}"))?;
+        parse_ca(pem).map_err(|e| format!("TLS certificate: {e}"))?;
     }
 
     Ok(Valid {

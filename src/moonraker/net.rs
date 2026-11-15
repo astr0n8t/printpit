@@ -6,8 +6,9 @@
 //!   runs on every connection, *after* resolution, so DNS rebinding can't steer it elsewhere.
 //! * IP-literal hosts never reach the resolver, so [`Egress::check_url`] covers those.
 //! * No proxies (env proxies would resolve names out of our sight) and no redirects.
-//! * A printer can have its own CA ([`parse_ca`]). It gets a client built the same way but trusting
-//!   only those roots, cached by the PEM's hash so connections are still pooled.
+//! * A printer can have its own certificates ([`parse_ca`]): its self-signed certificate (pinned)
+//!   or a CA. It gets a client built the same way but trusting only those ([`super::tls`]),
+//!   cached by the PEM's hash so connections are still pooled.
 
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
@@ -61,8 +62,9 @@ impl Egress {
         &self.client
     }
 
-    /// The egress client for a printer: the shared one, or, when the printer has its own CA, one
-    /// that trusts only that CA (same resolver, bind address, timeouts and redirect policy).
+    /// The egress client for a printer: the shared one, or, when the printer has its own
+    /// certificates, one that trusts only those, pinned or as CAs ([`super::tls`]), with the same
+    /// resolver, bind address, timeouts and redirect policy.
     pub fn client_for(&self, ca_pem: Option<&str>) -> Result<reqwest::Client, MoonrakerError> {
         let Some(pem) = ca_pem.filter(|p| !p.trim().is_empty()) else {
             return Ok(self.client.clone());
@@ -72,15 +74,13 @@ impl Egress {
         if let Some(client) = cache.get(&hash) {
             return Ok(client.clone());
         }
-        let bad = |e: CaError| MoonrakerError::Config(format!("the printer's CA certificate: {e}"));
+        let bad = |e: CaError| MoonrakerError::Config(format!("the printer's certificate: {e}"));
         let certs = parse_ca(pem).map_err(bad)?;
-        let roots = certs
-            .iter()
-            .map(|der| reqwest::Certificate::from_der(der))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| bad(CaError::Invalid))?;
+        let tls = super::tls::client_config(certs).map_err(|_| bad(CaError::Invalid))?;
+        // reqwest takes a preconfigured rustls config as `dyn Any`; a rustls version mismatch
+        // would fail here at build time (and in tests/printer_ca.rs), not silently.
         let client = builder(&self.allow, self.bind)
-            .tls_certs_only(roots)
+            .tls_backend_preconfigured(tls)
             .build()
             .map_err(|_| bad(CaError::Invalid))?;
         if cache.len() >= MAX_CA_CLIENTS {
@@ -143,7 +143,7 @@ const MAX_CA_CERTS: usize = 16;
 pub enum CaError {
     #[error("paste one or more PEM certificates (-----BEGIN CERTIFICATE-----).")]
     NoCertificate,
-    #[error("that contains a private key. Paste only the CA certificate, and treat that key as leaked.")]
+    #[error("that contains a private key. Paste only the certificate, and treat that key as leaked.")]
     PrivateKey,
     #[error("only PEM certificates are accepted (no keys, CSRs or CRLs).")]
     OtherSection,
@@ -153,7 +153,8 @@ pub enum CaError {
     TooLarge,
 }
 
-/// Parses and checks a pasted CA bundle: PEM certificates only, each usable as a trust anchor.
+/// Parses and checks a pasted bundle (the printer's own certificate and/or CAs): PEM certificates
+/// only, each one parseable.
 /// Text outside PEM blocks (e.g. `openssl x509 -text` output) is ignored, but any other PEM
 /// section is refused, private keys loudly.
 pub fn parse_ca(pem_text: &str) -> Result<Vec<CertificateDer<'static>>, CaError> {

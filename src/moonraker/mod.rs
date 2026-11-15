@@ -8,6 +8,7 @@ pub mod hub;
 pub mod net;
 pub mod rpc;
 pub mod status;
+pub mod tls;
 pub mod types;
 pub mod webcam;
 
