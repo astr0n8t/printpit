@@ -266,3 +266,4 @@ Same rules as M8: new protected routes go into `PROTECTED_GET`/`PROTECTED_POST`,
 - [x] `tests/printer_ca.rs`: mock Moonraker behind a TLS front (fixtures in `tests/fixtures/tls/`): no CA and wrong CA fail, right CA works for HTTP and the WebSocket, by IP and by name
 - [ ] Drop the `RUSTSEC-2026-0459` ignore in `deny.toml` once sqlx allows `libsqlite3-sys` >= 0.39 (bundled SQLite 3.54), then `cargo update -p libsqlite3-sys`
 - [x] Pin a self-signed printer certificate (2026-11-15): an exact match of a pasted cert is trusted (`moonraker::tls`), so `CA:TRUE` and host-name-less self-signed certs work; the field is now "tls certificate" with a `CERT` badge. No "skip verification" mode on purpose: pinning covers it
+- [x] Pins work with v1 certificates (TLS 1.2 and 1.3); RSA < 2048 and P-521 keys are refused at save time with a clear message; a mismatch names the fingerprint the printer sent (2026-11-16)

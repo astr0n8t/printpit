@@ -1601,6 +1601,7 @@ dependencies = [
  "reqwest",
  "rust-embed",
  "rustls",
+ "rustls-webpki",
  "serde",
  "serde_json",
  "serde_urlencoded",

@@ -151,6 +151,9 @@ pub enum CaError {
     Invalid,
     #[error("it's too large (at most {MAX_CA_CERTS} certificates, 64 KB).")]
     TooLarge,
+    /// The key can't be verified with ring (RSA < 2048 bits, P-521, …); see `tls::check_key`.
+    #[error("{0}")]
+    UnusableKey(String),
 }
 
 /// Parses and checks a pasted bundle (the printer's own certificate and/or CAs): PEM certificates
@@ -188,9 +191,14 @@ pub fn parse_ca(pem_text: &str) -> Result<Vec<CertificateDer<'static>>, CaError>
     if certs.is_empty() {
         return Err(CaError::NoCertificate);
     }
-    let mut store = rustls::RootCertStore::empty();
     for der in &certs {
-        store.add(der.clone()).map_err(|_| CaError::Invalid)?;
+        super::tls::check_key(der).map_err(|why| {
+            if why == "it can't be read" {
+                CaError::Invalid
+            } else {
+                CaError::UnusableKey(why)
+            }
+        })?;
     }
     Ok(certs)
 }
