@@ -92,6 +92,7 @@ async fn setup(webhook: Option<&str>, notify: bool) -> (TestApp, Client, MockMoo
             enabled: true,
             notify,
             ca_cert: None,
+            tls_skip_verify: false,
         },
     )
     .await

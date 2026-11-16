@@ -33,6 +33,10 @@
       <p class="dim">The printer's own certificate if it is self-signed (e.g. <code>openssl s_client -connect host:443 -showcerts</code>, or the <code>.crt</code>/<code>.pem</code> file on the printer, never the <code>.key</code>), or the CA that signed it. PEM, one or more. A pinned certificate is trusted only when the printer presents exactly it; a CA is checked as usual, so the certificate must match the host name or IP in the URL. When set, printpit trusts only these for this printer (Moonraker and webcam), not the system roots. Leave blank for the system roots.</p>
     </div>
     <div class="field">
+      <label><input type="checkbox" name="tls_skip_verify"{% if tls_skip_verify %} checked{% endif %}>skip tls certificate verification</label>
+      <p class="warn">Insecure: printpit accepts any certificate this printer (or anyone pretending to be it) presents. The connection is still encrypted, but it isn't authenticated, so the API key could be captured. Prefer pasting the printer's certificate above. Any saved certificate is kept and used again when this is off.</p>
+    </div>
+    <div class="field">
       <label for="webcam_override">webcam url <span class="dim">(optional)</span></label>
       <input id="webcam_override" name="webcam_override" value="{{ webcam_override }}" placeholder="auto-detect from Moonraker" spellcheck="false" autocapitalize="none">
     </div>

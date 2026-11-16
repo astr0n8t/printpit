@@ -11,6 +11,8 @@ use std::sync::Arc;
 use axum::http::StatusCode;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls::server::{ClientHello, ResolvesServerCert};
+use rustls::sign::CertifiedKey;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::TlsAcceptor;
 
@@ -24,6 +26,9 @@ const SERVER_CERT: &str = include_str!("fixtures/tls/server.pem");
 const SERVER_KEY: &str = include_str!("fixtures/tls/server.key");
 const SELF_SIGNED: &str = include_str!("fixtures/tls/selfsigned.pem");
 const SELF_SIGNED_KEY: &str = include_str!("fixtures/tls/selfsigned.key");
+/// A version 1 certificate (`openssl x509 -req -signkey`, no extensions), as old guides make.
+const V1: &str = include_str!("fixtures/tls/v1.pem");
+const V1_KEY: &str = include_str!("fixtures/tls/v1.key");
 
 const LOCAL: &[(&str, &str)] = &[
     ("PRINTPIT_SECURE_COOKIES", "false"),
@@ -33,17 +38,29 @@ const LOCAL: &[(&str, &str)] = &[
 /// Terminates TLS on a free port with `cert`/`key` and forwards the plaintext to `backend`.
 /// Returns the port.
 async fn tls_front(backend: u16, cert: &str, key: &str) -> u16 {
+    tls_front_versions(backend, cert, key, rustls::DEFAULT_VERSIONS).await
+}
+
+/// [`tls_front`] limited to some TLS versions (TLS 1.2 checks signatures differently).
+async fn tls_front_versions(
+    backend: u16,
+    cert: &str,
+    key: &str,
+    versions: &[&'static rustls::SupportedProtocolVersion],
+) -> u16 {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let certs = CertificateDer::pem_slice_iter(cert.as_bytes())
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
     let key = PrivateKeyDer::from_pem_slice(key.as_bytes()).unwrap();
+    let signing_key = provider.key_provider.load_private_key(key).unwrap();
     let config = rustls::ServerConfig::builder_with_provider(provider)
-        .with_safe_default_protocol_versions()
+        .with_protocol_versions(versions)
         .unwrap()
         .with_no_client_auth()
-        .with_single_cert(certs, key)
-        .unwrap();
+        // A fixed resolver, not `with_single_cert`: that one refuses v1 certificates and
+        // mismatched keys, which these tests need to serve.
+        .with_cert_resolver(Arc::new(Fixed(Arc::new(CertifiedKey::new(certs, signing_key)))));
     let acceptor = TlsAcceptor::from(Arc::new(config));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -62,6 +79,15 @@ async fn tls_front(backend: u16, cert: &str, key: &str) -> u16 {
         }
     });
     port
+}
+
+#[derive(Debug)]
+struct Fixed(Arc<CertifiedKey>);
+
+impl ResolvesServerCert for Fixed {
+    fn resolve(&self, _: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
+        Some(self.0.clone())
+    }
 }
 
 async fn setup() -> (TestApp, Client, String, MockMoonraker, u16) {
@@ -170,10 +196,18 @@ async fn self_signed_printer_certificate_is_pinned() {
             "{host}: {body}"
         );
 
-        // Another certificate (here a CA that didn't sign it) doesn't help.
+        // Another certificate (here a CA that didn't sign it) doesn't help, and the error says
+        // which certificate the printer sent.
         edit(&mut c, &csrf, id, &url, CA).await;
         let body = test_connection(&mut c, &csrf, id).await;
-        assert!(body.contains("OFFLINE"), "{host}: {body}");
+        let sent = CertificateDer::from_pem_slice(SELF_SIGNED.as_bytes()).unwrap();
+        assert!(
+            body.contains("OFFLINE")
+                && body.contains("isn&#39;t one of the saved ones")
+                && body.contains(&printpit::moonraker::tls::fingerprint(&sent))
+                && !body.contains("unexpected error"),
+            "{host}: {body}"
+        );
 
         // The printer's own certificate does, although it is CA:TRUE and names neither host.
         edit(&mut c, &csrf, id, &url, SELF_SIGNED).await;
@@ -192,6 +226,39 @@ async fn self_signed_printer_certificate_is_pinned() {
         printers::delete(&app.state.db, id).await.unwrap();
         app.state.printer_changed(id);
     }
+}
+
+#[tokio::test]
+async fn version_1_certificate_is_pinned_over_tls12_and_tls13() {
+    let (app, mut c) = TestApp::with_admin_env(LOCAL).await;
+    let csrf = c.session_csrf().await;
+    let mock = MockMoonraker::start().await;
+    for versions in [&[&rustls::version::TLS12][..], &[&rustls::version::TLS13][..]] {
+        let port = tls_front_versions(mock.port, V1, V1_KEY, versions).await;
+        let res = add(&mut c, &csrf, &format!("https://127.0.0.1:{port}"), V1).await;
+        assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+        let p = only_printer(&app).await;
+        let body = test_connection(&mut c, &csrf, p.id).await;
+        assert!(body.contains("READY"), "{versions:?}: {body}");
+        app.state
+            .printer_client(&p)
+            .unwrap()
+            .websocket()
+            .await
+            .expect("websocket with a pinned v1 certificate");
+        printers::delete(&app.state.db, p.id).await.unwrap();
+        app.state.printer_changed(p.id);
+    }
+}
+
+#[tokio::test]
+async fn pin_still_needs_the_matching_key() {
+    // The front presents the self-signed certificate but signs with another key: the handshake
+    // must fail even though the certificate bytes match the pin.
+    let (app, mut c, csrf, _mock, port) = setup_with(SELF_SIGNED, SERVER_KEY).await;
+    add(&mut c, &csrf, &format!("https://127.0.0.1:{port}"), SELF_SIGNED).await;
+    let body = test_connection(&mut c, &csrf, only_printer(&app).await.id).await;
+    assert!(body.contains("OFFLINE"), "{body}");
 }
 
 #[tokio::test]
@@ -226,7 +293,7 @@ async fn ca_is_stored_shown_and_cleared() {
             .fetch_all(&app.state.db)
             .await
             .unwrap();
-    assert_eq!(details[0], "name=Voron ca=set");
+    assert_eq!(details[0], "name=Voron ca=set verify=on");
     assert!(details[1].contains(" ca=cleared "), "{}", details[1]);
     assert!(details.iter().all(|d| !d.contains("BEGIN")));
 }
@@ -248,6 +315,8 @@ async fn bad_ca_input_is_rejected() {
             "-----BEGIN CERTIFICATE REQUEST-----\nAAAA\n-----END CERTIFICATE REQUEST-----\n",
             "only PEM certificates",
         ),
+        (include_str!("fixtures/tls/rsa1024.pem"), "RSA key is 1024 bits"),
+        (include_str!("fixtures/tls/p521.pem"), "ECDSA P-521 key"),
     ];
     for (input, msg) in cases {
         let res = add(&mut c, &csrf, &url, input).await;
@@ -256,4 +325,57 @@ async fn bad_ca_input_is_rejected() {
         assert!(!res.body.contains("PRIVATE KEY-----"), "key not echoed back");
     }
     assert!(printers::list(&app.state.db).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn skip_verify_accepts_any_certificate_and_is_flagged() {
+    let (app, mut c, csrf, _mock, port) = setup_with(SELF_SIGNED, SELF_SIGNED_KEY).await;
+    let url = format!("https://127.0.0.1:{port}");
+    // A wrong certificate saved, plus skip-verify: skip-verify wins.
+    let res = c
+        .post_hx(
+            "/printers",
+            &csrf,
+            &[
+                ("name", "Voron"),
+                ("base_url", &url),
+                ("enabled", "on"),
+                ("ca_cert", CA),
+                ("tls_skip_verify", "on"),
+            ],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let p = only_printer(&app).await;
+    assert!(p.tls_skip_verify);
+    assert!(test_connection(&mut c, &csrf, p.id).await.contains("READY"));
+    app.state
+        .printer_client(&p)
+        .unwrap()
+        .websocket()
+        .await
+        .expect("websocket without verification");
+
+    let list = c.get("/ui/printers").await.body;
+    assert!(
+        list.contains(">INSECURE</span>") && !list.contains(">CERT</span>"),
+        "{list}"
+    );
+    let form = c.get(&format!("/ui/printers/{}", p.id)).await.body;
+    assert!(form.contains(r#"name="tls_skip_verify" checked"#), "{form}");
+
+    // Off again: the saved certificate applies (and is the wrong one here).
+    edit(&mut c, &csrf, p.id, &url, CA).await;
+    assert!(!only_printer(&app).await.tls_skip_verify);
+    let body = test_connection(&mut c, &csrf, p.id).await;
+    assert!(body.contains("OFFLINE"), "{body}");
+    assert!(!c.get("/ui/printers").await.body.contains(">INSECURE</span>"));
+
+    let details: Vec<String> =
+        sqlx::query_scalar("SELECT detail FROM audit_log WHERE action LIKE 'printer_%' ORDER BY id")
+            .fetch_all(&app.state.db)
+            .await
+            .unwrap();
+    assert_eq!(details[0], "name=Voron ca=set verify=skipped");
+    assert!(details[1].contains(" verify=on "), "{}", details[1]);
 }

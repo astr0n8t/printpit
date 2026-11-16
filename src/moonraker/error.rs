@@ -62,6 +62,9 @@ impl MoonrakerError {
             }
             root = next;
         }
+        if let Some(msg) = tls_message(root) {
+            return Self::Offline(msg);
+        }
         if err.is_timeout() {
             Self::Offline("timed out".into())
         } else if err.is_decode() {
@@ -69,5 +72,19 @@ impl MoonrakerError {
         } else {
             Self::Offline(root.to_string())
         }
+    }
+}
+
+/// The text of a certificate check's own message (`rustls::Error::General`), without rustls'
+/// "unexpected error:" prefix. rustls errors arrive inside `io::Error`s.
+fn tls_message(err: &(dyn std::error::Error + 'static)) -> Option<String> {
+    let mut err = err;
+    // hyper and tokio-rustls each add an `io::Error` layer.
+    while let Some(inner) = err.downcast_ref::<std::io::Error>().and_then(|e| e.get_ref()) {
+        err = inner;
+    }
+    match err.downcast_ref::<rustls::Error>()? {
+        rustls::Error::General(msg) => Some(format!("TLS: {msg}")),
+        _ => None,
     }
 }

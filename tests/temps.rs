@@ -30,6 +30,7 @@ async fn setup() -> (TestApp, Client, String, MockMoonraker, i64) {
             enabled: true,
             notify: false,
             ca_cert: None,
+            tls_skip_verify: false,
         },
     )
     .await

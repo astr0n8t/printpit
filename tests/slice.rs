@@ -54,6 +54,7 @@ async fn setup_with(extra: &[(&str, &str)]) -> S {
             enabled: true,
             notify: false,
             ca_cert: None,
+            tls_skip_verify: false,
         },
     )
     .await
@@ -634,6 +635,7 @@ async fn interrupted_jobs_fail_on_restart() {
             enabled: true,
             notify: false,
             ca_cert: None,
+            tls_skip_verify: false,
         },
     )
     .await
