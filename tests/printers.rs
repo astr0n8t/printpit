@@ -347,6 +347,7 @@ async fn undecryptable_key_is_reported() {
             enabled: true,
             notify: false,
             ca_cert: None,
+            tls_skip_verify: false,
         },
     )
     .await
@@ -431,6 +432,7 @@ async fn egress_allowlist_enforced_at_connect_time() {
                 enabled: true,
                 notify: false,
                 ca_cert: None,
+                tls_skip_verify: false,
             },
         )
         .await

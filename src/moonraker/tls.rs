@@ -57,6 +57,64 @@ pub fn client_config(certs: Vec<CertificateDer<'static>>) -> Result<ClientConfig
         .with_no_client_auth())
 }
 
+/// A rustls client config that accepts any server certificate and skips the handshake signature
+/// check (`printers.tls_skip_verify`). The traffic is still encrypted, but anyone on the path can
+/// impersonate the printer. Skipping the signature check too is deliberate: it is what makes this
+/// work for keys ring can't verify (RSA < 2048, P-521), which is when people reach for it.
+pub fn insecure_config() -> Result<ClientConfig, Error> {
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let verifier = Arc::new(AcceptAny {
+        provider: provider.clone(),
+    });
+    Ok(ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()?
+        .dangerous()
+        .with_custom_certificate_verifier(verifier)
+        .with_no_client_auth())
+}
+
+#[derive(Debug)]
+struct AcceptAny {
+    provider: Arc<CryptoProvider>,
+}
+
+impl ServerCertVerifier for AcceptAny {
+    fn verify_server_cert(
+        &self,
+        _: &CertificateDer<'_>,
+        _: &[CertificateDer<'_>],
+        _: &ServerName<'_>,
+        _: &[u8],
+        _: UnixTime,
+    ) -> Result<ServerCertVerified, Error> {
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _: &[u8],
+        _: &CertificateDer<'_>,
+        _: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, Error> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _: &[u8],
+        _: &CertificateDer<'_>,
+        _: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, Error> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.provider
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
+
 /// Why a certificate's key can't be used, or `Ok` when ring can verify signatures made with it.
 pub fn check_key(cert: &CertificateDer<'_>) -> Result<(), String> {
     let anchor = webpki::anchor_from_trusted_cert(cert).map_err(|_| "it can't be read".to_string())?;

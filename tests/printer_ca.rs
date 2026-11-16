@@ -293,7 +293,7 @@ async fn ca_is_stored_shown_and_cleared() {
             .fetch_all(&app.state.db)
             .await
             .unwrap();
-    assert_eq!(details[0], "name=Voron ca=set");
+    assert_eq!(details[0], "name=Voron ca=set verify=on");
     assert!(details[1].contains(" ca=cleared "), "{}", details[1]);
     assert!(details.iter().all(|d| !d.contains("BEGIN")));
 }
@@ -325,4 +325,57 @@ async fn bad_ca_input_is_rejected() {
         assert!(!res.body.contains("PRIVATE KEY-----"), "key not echoed back");
     }
     assert!(printers::list(&app.state.db).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn skip_verify_accepts_any_certificate_and_is_flagged() {
+    let (app, mut c, csrf, _mock, port) = setup_with(SELF_SIGNED, SELF_SIGNED_KEY).await;
+    let url = format!("https://127.0.0.1:{port}");
+    // A wrong certificate saved, plus skip-verify: skip-verify wins.
+    let res = c
+        .post_hx(
+            "/printers",
+            &csrf,
+            &[
+                ("name", "Voron"),
+                ("base_url", &url),
+                ("enabled", "on"),
+                ("ca_cert", CA),
+                ("tls_skip_verify", "on"),
+            ],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let p = only_printer(&app).await;
+    assert!(p.tls_skip_verify);
+    assert!(test_connection(&mut c, &csrf, p.id).await.contains("READY"));
+    app.state
+        .printer_client(&p)
+        .unwrap()
+        .websocket()
+        .await
+        .expect("websocket without verification");
+
+    let list = c.get("/ui/printers").await.body;
+    assert!(
+        list.contains(">INSECURE</span>") && !list.contains(">CERT</span>"),
+        "{list}"
+    );
+    let form = c.get(&format!("/ui/printers/{}", p.id)).await.body;
+    assert!(form.contains(r#"name="tls_skip_verify" checked"#), "{form}");
+
+    // Off again: the saved certificate applies (and is the wrong one here).
+    edit(&mut c, &csrf, p.id, &url, CA).await;
+    assert!(!only_printer(&app).await.tls_skip_verify);
+    let body = test_connection(&mut c, &csrf, p.id).await;
+    assert!(body.contains("OFFLINE"), "{body}");
+    assert!(!c.get("/ui/printers").await.body.contains(">INSECURE</span>"));
+
+    let details: Vec<String> =
+        sqlx::query_scalar("SELECT detail FROM audit_log WHERE action LIKE 'printer_%' ORDER BY id")
+            .fetch_all(&app.state.db)
+            .await
+            .unwrap();
+    assert_eq!(details[0], "name=Voron ca=set verify=skipped");
+    assert!(details[1].contains(" verify=on "), "{}", details[1]);
 }

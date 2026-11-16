@@ -25,6 +25,7 @@ async fn printer(app: &TestApp, name: &str) -> i64 {
             enabled: true,
             notify: false,
             ca_cert: None,
+            tls_skip_verify: false,
         },
     )
     .await

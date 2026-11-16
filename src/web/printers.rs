@@ -34,6 +34,7 @@ struct Row {
     enabled: bool,
     notify: bool,
     custom_ca: bool,
+    skip_verify: bool,
 }
 
 struct PresetRow {
@@ -71,6 +72,7 @@ struct FormTemplate {
     key_set: bool,
     key_dropped: bool,
     ca_cert: String,
+    tls_skip_verify: bool,
     error: Option<String>,
 }
 
@@ -102,6 +104,8 @@ pub struct PrinterForm {
     notify: Option<String>,
     #[serde(default)]
     ca_cert: String,
+    #[serde(default)]
+    tls_skip_verify: Option<String>,
 }
 
 struct Valid {
@@ -113,6 +117,7 @@ struct Valid {
     enabled: bool,
     notify: bool,
     ca_cert: Option<String>,
+    tls_skip_verify: bool,
 }
 
 fn row(state: &AppState, p: Printer) -> Row {
@@ -129,7 +134,8 @@ fn row(state: &AppState, p: Printer) -> Row {
         key_class,
         enabled: p.enabled,
         notify: p.notify && state.notifier.enabled(),
-        custom_ca: p.ca_cert.is_some(),
+        custom_ca: p.ca_cert.is_some() && !p.tls_skip_verify,
+        skip_verify: p.tls_skip_verify,
     }
 }
 
@@ -231,6 +237,7 @@ pub async fn new_form(
         key_set: false,
         key_dropped: false,
         ca_cert: String::new(),
+        tls_skip_verify: false,
         error: None,
     }
     .render()?;
@@ -270,6 +277,7 @@ pub(crate) async fn edit_page(
         key_set: p.api_key_enc.is_some(),
         key_dropped: false,
         ca_cert: p.ca_cert.unwrap_or_default(),
+        tls_skip_verify: p.tls_skip_verify,
         error: None,
     }
     .render()?;
@@ -343,6 +351,7 @@ async fn validate(state: &AppState, f: &PrinterForm, except: Option<i64>) -> Res
         enabled: f.enabled.is_some(),
         notify: f.notify.is_some(),
         ca_cert,
+        tls_skip_verify: f.tls_skip_verify.is_some(),
     })
 }
 
@@ -355,6 +364,10 @@ fn ca_note(old: Option<&str>, new: Option<&str>) -> &'static str {
         (Some(a), Some(b)) if a == b => "kept",
         (Some(_), Some(_)) => "replaced",
     }
+}
+
+fn verify_note(skip: bool) -> &'static str {
+    if skip { "skipped" } else { "on" }
 }
 
 fn form_error(
@@ -384,6 +397,7 @@ fn form_error(
         } else {
             f.ca_cert.clone()
         },
+        tls_skip_verify: f.tls_skip_verify.is_some(),
         error: Some(error),
     }
     .render()?;
@@ -419,6 +433,7 @@ pub async fn create(
             // Only settable while a webhook is configured.
             notify: v.notify && state.notifier.enabled(),
             ca_cert: v.ca_cert.as_deref(),
+            tls_skip_verify: v.tls_skip_verify,
         },
     )
     .await?;
@@ -430,9 +445,10 @@ pub async fn create(
             printer_id: Some(id),
             action: "printer_create",
             detail: Some(format!(
-                "name={} ca={}",
+                "name={} ca={} verify={}",
                 v.name,
-                if v.ca_cert.is_some() { "set" } else { "none" }
+                if v.ca_cert.is_some() { "set" } else { "none" },
+                verify_note(v.tls_skip_verify)
             )),
             ip: ip.to_string_opt(),
         },
@@ -485,6 +501,7 @@ pub async fn update(
                 existing.notify
             },
             ca_cert: v.ca_cert.as_deref(),
+            tls_skip_verify: v.tls_skip_verify,
         },
         key,
     )
@@ -496,9 +513,10 @@ pub async fn update(
             printer_id: Some(id),
             action: "printer_update",
             detail: Some(format!(
-                "name={} api_key={key_note} ca={} notify={}",
+                "name={} api_key={key_note} ca={} verify={} notify={}",
                 v.name,
                 ca_note(existing.ca_cert.as_deref(), v.ca_cert.as_deref()),
+                verify_note(v.tls_skip_verify),
                 if v.notify { "on" } else { "off" }
             )),
             ip: ip.to_string_opt(),

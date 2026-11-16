@@ -62,21 +62,29 @@ impl Egress {
         &self.client
     }
 
-    /// The egress client for a printer: the shared one, or, when the printer has its own
-    /// certificates, one that trusts only those, pinned or as CAs ([`super::tls`]), with the same
-    /// resolver, bind address, timeouts and redirect policy.
-    pub fn client_for(&self, ca_pem: Option<&str>) -> Result<reqwest::Client, MoonrakerError> {
-        let Some(pem) = ca_pem.filter(|p| !p.trim().is_empty()) else {
-            return Ok(self.client.clone());
+    /// The egress client for a printer: the shared one (system roots), one that trusts only the
+    /// printer's own certificates, pinned or as CAs, or one that accepts any certificate
+    /// ([`super::tls`]). All have the same resolver, bind address, timeouts and redirect policy.
+    pub fn client_for(&self, trust: Trust<'_>) -> Result<reqwest::Client, MoonrakerError> {
+        let hash: [u8; 32] = match trust {
+            Trust::System => return Ok(self.client.clone()),
+            Trust::Custom(pem) if pem.trim().is_empty() => return Ok(self.client.clone()),
+            Trust::Custom(pem) => Sha256::digest(pem.as_bytes()).into(),
+            // Not a PEM digest any bundle could produce: PEM text never contains a NUL.
+            Trust::Insecure => Sha256::digest(b"\0insecure").into(),
         };
-        let hash: [u8; 32] = Sha256::digest(pem.as_bytes()).into();
         let mut cache = self.ca_clients.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(client) = cache.get(&hash) {
             return Ok(client.clone());
         }
         let bad = |e: CaError| MoonrakerError::Config(format!("the printer's certificate: {e}"));
-        let certs = parse_ca(pem).map_err(bad)?;
-        let tls = super::tls::client_config(certs).map_err(|_| bad(CaError::Invalid))?;
+        let tls = match trust {
+            Trust::Custom(pem) => {
+                let certs = parse_ca(pem).map_err(bad)?;
+                super::tls::client_config(certs).map_err(|_| bad(CaError::Invalid))?
+            }
+            _ => super::tls::insecure_config().map_err(|_| bad(CaError::Invalid))?,
+        };
         // reqwest takes a preconfigured rustls config as `dyn Any`; a rustls version mismatch
         // would fail here at build time (and in tests/printer_ca.rs), not silently.
         let client = builder(&self.allow, self.bind)
@@ -123,6 +131,17 @@ impl Egress {
             Err(_) => Ok(()),
         }
     }
+}
+
+/// Which certificates a printer's https:// connections accept.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Trust<'a> {
+    /// The system roots, with normal host name checks.
+    System,
+    /// Only these PEM certificates, pinned or as CAs (`printers.ca_cert`).
+    Custom(&'a str),
+    /// Any certificate (`printers.tls_skip_verify`): encrypted, but not authenticated.
+    Insecure,
 }
 
 fn builder(allow: &Arc<Vec<IpNet>>, bind: Option<IpAddr>) -> reqwest::ClientBuilder {
@@ -332,17 +351,20 @@ mod tests {
     #[test]
     fn ca_clients_are_cached_per_bundle() {
         let e = egress("10.0.0.0/8");
-        e.client_for(None).unwrap();
-        e.client_for(Some("  ")).unwrap();
+        e.client_for(Trust::System).unwrap();
+        e.client_for(Trust::Custom("  ")).unwrap();
         assert!(
             e.ca_clients.lock().unwrap().is_empty(),
             "no CA uses the shared client"
         );
-        e.client_for(Some(CA)).unwrap();
-        e.client_for(Some(CA)).unwrap();
-        e.client_for(Some(OTHER_CA)).unwrap();
+        e.client_for(Trust::Custom(CA)).unwrap();
+        e.client_for(Trust::Custom(CA)).unwrap();
+        e.client_for(Trust::Custom(OTHER_CA)).unwrap();
         assert_eq!(e.ca_clients.lock().unwrap().len(), 2);
-        let err = e.client_for(Some("nope")).unwrap_err();
+        e.client_for(Trust::Insecure).unwrap();
+        e.client_for(Trust::Insecure).unwrap();
+        assert_eq!(e.ca_clients.lock().unwrap().len(), 3);
+        let err = e.client_for(Trust::Custom("nope")).unwrap_err();
         assert!(matches!(err, MoonrakerError::Config(_)), "{err:?}");
     }
 

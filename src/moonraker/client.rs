@@ -44,18 +44,18 @@ impl fmt::Debug for MoonrakerClient {
 }
 
 impl MoonrakerClient {
-    /// `ca_cert` is the printer's own PEM trust roots, if it has any (see [`Egress::client_for`]).
+    /// `trust` picks the certificates https:// accepts (see [`Egress::client_for`]).
     pub fn new(
         egress: &Egress,
         base_url: &str,
         api_key: Option<String>,
-        ca_cert: Option<&str>,
+        trust: net::Trust<'_>,
     ) -> Result<Self, MoonrakerError> {
         let url = net::parse_base_url(base_url)
             .map_err(|_| MoonrakerError::Config("the printer's stored URL is invalid".into()))?;
         egress.check_url(&url)?;
         Ok(Self {
-            http: egress.client_for(ca_cert)?,
+            http: egress.client_for(trust)?,
             egress: egress.clone(),
             base: net::base_string(&url),
             api_key: api_key.filter(|k| !k.is_empty()),

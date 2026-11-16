@@ -29,6 +29,7 @@ async fn setup(opts: MockOptions) -> (TestApp, Client, MockMoonraker, i64) {
             enabled: true,
             notify: false,
             ca_cert: None,
+            tls_skip_verify: false,
         },
     )
     .await
@@ -173,6 +174,7 @@ async fn missing_update_manager_and_offline_printer() {
             enabled: true,
             notify: false,
             ca_cert: None,
+            tls_skip_verify: false,
         },
     )
     .await

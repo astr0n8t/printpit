@@ -32,7 +32,7 @@ pub fn decrypt_api_key(cipher: &Cipher, printer: &Printer) -> Result<Option<Stri
 }
 
 /// A client for `printer`, with its API key decrypted, its URL checked against the allowlist and
-/// its own CA (if any) as the only trust roots.
+/// its TLS trust from [`trust`].
 pub fn client_for(
     egress: &Egress,
     cipher: &Cipher,
@@ -42,6 +42,16 @@ pub fn client_for(
         egress,
         &printer.base_url,
         decrypt_api_key(cipher, printer)?,
-        printer.ca_cert.as_deref(),
+        trust(printer),
     )
+}
+
+/// The certificates `printer`'s https:// connections accept. Skip-verify wins over a saved
+/// certificate, so turning it off again restores the pin without re-pasting it.
+pub fn trust(printer: &Printer) -> net::Trust<'_> {
+    match (printer.tls_skip_verify, printer.ca_cert.as_deref()) {
+        (true, _) => net::Trust::Insecure,
+        (false, Some(pem)) => net::Trust::Custom(pem),
+        (false, None) => net::Trust::System,
+    }
 }
