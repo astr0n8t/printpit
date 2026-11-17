@@ -149,7 +149,7 @@ impl Notifier {
             Some(url) => {
                 let _ = rustls::crypto::ring::default_provider().install_default();
                 let http = reqwest::Client::builder()
-                    .user_agent(concat!("printpit/", env!("CARGO_PKG_VERSION")))
+                    .user_agent(format!("printpit/{}", crate::VERSION))
                     .timeout(TIMEOUT)
                     .redirect(reqwest::redirect::Policy::none())
                     .build()?;

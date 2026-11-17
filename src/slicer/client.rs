@@ -145,7 +145,7 @@ impl SlicerClient {
         // An https:// worker needs a TLS provider; the printer egress installs the same one.
         let _ = rustls::crypto::ring::default_provider().install_default();
         let http = reqwest::Client::builder()
-            .user_agent(concat!("printpit/", env!("CARGO_PKG_VERSION")))
+            .user_agent(format!("printpit/{}", crate::VERSION))
             .connect_timeout(CONNECT_TIMEOUT)
             .redirect(reqwest::redirect::Policy::none())
             .no_proxy()

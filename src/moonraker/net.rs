@@ -146,7 +146,7 @@ pub enum Trust<'a> {
 
 fn builder(allow: &Arc<Vec<IpNet>>, bind: Option<IpAddr>) -> reqwest::ClientBuilder {
     reqwest::Client::builder()
-        .user_agent(concat!("printpit/", env!("CARGO_PKG_VERSION")))
+        .user_agent(format!("printpit/{}", crate::VERSION))
         .connect_timeout(CONNECT_TIMEOUT)
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())

@@ -18,7 +18,7 @@ fn main() -> ExitCode {
             };
         }
         Some("--version" | "-V") => {
-            println!("printpit {}", env!("CARGO_PKG_VERSION"));
+            println!("printpit {}", printpit::VERSION);
             return ExitCode::SUCCESS;
         }
         Some(other) => {
@@ -57,7 +57,7 @@ async fn serve(config: Config) -> std::io::Result<()> {
     state.start_slicing().await;
     let app = web::router(state);
     let listener = tokio::net::TcpListener::bind(bind).await?;
-    tracing::info!(%bind, version = env!("CARGO_PKG_VERSION"), "printpit listening");
+    tracing::info!(%bind, version = printpit::VERSION, "printpit listening");
     axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
         .with_graceful_shutdown(shutdown_signal())
         .await?;

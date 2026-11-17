@@ -188,7 +188,7 @@ async fn health(State(app): State<App>) -> Response {
 
 async fn info(State(app): State<App>) -> Json<Value> {
     Json(json!({
-        "worker_version": env!("CARGO_PKG_VERSION"),
+        "worker_version": crate::VERSION,
         "orca_version": app.orca.as_ref().ok(),
         "busy": app.slot.available_permits() == 0,
         "timeout_secs": app.config.timeout.as_secs(),
