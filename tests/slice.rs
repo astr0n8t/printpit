@@ -434,7 +434,15 @@ async fn starts_printing_only_when_idle() {
     assert!(job.start_print);
     s.wait(job.id, JobStatus::Done).await;
     eventually("the print to start", || s.mock.print_state() == "printing").await;
-    assert!(s.actions().await.contains(&"slice_job_print".to_string()));
+    // The mock is printing as soon as it handles the request; the queue audits after the answer.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !s.actions().await.contains(&"slice_job_print".to_string()) {
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for the slice_job_print audit"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
 }
 
 #[tokio::test]
