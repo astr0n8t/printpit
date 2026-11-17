@@ -310,18 +310,20 @@ async fn slices_and_streams_gcode_with_stats() {
     assert!(!env.contains(TOKEN));
     assert!(!env.contains("PRINTPIT"));
     assert!(env.contains("LC_ALL=C"));
-    // The user machine's system name is made acceptable to the process.
+    // Orca gets standalone presets (nothing to resolve), and the user machine, now its own system
+    // printer, is made acceptable to the process.
     let p: Value = serde_json::from_str(&w.rec("process.json")).unwrap();
-    assert_eq!(
-        p["compatible_printers"],
-        json!(["Someone Else", "Acme One 0.4 nozzle"])
-    );
+    assert_eq!(p["compatible_printers"], json!(["Someone Else", "My Acme"]));
     assert!(p.get("compatible_printers_condition").is_none());
     assert_eq!(p["type"], "process");
     let m: Value = serde_json::from_str(&w.rec("machine.json")).unwrap();
     assert_eq!(m["type"], "machine");
     let f: Value = serde_json::from_str(&w.rec("filament.json")).unwrap();
     assert_eq!(f["type"], "filament");
+    for p in [&p, &m, &f] {
+        assert_eq!(p["from"], "system");
+        assert!(p.get("inherits").is_none());
+    }
     w.assert_work_dir_empty().await;
 }
 

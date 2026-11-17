@@ -266,7 +266,7 @@ pub fn scrub(text: &str, dir: &Path, orca: &Path) -> Vec<String> {
     lines.into_iter().skip(skip).collect()
 }
 
-/// `orca-slicer --help` prints `OrcaSlicer-2.4.2:` first. Also proves the binary loads at all.
+/// `orca-slicer --help` prints `OrcaSlicer-2.5.1:` first. Also proves the binary loads at all.
 pub async fn probe_version(orca: &Path, work_dir: &Path) -> Result<String, String> {
     let dir = tempfile::Builder::new()
         .prefix("probe-")

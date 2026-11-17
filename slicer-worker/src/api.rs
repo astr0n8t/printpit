@@ -285,11 +285,10 @@ async fn slice(State(app): State<App>, mut multipart: Multipart) -> Result<Respo
     } = up;
     let system_name = prepare_machine(&mut machine)?;
     write_json(dir.path(), orca::MACHINE, &machine).await?;
-    if let (Some(mut process), Some(filament)) = (process, filament) {
+    if let (Some(mut process), Some(mut filament)) = (process, filament) {
         make_compatible(&mut process, &system_name);
-        set_type(&mut process, Kind::Process);
-        let mut filament = filament;
-        set_type(&mut filament, Kind::Filament);
+        standalone(&mut process, Kind::Process);
+        standalone(&mut filament, Kind::Filament);
         write_json(dir.path(), orca::PROCESS, &process).await?;
         write_json(dir.path(), orca::FILAMENT, &filament).await?;
     }
@@ -500,24 +499,25 @@ async fn read_small(
 }
 
 /// Makes the machine loadable as-is and returns its *system name*, the name Orca checks a
-/// process's `compatible_printers` against: its own for a system profile, else its `inherits`.
+/// process's `compatible_printers` against. Being standalone (see [`standalone`]), that is its own name.
 fn prepare_machine(machine: &mut Profile) -> Result<String, ApiError> {
     let name = text(machine, "name");
     if name.trim().is_empty() {
         return Err(ApiError::bad_request("the machine profile has no `name`"));
     }
-    set_type(machine, Kind::Machine);
-    if text(machine, "from").eq_ignore_ascii_case("system") {
-        return Ok(name);
-    }
-    let inherits = text(machine, "inherits");
-    if inherits.trim().is_empty() {
-        // A machine defined from scratch: it is its own system printer.
-        machine.insert("inherits".into(), Value::String(name.clone()));
-        Ok(name)
-    } else {
-        Ok(inherits)
-    }
+    standalone(machine, Kind::Machine);
+    Ok(name)
+}
+
+/// Presets reach the worker already flattened (`library::Library::flatten`), so Orca is told there is
+/// nothing to resolve: no `inherits`, and `from: system`. Since 2.5 the CLI resolves a user preset's
+/// `inherits` itself, and only for a file that is one of the saved user presets in its data dir
+/// (matched by path), so a user preset from anywhere else fails with -5. A system profile's system
+/// name is its own, which is also what [`make_compatible`] adds to the process.
+fn standalone(p: &mut Profile, kind: Kind) {
+    p.insert("type".into(), Value::String(kind.as_str().into()));
+    p.insert("from".into(), Value::String("system".into()));
+    p.remove("inherits");
 }
 
 /// printpit's choice of process is deliberate, so it is made compatible with the machine rather
@@ -536,10 +536,6 @@ fn make_compatible(process: &mut Profile, system_name: &str) {
     process.remove("compatible_printers_condition");
 }
 
-fn set_type(p: &mut Profile, kind: Kind) {
-    p.insert("type".into(), Value::String(kind.as_str().into()));
-}
-
 async fn write_json(dir: &Path, file: &str, p: &Profile) -> Result<(), ApiError> {
     let raw = serde_json::to_vec(p).map_err(|e| ApiError::internal("cannot encode a profile", e))?;
     tokio::fs::write(dir.join(file), raw)
@@ -556,16 +552,27 @@ mod tests {
     }
 
     #[test]
-    fn machine_system_names() {
+    fn machines_are_their_own_system_printer() {
         let mut m = obj(json!({"name": "Voron 2.4 350 0.4 nozzle", "from": "system"}));
         assert_eq!(prepare_machine(&mut m).unwrap(), "Voron 2.4 350 0.4 nozzle");
         assert_eq!(text(&m, "type"), "machine");
         let mut m = obj(json!({"name": "My Voron", "from": "User", "inherits": "Voron 2.4 350 0.4 nozzle"}));
-        assert_eq!(prepare_machine(&mut m).unwrap(), "Voron 2.4 350 0.4 nozzle");
+        assert_eq!(prepare_machine(&mut m).unwrap(), "My Voron");
+        assert_eq!(text(&m, "from"), "system");
+        assert!(!m.contains_key("inherits"));
         let mut m = obj(json!({"name": "Scratch Built", "from": "User"}));
         assert_eq!(prepare_machine(&mut m).unwrap(), "Scratch Built");
-        assert_eq!(text(&m, "inherits"), "Scratch Built");
         assert!(prepare_machine(&mut obj(json!({"from": "system"}))).is_err());
+    }
+
+    #[test]
+    fn presets_are_standalone() {
+        let mut p = obj(json!({"name": "Fine", "from": "User", "inherits": "0.20mm Standard @Voron"}));
+        standalone(&mut p, Kind::Process);
+        assert_eq!(
+            p,
+            obj(json!({"name": "Fine", "from": "system", "type": "process"}))
+        );
     }
 
     #[test]

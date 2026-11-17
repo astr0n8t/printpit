@@ -217,6 +217,9 @@ Same rules as M8: new protected routes go into `PROTECTED_GET`/`PROTECTED_POST`,
 - [x] Success: stream G-code back, stats (time, filament mm/g, layers) from the footer in `X-Slice-*` headers; failure: 422 `{error, kind, code, log_tail}` with paths scrubbed
 - [x] Unit tests with a fake `orca-slicer` script (`tests/fake-orca.sh`): args, cleared env, timeout and disconnect kill the group, busy → 503, cleanup, bad uploads; golden test with real Orca (`slicer-worker/golden/run.sh`: system profiles, renamed user presets with their overrides, arrange/orient, garbage model) in `.github/workflows/slicer.yml` (amd64 + arm64 build, golden on amd64)
 - [x] `copies` (PLAN §15.4): Orca's `--clone-objects`/`--repetitions` semantics untested; check with real Orca and add to `Options`, or drop copies from the form. Checked in the worker image: `--clone-objects N` gives N spread-out copies, `--repetitions` is rejected (exit 254). Added (1–50, not for 3MF) and covered by the golden test
+- [x] Bump OrcaSlicer to **2.5.1** (PLAN §15.12): new hashes; profile JSON from the release commit (the AppImage now packs profiles into `.opc` caches, checked against the JSON at build time); bundled libraries' missing deps (libdrm) stubbed; `webkit_get_*_version` stubs return 0 (called at every start on VMs); presets go to Orca standalone (`from: system`, no `inherits`), because 2.5's CLI resolves `inherits` only for presets saved in its data dir. Override keys and CLI flags re-checked against the 2.5.1 source; golden test passes (amd64). Image 446 MB
+- [ ] arm64: run the 2.5.1 image (built in the sandbox, not run) and the golden test on real arm64
+- [ ] Re-check that the stubbed image's G-code is byte-identical to a full GUI-library install, for 2.5.1 (done for 2.4.2)
 - [ ] Verify the 3MF `project_settings` path in the golden test (checked by hand with a CLI-made 3MF; add a GUI-made multi-plate project as a fixture)
 
 ### 9.2 printpit plumbing

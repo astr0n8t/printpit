@@ -2,7 +2,8 @@
 //!
 //! Each override is a typed field with a range check, written to a fixed Orca config key below.
 //! There is no way to set any other key: the form can't name one, and [`SliceOptions`] can't
-//! hold one. Keys and values are Orca 2.4.2's (`libslic3r/PrintConfig.cpp`).
+//! hold one. Keys and values are Orca's (`libslic3r/PrintConfig.cpp`; checked for 2.4.2 and again for
+//! 2.5.1).
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
