@@ -262,6 +262,22 @@ async fn the_tab_makes_no_printer_or_worker_calls() {
     );
 }
 
+/// iOS greys out every file in the picker whose type it can't map from `accept` (3MF, STEP and
+/// often STL have no system type), so file inputs carry no `accept`; the server checks the file.
+#[tokio::test]
+async fn file_inputs_have_no_accept_filter() {
+    let mut s = setup().await;
+    let slice = s.c.get(&format!("/ui/slice?printer={}", s.printer)).await;
+    assert!(slice.body.contains(r#"id="slice-model""#), "{}", slice.body);
+    let admin = s.c.get("/ui/slicer").await;
+    assert!(admin.body.contains(r#"id="preset-files""#), "{}", admin.body);
+    let files = s.c.get(&format!("/p/{}/files", s.printer)).await;
+    assert!(files.body.contains(r#"type="file""#), "{}", files.body);
+    for body in [&slice.body, &admin.body, &files.body] {
+        assert!(!body.contains("accept="), "file input has an accept filter");
+    }
+}
+
 #[tokio::test]
 async fn slices_uploads_and_reports() {
     let mut s = setup().await;
