@@ -46,6 +46,7 @@ const PROTECTED_GET: &[&str] = &[
     "/ui/slicer/system",
     "/ui/slice",
     "/slice/jobs/1",
+    "/slice/jobs/1/preview/plate.png",
 ];
 const PROTECTED_POST: &[&str] = &[
     "/logout",

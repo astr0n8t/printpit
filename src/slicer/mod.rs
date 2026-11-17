@@ -11,6 +11,7 @@ pub mod error;
 pub mod import;
 pub mod model;
 pub mod options;
+pub mod preview;
 pub mod queue;
 pub mod storage;
 

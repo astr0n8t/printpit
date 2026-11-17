@@ -20,7 +20,7 @@ use tokio::sync::{Notify, oneshot};
 
 use super::client::{SliceRequest, SliceStats};
 use super::options::SliceOptions;
-use super::{SlicerError, Slicing, storage};
+use super::{SlicerError, Slicing, preview, storage};
 use crate::db::slicer::{self as store, Job, JobStats, JobStatus};
 use crate::db::{audit, now, printers};
 use crate::moonraker::MoonrakerError;
@@ -282,7 +282,9 @@ async fn process(state: &AppState, slicing: &Slicing, job: Job) -> Result<(), St
         options: &worker_options,
         model: &model,
     };
-    let stats = match slicing.client.slice(&req, &slicing.storage, job.id).await {
+    // A job sliced again mustn't show the last slice's pictures.
+    slicing.storage.remove_previews(job.id).await;
+    let mut stats = match slicing.client.slice(&req, &slicing.storage, job.id).await {
         Ok(s) => s,
         Err(e) if e.is_transient() => return Err(Stop::Transient(waiting(&e))),
         Err(e) => {
@@ -292,6 +294,9 @@ async fn process(state: &AppState, slicing: &Slicing, job: Job) -> Result<(), St
             });
         }
     };
+    if let Some(bytes) = preview::decorate(&slicing.storage, job.id).await {
+        stats.bytes = bytes;
+    }
     if !store::sliced(&state.db, job.id, &job_stats(&stats)).await? {
         return Err(Stop::Cancelled);
     }

@@ -238,6 +238,16 @@ impl MockMoonraker {
             .map(|(d, _)| d.len())
     }
 
+    pub fn file_data(&self, path: &str) -> Option<Vec<u8>> {
+        self.inner
+            .fs
+            .lock()
+            .unwrap()
+            .files
+            .get(path)
+            .map(|(d, _)| d.clone())
+    }
+
     pub fn has_dir(&self, path: &str) -> bool {
         self.inner.fs.lock().unwrap().dirs.contains(path)
     }

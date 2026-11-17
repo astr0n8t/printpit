@@ -10,6 +10,13 @@
 {%- if let Some(m) = message %}
   <p class="{{ message_class }}">{{ m }}</p>
 {%- endif %}
+{%- if !previews.is_empty() %}
+  <div class="slice-preview">
+{%- for (url, alt) in previews %}
+    <a href="{{ url }}" target="_blank" rel="noopener"><img src="{{ url }}" alt="{{ alt }}"></a>
+{%- endfor %}
+  </div>
+{%- endif %}
   <dl class="kv">
     <dt>profiles</dt><dd class="wrap">{{ profiles|join(" · ") }}</dd>
 {%- if !settings.is_empty() %}

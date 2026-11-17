@@ -58,3 +58,41 @@ pub async fn serve(Path((hash, path)): Path<(String, String)>) -> Response {
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static(cache));
     res
 }
+
+/// The web app manifest, at a fixed URL (`/static/manifest.webmanifest`) so browsers can find it
+/// across releases, with versioned icon URLs. Public like the rest of `/static/`: browsers fetch
+/// manifests without cookies. It holds no printer data.
+pub async fn manifest() -> Response {
+    let icon = |path: &str, size: u32, purpose: &str| {
+        serde_json::json!({
+            "src": url(path),
+            "sizes": format!("{size}x{size}"),
+            "type": "image/png",
+            "purpose": purpose,
+        })
+    };
+    let body = serde_json::json!({
+        "id": "/",
+        "name": "printpit",
+        "short_name": "printpit",
+        "description": "Control your Klipper printers.",
+        "start_url": "/",
+        "scope": "/",
+        "display": "standalone",
+        "background_color": "#0b0d0b",
+        "theme_color": "#0b0d0b",
+        "icons": [
+            icon("icons/icon-192.png", 192, "any"),
+            icon("icons/icon-512.png", 512, "any"),
+            icon("icons/maskable-512.png", 512, "maskable"),
+        ],
+    });
+    (
+        [
+            (header::CONTENT_TYPE, "application/manifest+json"),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
+        body.to_string(),
+    )
+        .into_response()
+}
