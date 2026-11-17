@@ -23,6 +23,7 @@ use crate::error::AppError;
 use crate::moonraker::files::clean_name;
 use crate::slicer::import::{self, Fit};
 use crate::slicer::options::{self, OptionsForm, SliceOptions};
+use crate::slicer::preview::View;
 use crate::slicer::queue::{self, MAX_ACTIVE_PER_USER, OUTPUT_DIR};
 use crate::slicer::{Kind, Profile, Slicing, model, storage};
 use crate::state::AppState;
@@ -598,6 +599,8 @@ struct PanelTemplate {
     can_delete: bool,
     form: OptionsForm,
     is_3mf: bool,
+    /// (url, alt text) of the pictures of what was sliced.
+    previews: Vec<(String, String)>,
     oob_badge: bool,
     notice: Option<String>,
     error: Option<String>,
@@ -710,12 +713,62 @@ async fn panel(
         can_print: operator && status == JobStatus::Done && job.output_name.is_some(),
         can_delete: operator && !active,
         is_3mf: job.model_name.to_ascii_lowercase().ends_with(".3mf"),
+        previews: if matches!(status, JobStatus::Queued | JobStatus::Slicing) {
+            Vec::new()
+        } else {
+            previews(s, &job.model_name, job.id).await
+        },
         form: opts.to_form(),
         oob_badge,
         notice,
         error,
     };
     Ok(tpl.render()?)
+}
+
+/// The job's preview pictures that exist, as versioned URLs (a job sliced again gets new ones).
+async fn previews(s: &Slicing, model: &str, id: i64) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for (view, what) in [
+        (View::Plate, "the sliced plate"),
+        (View::Top, "the plate from above"),
+    ] {
+        let Ok(meta) = tokio::fs::metadata(s.storage.preview_path(id, view)).await else {
+            continue;
+        };
+        let version = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_millis());
+        out.push((
+            format!("/slice/jobs/{id}/preview/{}?v={version:x}", view.file_name()),
+            format!("{what}: {model}"),
+        ));
+    }
+    out
+}
+
+/// A job's preview picture (`plate.png`, `top.png`), for anyone who can see the job.
+pub async fn preview(
+    State(state): State<AppState>,
+    _user: CurrentUser,
+    Path((id, name)): Path<(i64, String)>,
+) -> Result<Response, AppError> {
+    let job = job_for(&state, id).await?;
+    let s = slicing(&state)?;
+    let view = View::from_name(&name).ok_or(AppError::NotFound)?;
+    let png = tokio::fs::read(s.storage.preview_path(job.id, view))
+        .await
+        .map_err(|_| AppError::NotFound)?;
+    Ok(axum::response::IntoResponse::into_response((
+        [
+            (axum::http::header::CONTENT_TYPE, "image/png"),
+            // The URL carries the picture's version.
+            (axum::http::header::CACHE_CONTROL, "private, max-age=86400"),
+        ],
+        png,
+    )))
 }
 
 async fn job_for(state: &AppState, id: i64) -> Result<Job, AppError> {

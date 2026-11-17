@@ -16,6 +16,7 @@ async-stream = "0.3.6"
 axum = { version = "0.8.9", features = ["multipart"] }
 axum-extra = { version = "0.12.6", features = ["cookie"] }
 base64 = "0.23.1"
+crc32fast = "1.5.3"
 cookie = "0.18"
 futures-util = "0.3.34"
 getrandom = "0.4.3"

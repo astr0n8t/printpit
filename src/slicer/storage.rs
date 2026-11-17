@@ -51,6 +51,30 @@ impl Storage {
         self.job_dir(job).join(PARTIAL)
     }
 
+    /// A job's preview picture (`plate.png`, `top.png`), written by [`super::preview::decorate`].
+    pub fn preview_path(&self, job: i64, view: super::preview::View) -> PathBuf {
+        self.job_dir(job).join(view.file_name())
+    }
+
+    /// Removes a job's preview pictures (before it's sliced again). Missing is fine.
+    pub async fn remove_previews(&self, job: i64) {
+        for view in super::preview::View::ALL {
+            let _ = tokio::fs::remove_file(self.preview_path(job, view)).await;
+        }
+    }
+
+    /// [`Storage::create`] for blocking code.
+    pub fn create_blocking(&self, path: &Path) -> std::io::Result<std::fs::File> {
+        assert!(path.starts_with(&self.root));
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
+        let file = opts.open(path)?;
+        set_mode(path, 0o600)?;
+        Ok(file)
+    }
+
     /// Creates the job's directory (0700).
     pub fn create_job_dir(&self, job: i64) -> std::io::Result<PathBuf> {
         let dir = self.job_dir(job);

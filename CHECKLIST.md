@@ -257,6 +257,15 @@ Same rules as M8: new protected routes go into `PROTECTED_GET`/`PROTECTED_POST`,
 - [x] Docs: README "Slicing" section (setup, importing your Orca profiles, phone workflow, running the worker on another host), config table, PLAN §9/§10/§11 updated from "planned", CLAUDE.md rule 2 note (background upload after a slice is user-initiated, not polling) + decision log
 - [ ] Cancel during the upload stage: test it with a mock Moonraker upload that can be stalled
 
+### 9.6 Previews and thumbnails (2026-11-17, PLAN §15.11)
+- [x] `slicer::preview::gcode`: toolpath reader (G0–G3, G90/91, M82/83, G92, tools, `;TYPE:`/`;WIDTH:`/`;HEIGHT:`, config block); start/end G-code and interior infill skipped
+- [x] `slicer::preview::raster`: z-buffered, supersampled triangle rasterizer (per-row spans) and an RGBA PNG writer (flate2 + crc32fast, no image crates)
+- [x] Thumbnails at the profile's `thumbnails` sizes injected after `; HEADER_BLOCK_END` in Moonraker's format (unit test re-implements Moonraker's parser); G-code that has thumbnails is left alone; job `gcode_size` is the decorated file's
+- [x] `plate.png` (3D, framed on the parts) and `top.png` (whole bed) in the job dir; temp names + async rename so a cancelled job's drawing can't land on a newer slice; removed before a re-slice
+- [x] Job panel shows both (side by side, top view at half width on phones); `GET /slice/jobs/{id}/preview/{name}` (any signed-in user, 404 for other names); `tests/slice.rs::previews_and_thumbnails`
+- [x] Checked against real Orca 2.4.2 output (cube, copies, cylinder, supports, 21 MB two-vase plate) and end to end in Chromium (desktop + iPhone 13, no console/CSP errors). Golden test asserts the markers the reader needs. `cargo run --release --example render_preview -- file.gcode out/` renders any G-code
+- [ ] Layer-by-layer preview (a layer slider in the job panel)
+
 ## Extras
 
 ### Per-printer custom CA (2026-11-15)

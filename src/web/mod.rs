@@ -103,6 +103,7 @@ pub fn router(state: AppState) -> Router {
             post(slice::submit).layer(axum::extract::DefaultBodyLimit::max(slice_limit)),
         )
         .route("/slice/jobs/{id}", get(slice::show).delete(slice::delete))
+        .route("/slice/jobs/{id}/preview/{name}", get(slice::preview))
         .route("/slice/jobs/{id}/cancel", post(slice::cancel))
         .route("/slice/jobs/{id}/reslice", post(slice::reslice))
         .route("/slice/jobs/{id}/upload", post(slice::upload))
