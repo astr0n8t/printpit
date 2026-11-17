@@ -6,7 +6,14 @@
 <meta name="color-scheme" content="dark light">
 <meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false,"historyCacheSize":0,"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"[45]..","swap":true,"error":true}]}'>
 <title>{{ layout.title }} · printpit</title>
+<meta name="theme-color" content="#0b0d0b" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f4f2e9" media="(prefers-color-scheme: light)">
+<meta name="apple-mobile-web-app-title" content="printpit">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="manifest" href="/static/manifest.webmanifest">
 <link rel="icon" type="image/svg+xml" href="{{ layout.asset("favicon.svg") }}">
+<link rel="apple-touch-icon" href="{{ layout.asset("icons/apple-touch-icon.png") }}">
 <link rel="stylesheet" href="{{ layout.asset("css/tui.css") }}">
 <script src="{{ layout.asset("js/htmx.min.js") }}" defer></script>
 <script src="{{ layout.asset("js/app.js") }}" defer></script>
