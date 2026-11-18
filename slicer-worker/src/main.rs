@@ -18,7 +18,7 @@ fn main() -> ExitCode {
             };
         }
         Some("--version" | "-V") => {
-            println!("printpit-slicer {}", env!("CARGO_PKG_VERSION"));
+            println!("printpit-slicer {}", slicer_worker::VERSION);
             return ExitCode::SUCCESS;
         }
         Some(other) => {
@@ -61,7 +61,7 @@ async fn serve(config: Config) -> std::io::Result<()> {
     let bind = config.bind;
     let app = api::router(AppState::new(config, library, orca));
     let listener = tokio::net::TcpListener::bind(bind).await?;
-    tracing::info!(%bind, version = env!("CARGO_PKG_VERSION"), "printpit-slicer listening");
+    tracing::info!(%bind, version = slicer_worker::VERSION, "printpit-slicer listening");
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;

@@ -71,6 +71,9 @@ RUN case "$TARGETARCH" in \
  && rustup target add "$(cat /rust-target)"
 WORKDIR /src
 COPY . .
+# Shown in the UI and logs; release.yml passes the tag (empty = Cargo.toml's version).
+ARG PRINTPIT_VERSION=
+ENV PRINTPIT_VERSION=$PRINTPIT_VERSION
 RUN --mount=type=cache,target=/usr/local/cargo/registry,id=cargo-registry-$TARGETARCH \
     --mount=type=cache,target=/src/target,id=slicer-target-$TARGETARCH \
     cargo zigbuild --release --locked -p slicer-worker --target "$(cat /rust-target)" \

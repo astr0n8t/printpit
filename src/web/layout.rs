@@ -161,7 +161,7 @@ impl Layout {
     pub fn new(title: &'static str) -> Self {
         Self {
             title,
-            version: env!("CARGO_PKG_VERSION"),
+            version: crate::VERSION,
             user: None,
             csrf: None,
             theme: None,
