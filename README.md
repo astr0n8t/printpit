@@ -188,9 +188,9 @@ Normally printpit only talks to a printer while someone is looking at it. A prin
 
 Upload an STL, 3MF, OBJ or STEP file, from your phone if you like. printpit slices it with [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer), puts the G-code on the printer under `printpit/`, and starts the print if you ask it to. No desktop needed.
 
-OrcaSlicer is big, and model files are untrusted input, so it never runs inside printpit. It runs in a separate worker image, `printpit-slicer` (OrcaSlicer 2.4.2 behind a small HTTP API, about 325 MB, amd64 and arm64), that printpit reaches with a shared token. In the compose files the worker sits on an internal network that only printpit shares. It can't reach the internet or your printers, and it runs with a read-only root, a tmpfs for its work, no capabilities and CPU/memory limits. printpit itself only checks a model's size and type before passing it on.
+OrcaSlicer is big, and model files are untrusted input, so it never runs inside printpit. It runs in a separate worker image, `printpit-slicer` (OrcaSlicer 2.5.1 behind a small HTTP API, about 445 MB, amd64 and arm64), that printpit reaches with a shared token. In the compose files the worker sits on an internal network that only printpit shares. It can't reach the internet or your printers, and it runs with a read-only root, a tmpfs for its work, no capabilities and CPU/memory limits. printpit itself only checks a model's size and type before passing it on.
 
-**Turn it on** (the first build downloads ~270 MB of OrcaSlicer):
+**Turn it on** (the first build downloads ~200 MB of OrcaSlicer):
 
 ```sh
 echo "PRINTPIT_SLICER_URL=http://slicer:8090" >> .env
@@ -213,7 +213,7 @@ Good to know:
 
 - One slice runs at a time per worker; the others wait their turn. A worker that's busy or down just keeps jobs waiting.
 - printpit won't overwrite a file of the same name on the printer unless you tick *replace*. It starts a print only if the printer is idle, both when you submit and again when the G-code arrives.
-- **No thumbnails:** the OrcaSlicer 2.4.2 command line doesn't write G-code thumbnails, so sliced files show none in the Files tab.
+- **Previews:** OrcaSlicer's command line doesn't write G-code thumbnails, so printpit draws them from the sliced G-code (for the Files tab, Mainsail and KlipperScreen), plus a 3D view and a top view of the plate in the job panel.
 - Models and G-code are kept under `/data/slicer` for `PRINTPIT_SLICER_RETENTION_HOURS` (3 days), then deleted. Each user can have 5 unfinished jobs.
 - With `PRINTPIT_NOTIFY_WEBHOOK_URL` set, finished and failed slices are posted too (`"event": "slice_done"` / `"slice_failed"`).
 

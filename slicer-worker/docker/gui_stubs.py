@@ -6,17 +6,21 @@ usage: gui_stubs.py <orca-slicer binary> <bundled lib dir> <out dir> <target tri
 OrcaSlicer's Linux build links GTK3, WebKitGTK, GStreamer, Soup, libsecret, X11/Wayland, GL, glib
 and dbus (~700 MB installed), but a CLI slice calls none of them (PLAN.md §15.10). Every library in
 its DT_NEEDED list, except the C/C++ runtime and the ones Orca bundles, is replaced by a stub with the
-same SONAME that defines every symbol the binary imports from it:
+same SONAME that defines every symbol the binary imports from it. The libraries Orca bundles are real,
+but what *they* link beyond the C runtime and each other (2.5's FFmpeg needs libdrm) is stubbed the
+same way:
 
 - functions trap (`__builtin_trap()`), so if a future Orca does reach GUI code, it crashes loudly
   (the golden test catches that) instead of silently doing nothing. No headers, no libc: a stub can't
   clash with a C declaration of the same name;
+- except the few in `RETURN_ZERO`, which Orca calls on every start and which return 0;
 - data objects are zeroed buffers;
 - versioned symbols (dbus, xkbcommon) are defined under their version node, so the loader finds
   the versions it expects and stays quiet.
 
 Unversioned symbols can come from any library, so they all go into one shared stub library that
-every per-library stub depends on. The binary must be lazily bound (no BIND_NOW), which is checked.
+every per-library stub depends on. The binary, and any bundled library that links a stub, must be
+lazily bound (no BIND_NOW), which is checked.
 Runs on the build machine with the target's binutils and gcc (`<triple>-readelf`, `-nm`, `-gcc`).
 """
 
@@ -28,6 +32,10 @@ import sys
 # The C and C++ runtime stays real: it's in the base image and everything uses it.
 KEEP = re.compile(r"^(ld-linux.*|libc|libm|libdl|libpthread|librt|libresolv|libutil|libstdc\+\+|libgcc_s)\.so(\.\d+)*$")
 SHARED_STUB = "libprintpit-gui-stub.so"
+# Called by every run, CLI included, so they can't trap. 2.5's main() asks WebKitGTK for its version
+# on a VM or an NVIDIA host (`WebView::SupportsForceSharedMemory`); 0 means "too old for the
+# workaround", so it sets nothing. Add a name here only after reading what Orca does with the 0.
+RETURN_ZERO = {"webkit_get_major_version", "webkit_get_minor_version"}
 DATA_BYTES = 256
 
 
@@ -42,31 +50,36 @@ def main():
     binary, bundled, out, triple = sys.argv[1:5]
     tool = lambda name: f"{triple}-{name}"
 
-    dynamic = run(tool("readelf"), "-d", "-W", binary)
-    if "BIND_NOW" in dynamic or re.search(r"FLAGS_1\).*\bNOW\b", dynamic):
-        sys.exit("binary is bound immediately (BIND_NOW); stubs would need every symbol and can't be trusted")
-    needed = re.findall(r"\(NEEDED\)\s+Shared library: \[([^\]]+)\]", dynamic)
     bundled_libs = {f for f in os.listdir(bundled) if ".so" in f}
-    stubbed = [lib for lib in needed if not KEEP.match(lib) and lib not in bundled_libs]
+    real_bundled = [os.path.join(bundled, f) for f in sorted(bundled_libs) if not os.path.islink(os.path.join(bundled, f))]
+    consumers = [binary] + real_bundled
 
-    # Version index -> library, from .gnu.version_r ("File: libdbus-1.so.3" then its "Name:" lines).
+    # Version name -> library, from .gnu.version_r ("File: libdbus-1.so.3" then its "Name:" lines).
+    needed = []
     version_lib = {}
-    current = None
-    for line in run(tool("readelf"), "-V", "-W", binary).splitlines():
-        m = re.search(r"File: (\S+)", line)
-        if m:
-            current = m.group(1)
-            continue
-        m = re.search(r"Name: (\S+)\s+Flags: \S+\s+Version: \d+", line)
-        if m and current:
-            version_lib[m.group(1)] = current
+    dynamic = {}
+    for path in consumers:
+        dynamic[path] = run(tool("readelf"), "-d", "-W", path)
+        needed_here = re.findall(r"\(NEEDED\)\s+Shared library: \[([^\]]+)\]", dynamic[path])
+        dynamic[path] = (dynamic[path], needed_here)
+        needed += [lib for lib in needed_here if lib not in needed]
+        current = None
+        for line in run(tool("readelf"), "-V", "-W", path).splitlines():
+            m = re.search(r"File: (\S+)", line)
+            if m:
+                current = m.group(1)
+                continue
+            m = re.search(r"Name: (\S+)\s+Flags: \S+\s+Version: \d+", line)
+            if m and current:
+                version_lib[m.group(1)] = current
+    stubbed = [lib for lib in needed if not KEEP.match(lib) and lib not in bundled_libs]
+    for path, (text, needed_here) in dynamic.items():
+        if set(needed_here) & set(stubbed) and ("BIND_NOW" in text or re.search(r"FLAGS_1\).*\bNOW\b", text)):
+            sys.exit(f"{os.path.basename(path)} is bound immediately (BIND_NOW); stubs would need every symbol and can't be trusted")
 
     # What the bundled libraries really provide stays theirs.
     provided = set()
-    for f in bundled_libs:
-        path = os.path.join(bundled, f)
-        if os.path.islink(path):
-            continue
+    for path in real_bundled:
         for line in run(tool("nm"), "-D", "--defined-only", path).splitlines():
             parts = line.split()
             if len(parts) >= 3:
@@ -74,26 +87,27 @@ def main():
 
     shared = {"func": set(), "data": set()}
     per_lib = {lib: {} for lib in stubbed}  # lib -> version -> {"func": set, "data": set}
-    for line in run(tool("readelf"), "--dyn-syms", "-W", binary).splitlines():
-        cols = line.split()
-        if len(cols) < 8 or cols[6] != "UND" or cols[4] != "GLOBAL":
-            continue
-        kind = {"FUNC": "func", "OBJECT": "data", "NOTYPE": "func", "TLS": "tls"}.get(cols[3])
-        name = cols[7]
-        if "@" in name:
-            sym, version = name.split("@", 1)
-            lib = version_lib.get(version)
-            if lib not in per_lib:
-                continue  # the C/C++ runtime or a bundled library: real
-            if kind == "tls":
-                sys.exit(f"thread-local {sym}@{version} from {lib} can't be stubbed")
-            per_lib[lib].setdefault(version, {"func": set(), "data": set()})[kind].add(sym)
-        else:
-            if name in provided or not kind:
+    for path in consumers:
+        for line in run(tool("readelf"), "--dyn-syms", "-W", path).splitlines():
+            cols = line.split()
+            if len(cols) < 8 or cols[6] != "UND" or cols[4] != "GLOBAL":
                 continue
-            if kind == "tls":
-                sys.exit(f"unversioned thread-local {name} can't be stubbed")
-            shared[kind].add(name)
+            kind = {"FUNC": "func", "OBJECT": "data", "NOTYPE": "func", "TLS": "tls"}.get(cols[3])
+            name = cols[7]
+            if "@" in name:
+                sym, version = name.split("@", 1)
+                lib = version_lib.get(version)
+                if lib not in per_lib:
+                    continue  # the C/C++ runtime or a bundled library: real
+                if kind == "tls":
+                    sys.exit(f"thread-local {sym}@{version} from {lib} can't be stubbed")
+                per_lib[lib].setdefault(version, {"func": set(), "data": set()})[kind].add(sym)
+            else:
+                if name in provided or not kind:
+                    continue
+                if kind == "tls":
+                    sys.exit(f"unversioned thread-local {name} can't be stubbed")
+                shared[kind].add(name)
 
     os.makedirs(out, exist_ok=True)
     cc = tool("gcc")
@@ -101,7 +115,8 @@ def main():
     def source(funcs, datas):
         lines = []
         lines += [f"char {d}[{DATA_BYTES}] __attribute__((aligned(16)));" for d in sorted(datas)]
-        lines += [f"void {f}(void) {{ __builtin_trap(); }}" for f in sorted(funcs)]
+        lines += [f"void {f}(void) {{ __builtin_trap(); }}" for f in sorted(funcs - RETURN_ZERO)]
+        lines += [f"long {f}(void) {{ return 0; }}" for f in sorted(funcs & RETURN_ZERO)]
         return "\n".join(lines) + "\n"
 
     src = os.path.join(out, "stub.c")

@@ -211,7 +211,8 @@ async fn tab_page(
     page(hx, user, Tab::Slice, html)
 }
 
-/// The name Orca checks `compatible_printers` against: a system machine's own, else its parent.
+/// The name system profiles list a machine under in `compatible_printers`: a system machine's own,
+/// else its parent's. (The worker makes the chosen process accept the machine whatever this says.)
 fn system_name(machine: &Profile) -> String {
     let text = |k: &str| {
         machine

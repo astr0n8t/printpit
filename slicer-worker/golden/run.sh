@@ -83,7 +83,7 @@ for marker in '^; HEADER_BLOCK_END$' '^;TYPE:Outer wall$' '^;WIDTH:' '^;HEIGHT:'
     '^; printable_area = ' '^; thumbnails = ' '^; filament_colour = #'; do
     grep -q "$marker" "$work/cube.gcode" || fail "no '$marker' in the G-code (printpit's previews need it)"
 done
-grep -q '^; thumbnail' "$work/cube.gcode" && echo "note: Orca now writes its own thumbnails; printpit keeps them"
+grep -q '^; thumbnail begin ' "$work/cube.gcode" && echo "note: Orca now writes its own thumbnails; printpit keeps them"
 ok "G-code has what printpit's previews read"
 
 # User presets, as exported from Orca: differences only, `inherits` a system profile, renamed.

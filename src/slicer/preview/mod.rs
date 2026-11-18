@@ -1,6 +1,6 @@
 //! Pictures of what was sliced, drawn from the G-code itself (PLAN §15.11).
 //!
-//! OrcaSlicer 2.4.2's CLI writes no thumbnails (§15.10), so printpit renders them: it reads the
+//! OrcaSlicer's CLI writes no thumbnails (§15.10, still so in 2.5.1), so printpit renders them: it reads the
 //! extruded toolpath ([`gcode`]), draws every bead as a little box with a software z-buffer
 //! ([`raster`]), and
 //! - injects Moonraker-style `; thumbnail begin` blocks (the sizes the machine profile's

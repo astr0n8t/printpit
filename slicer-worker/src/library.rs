@@ -1,17 +1,19 @@
 //! Orca's bundled system profiles, and flattening of `inherits` chains.
 //!
-//! The 2.4.2 CLI does not resolve `inherits` itself: it reads each file as-is, and the values that
-//! matter (`compatible_printers`, most settings) live in the parents. So everything handed to Orca is
-//! flattened here first: walk the chain to its root, then apply each child's keys over its parent's.
+//! Orca's CLI reads each preset file as-is (2.4.2), or resolves `inherits` only for presets saved in
+//! its own data dir (2.5), and the values that matter (`compatible_printers`, most settings) live in
+//! the parents. So everything handed to Orca is flattened here first: walk the chain to its root, then
+//! apply each child's keys over its parent's. At slice time the flattened presets are handed over as
+//! standalone system profiles (`api::standalone`).
 //!
 //! Layout: `profiles/<Vendor>.json` lists `machine_model_list`, `machine_list`, `process_list` and
 //! `filament_list` as `{name, sub_path}` under `profiles/<Vendor>/`. Filaments a vendor doesn't ship come
 //! from the shared `OrcaFilamentLibrary` vendor. Entries with `"instantiation": "true"` are selectable;
 //! the rest (`fdm_*_common`, …) are abstract bases.
 //!
-//! The CLI decides whether a process fits a printer by the printer's *system name*: its own name for a
-//! `"from": "system"` profile, otherwise its `inherits`. So a flattened **user** preset keeps
-//! `inherits` pointing at its nearest system ancestor; a flattened system profile drops it.
+//! A flattened **user** preset keeps `inherits` pointing at its nearest system ancestor, to record
+//! where it came from (printpit matches processes to printers by it); a flattened system profile
+//! drops it.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};

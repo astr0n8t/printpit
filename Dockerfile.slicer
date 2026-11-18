@@ -7,31 +7,42 @@
 # so amd64 and arm64 build without emulation.
 
 # ── orca: fetch the pinned AppImage, verify it, and cut it down to what the CLI needs ─────────
-# To bump Orca: update ORCA_VERSION and both hashes, rebuild, and run slicer-worker/golden/run.sh.
+# To bump Orca: update ORCA_VERSION, both hashes and ORCA_COMMIT (the release tag's commit:
+# `git ls-remote https://github.com/OrcaSlicer/OrcaSlicer refs/tags/v<version>`), rebuild, and run
+# slicer-worker/golden/run.sh.
 FROM --platform=$BUILDPLATFORM ubuntu:24.04 AS orca
 ARG BUILDARCH
 ARG TARGETARCH
-ARG ORCA_VERSION=2.4.2
+ARG ORCA_VERSION=2.5.1
 ARG ORCA_RELEASES=https://github.com/OrcaSlicer/OrcaSlicer/releases/download
+ARG ORCA_REPO=https://github.com/OrcaSlicer/OrcaSlicer.git
+ARG ORCA_COMMIT=eef7710cb102fdb51a9bcdbd9efd61047f44774a
 RUN set -eu; \
     case "$TARGETARCH" in \
-      amd64) echo "x86_64-linux-gnu gcc-x86-64-linux-gnu OrcaSlicer_Linux_AppImage_Ubuntu2404_V${ORCA_VERSION}.AppImage d12fb8c8eac1aecd2dfb6377acd48f994f8fa439ed5292fa532dd82880f029fd" ;; \
-      arm64) echo "aarch64-linux-gnu gcc-aarch64-linux-gnu OrcaSlicer_Linux_AppImage_Ubuntu2404_aarch64_V${ORCA_VERSION}.AppImage e1a07275a25f176626c55a5df39e91bc4476d8c28ee4a3192ff758e29dd5c3ba" ;; \
+      amd64) echo "x86_64-linux-gnu gcc-x86-64-linux-gnu OrcaSlicer_Linux_AppImage_Ubuntu2404_V${ORCA_VERSION}.AppImage 073b8105c928356141db0ddbce88b81d52c7a9e2442f9baae0a9089c89ff04eb" ;; \
+      arm64) echo "aarch64-linux-gnu gcc-aarch64-linux-gnu OrcaSlicer_Linux_AppImage_Ubuntu2404_aarch64_V${ORCA_VERSION}.AppImage 1336bbae0359466632066697780f314a8564542f8278e9ea4cdf18ec61383fc0" ;; \
       *) echo "unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
     esac > /orca-target; \
     set -- $(cat /orca-target); \
     if [ "$TARGETARCH" = "$BUILDARCH" ]; then cc="gcc libc6-dev"; else cc="$2"; fi; \
     apt-get update; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      ca-certificates curl squashfs-tools python3-minimal $cc; \
+      ca-certificates curl git squashfs-tools python3-minimal $cc; \
     rm -rf /var/lib/apt/lists/*
 RUN set -eu; set -- $(cat /orca-target); \
     curl -fsSL --retry 3 -o /orca.AppImage "$ORCA_RELEASES/v$ORCA_VERSION/$3"; \
     echo "$4  /orca.AppImage" | sha256sum -c -
+# Since 2.5 the AppImage packs the system profiles into binary caches; the worker reads them as JSON,
+# so those come from the release's source tree (only the profile JSON, fetched by commit hash).
+RUN set -eu; git init -q /orca-src; cd /orca-src; \
+    git fetch -q --depth 1 --filter=blob:none "$ORCA_REPO" "$ORCA_COMMIT"; \
+    git sparse-checkout set --no-cone '/resources/profiles/**/*.json'; \
+    git checkout -q FETCH_HEAD; \
+    [ "$(git rev-parse HEAD)" = "$ORCA_COMMIT" ]
 COPY slicer-worker/docker/ /build/
 RUN set -eu; set -- $(cat /orca-target); \
-    /build/prepare-orca.sh /orca.AppImage "$1" /opt/orca; \
-    rm /orca.AppImage
+    /build/prepare-orca.sh /orca.AppImage "$1" /opt/orca /orca-src/resources/profiles; \
+    rm -rf /orca.AppImage /orca-src
 
 # ── build: the worker, a static musl binary (same toolchain as printpit's Dockerfile) ─────────
 FROM --platform=$BUILDPLATFORM rust:1.97-alpine AS build
