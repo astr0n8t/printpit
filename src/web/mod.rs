@@ -16,6 +16,7 @@ pub mod security;
 mod select;
 mod slice;
 mod slicer;
+mod spools;
 mod system;
 mod temps;
 mod totp;
@@ -120,6 +121,11 @@ pub fn router(state: AppState) -> Router {
             )),
         )
         .route("/slicer/profiles/{id}", delete(slicer::delete_profile))
+        .route("/ui/spools", get(spools::tab))
+        .route("/p/{id}/spools", get(spools::slots))
+        .route("/p/{id}/spools/assign", post(spools::assign))
+        .route("/p/{id}/spools/sync", post(spools::sync))
+        .route("/p/{id}/spools/settings", post(spools::save_settings))
         .route("/presets", post(presets::create))
         .route("/presets/{id}", post(presets::update).delete(presets::delete))
         .route("/ui/users", get(users::list))

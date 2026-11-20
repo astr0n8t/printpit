@@ -72,6 +72,8 @@ struct Inner {
     log_bytes_sent: AtomicUsize,
     fs: Mutex<MockFs>,
     scripts: Mutex<Vec<String>>,
+    /// Jobs added by tests, after the fixed ones (job ids from `HISTORY_JOBS` up).
+    extra_jobs: Mutex<Vec<Value>>,
 }
 
 /// In-memory `gcodes` root: file path → (bytes, modified), plus directories.
@@ -153,6 +155,7 @@ impl MockMoonraker {
             log_bytes_sent: AtomicUsize::new(0),
             fs: Mutex::new(MockFs::default()),
             scripts: Mutex::new(Vec::new()),
+            extra_jobs: Mutex::new(Vec::new()),
         });
         let app = Router::new()
             .route("/server/info", get(server_info))
@@ -259,6 +262,30 @@ impl MockMoonraker {
 
     pub fn print_state(&self) -> String {
         self.inner.print_state.lock().unwrap().clone()
+    }
+
+    /// Adds a job to the history and returns its id. `job` needs at least `status`,
+    /// `start_time` and `filament_used`; the rest gets defaults.
+    pub fn add_job(&self, job: Value) -> String {
+        let mut jobs = self.inner.extra_jobs.lock().unwrap();
+        let id = format!("{:06X}", HISTORY_JOBS + jobs.len());
+        let mut full = json!({"job_id": id, "exists": true, "filename": "benchy.gcode",
+                              "end_time": null, "print_duration": 600.0, "total_duration": 620.0,
+                              "metadata": {"size": 1000, "modified": 1_600_000_000.0}});
+        for (k, v) in job.as_object().unwrap() {
+            full[k] = v.clone();
+        }
+        jobs.push(full);
+        id
+    }
+
+    /// Changes a job added with [`add_job`](Self::add_job) (e.g. `in_progress` → `completed`).
+    pub fn update_job(&self, id: &str, changes: Value) {
+        let mut jobs = self.inner.extra_jobs.lock().unwrap();
+        let job = jobs.iter_mut().find(|j| j["job_id"] == id).unwrap();
+        for (k, v) in changes.as_object().unwrap() {
+            job[k] = v.clone();
+        }
     }
 
     /// Changes `print_stats.state` (pushed to WebSocket subscribers within 50 ms).
@@ -771,14 +798,19 @@ async fn history_list(State(mock): State<Mock>, Query(q): Query<BTreeMap<String,
     }
     let start: usize = q.get("start").and_then(|s| s.parse().ok()).unwrap_or(0);
     let limit: usize = q.get("limit").and_then(|s| s.parse().ok()).unwrap_or(50);
-    assert_eq!(q.get("order").map(String::as_str), Some("desc"));
-    let jobs: Vec<Value> = (0..HISTORY_JOBS)
-        .rev()
-        .skip(start)
-        .take(limit)
-        .map(history_job_json)
-        .collect();
-    ok(json!({"count": HISTORY_JOBS, "jobs": jobs}))
+    // Like Moonraker: `since` compares start times, `order` sorts by job id.
+    let since: f64 = q.get("since").and_then(|s| s.parse().ok()).unwrap_or(-1.0);
+    let mut jobs: Vec<Value> = (0..HISTORY_JOBS).map(history_job_json).collect();
+    jobs.extend(mock.extra_jobs.lock().unwrap().iter().cloned());
+    jobs.retain(|j| since < 0.0 || j["start_time"].as_f64().unwrap() > since);
+    match q.get("order").map(String::as_str) {
+        Some("desc") => jobs.reverse(),
+        Some("asc") => {}
+        other => panic!("unexpected order {other:?}"),
+    }
+    let count = jobs.len();
+    let jobs: Vec<Value> = jobs.into_iter().skip(start).take(limit).collect();
+    ok(json!({"count": count, "jobs": jobs}))
 }
 
 async fn history_totals(State(mock): State<Mock>) -> Response {

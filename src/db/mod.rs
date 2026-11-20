@@ -7,6 +7,7 @@ pub mod presets;
 pub mod printers;
 pub mod sessions;
 pub mod slicer;
+pub mod spoolman;
 pub mod totp;
 pub mod users;
 

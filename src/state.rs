@@ -16,6 +16,7 @@ use crate::moonraker::webcam::WebcamCache;
 use crate::moonraker::{self, Egress, MoonrakerClient, MoonrakerError};
 use crate::notify::Notifier;
 use crate::slicer::{Slicing, SlicingError};
+use crate::spoolman::Spoolman;
 
 #[derive(Debug, thiserror::Error)]
 pub enum StartupError {
@@ -46,6 +47,8 @@ pub struct AppState {
     pub notifier: Arc<Notifier>,
     /// The slicer worker, its storage and settings; `None` when slicing is off.
     pub slicing: Option<Arc<Slicing>>,
+    /// Filament tracking in Spoolman; `None` when `PRINTPIT_SPOOLMAN_URL` is unset.
+    pub spoolman: Option<Arc<Spoolman>>,
 }
 
 impl AppState {
@@ -78,6 +81,11 @@ impl AppState {
             .clone()
             .map(|s| Slicing::new(s, &config.data_dir).map(Arc::new))
             .transpose()?;
+        let spoolman = config
+            .spoolman
+            .as_ref()
+            .map(|c| Spoolman::new(c, db.clone(), hub.clone(), egress.clone(), cipher.clone()))
+            .transpose()?;
         Ok(Self {
             config: Arc::new(config),
             db,
@@ -91,6 +99,7 @@ impl AppState {
             slicer,
             notifier,
             slicing,
+            spoolman,
         })
     }
 
@@ -112,6 +121,9 @@ impl AppState {
         if let Ok(rt) = tokio::runtime::Handle::try_current() {
             let notifier = self.notifier.clone();
             rt.spawn(async move { notifier.sync().await });
+            if let Some(sp) = self.spoolman.clone() {
+                rt.spawn(async move { sp.sync_watches().await });
+            }
         }
     }
 
@@ -119,6 +131,14 @@ impl AppState {
     /// `PRINTPIT_NOTIFY_WEBHOOK_URL`).
     pub async fn start_notifications(&self) {
         self.notifier.sync().await;
+    }
+
+    /// Starts watching the printers with filament tracking on (no-op without
+    /// `PRINTPIT_SPOOLMAN_URL`).
+    pub async fn start_spoolman(&self) {
+        if let Some(sp) = &self.spoolman {
+            sp.start().await;
+        }
     }
 
     /// Starts the slice queue (no-op when slicing is off). Jobs a restart cut short are marked

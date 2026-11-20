@@ -3,6 +3,7 @@
 
 pub mod moonraker;
 pub mod slicer;
+pub mod spoolman;
 
 use std::collections::HashMap;
 

@@ -164,6 +164,8 @@ All settings are environment variables.
 | `PRINTPIT_SLICER_TIMEOUT_SECS` | `1800` | Give up on a slice (upload, slicing and download) after this long. |
 | `PRINTPIT_SLICER_MAX_MODEL_MB` | `200` | Largest model upload. |
 | `PRINTPIT_SLICER_RETENTION_HOURS` | `72` | Delete models and sliced G-code from `/data/slicer` after this long. |
+| `PRINTPIT_SPOOLMAN_URL` | unset | Spoolman, e.g. `http://spoolman:7912` (see Filament tracking). Unset means no Spools tab. Never logged or shown. |
+| `PRINTPIT_SPOOLMAN_TOKEN` / `_FILE` | unset | Optional: sent as `Authorization: Bearer` for a proxy in front of Spoolman (Spoolman itself has no auth). |
 | `PRINTPIT_LOG_FORMAT` | `pretty` | `pretty` or `json`. |
 | `RUST_LOG` | `info` | Log filter, e.g. `info,printpit=debug`. |
 
@@ -183,6 +185,20 @@ Set `PRINTPIT_NOTIFY_WEBHOOK_URL` and a **notify** checkbox appears on each prin
 `text` suits Slack-style incoming webhooks and `content` suits Discord, so those work as they are; anything else can read the structured fields. Failed deliveries are retried twice.
 
 Normally printpit only talks to a printer while someone is looking at it. A printer with notifications on is the exception: printpit keeps its connection open all the time so it can see the print end. The webhook request goes out through the container's normal network, not the printer network (`PRINTPIT_EGRESS_BIND` and `PRINTPIT_PRINTER_CIDRS` don't apply to it).
+
+### Filament tracking with Spoolman (optional)
+
+printpit can keep [Spoolman](https://github.com/Donkie/Spoolman) up to date **without your printers talking to Spoolman**. Leave Moonraker's `[spoolman]` section out; printpit reads each printer's job history (Moonraker's `[history]` must be on) and books the filament itself.
+
+1. Set `PRINTPIT_SPOOLMAN_URL` (and `PRINTPIT_SPOOLMAN_TOKEN` if a proxy in front of Spoolman wants a bearer token). A **[7] Spools** tab appears.
+2. An admin ticks **track this printer's filament in Spoolman** for each printer and sets its number of **tools**: 1 for a single extruder, or the extruders or multi-material lanes (T0, T1, …).
+3. Operators choose which spool is loaded in each tool. Changing a spool first books the jobs that already finished to the old one.
+
+When a job ends (completed, cancelled or failed), printpit books the filament Klipper measured (`filament_used`) to the loaded spool, as a length, so Spoolman converts it with that spool's density and diameter. Cancelled and failed prints count only what was used. Only jobs that start after tracking is turned on count, and each job is booked at most once.
+
+With more than one tool, Klipper's total doesn't say which tool used what. printpit splits it by the slicer's per-tool filament weights (`; filament used [g] = …`, written by OrcaSlicer, PrusaSlicer and SuperSlicer; tool *n* = filament *n*), scaled down for a print that stopped early. A job that used one tool is booked to it exactly. If the file doesn't say, the job is listed as skipped with the reason, and nothing is guessed.
+
+The tab lists recent bookings and why anything was skipped. If Spoolman is down, a booking is retried at the next sync. **sync now** reads the history on demand. Like notifications, a tracked printer's connection stays open all the time so printpit sees jobs end; it also catches up when the connection comes back, so jobs that ended while printpit was down are still booked. Requests to Spoolman go out through the container's normal network, not the printer network.
 
 ### Slicing (optional)
 
@@ -242,8 +258,8 @@ Worker settings (environment variables of `printpit-slicer`):
 | Role | Can |
 |---|---|
 | viewer | Watch the dashboard and camera, browse and download files, read logs and system info. |
-| operator | Also start, pause, resume, cancel and e-stop prints, set heater temperatures and apply presets, upload, move and delete files, and slice models. |
-| admin | Also manage printers, temperature presets, the slicer profile library and users, and read the audit log. Only admins see printer addresses. |
+| operator | Also start, pause, resume, cancel and e-stop prints, set heater temperatures and apply presets, upload, move and delete files, slice models, and choose the loaded spools. |
+| admin | Also manage printers, filament tracking, temperature presets, the slicer profile library and users, and read the audit log. Only admins see printer addresses. |
 
 Anyone can turn on **two-factor sign-in** on the **[a] Account** tab: scan the QR code with an authenticator app (any TOTP app: Aegis, 2FAS, Google Authenticator, 1Password…), confirm with a code, and save the ten one-time recovery codes. Turning it off or making new recovery codes needs both your password and a code. If someone loses their phone and their recovery codes, an admin can **reset 2fa** for them on the Users tab.
 
@@ -251,7 +267,7 @@ Admins manage users on the **[u] Users** tab. Disabling a user, resetting their 
 
 ## Keyboard
 
-`1`–`5` switch tabs (dashboard, files, logs, system, history), plus `6` for Slice when slicing is on. `a` opens your account, and admins have `p`/`u`/`l` (and `s` for the Slicer). `r` refreshes what's on screen, `/` filters a list, `j`/`k`/`Enter` move through it, and `y`/`n` answer confirmations. Press `?` for the full list.
+`1`–`5` switch tabs (dashboard, files, logs, system, history), plus `6` for Slice when slicing is on and `7` for Spools when Spoolman is. `a` opens your account, and admins have `p`/`u`/`l` (and `s` for the Slicer). `r` refreshes what's on screen, `/` filters a list, `j`/`k`/`Enter` move through it, and `y`/`n` answer confirmations. Press `?` for the full list.
 
 ## Backup and restore
 
@@ -282,9 +298,11 @@ Restore by extracting into an empty volume. You need the **same `PRINTPIT_SECRET
 ```sh
 cargo run --example mock_moonraker      # fake printers on 127.0.0.1:7201-7203
 cargo run --example mock_slicer         # fake slicer on 127.0.0.1:8091 (no OrcaSlicer needed)
+cargo run --example mock_spoolman       # fake Spoolman on 127.0.0.1:7912/spoolman + a printer on :7204 that finishes a job every 20 s
 PRINTPIT_SECRET_KEY=$(openssl rand -base64 32) PRINTPIT_SECURE_COOKIES=false \
   PRINTPIT_PRINTER_CIDRS=127.0.0.0/8 PRINTPIT_BIND=127.0.0.1:8080 cargo run
 # add PRINTPIT_SLICER_URL=http://127.0.0.1:8091 PRINTPIT_SLICER_TOKEN=mock-slicer-token-0123456789abcdef to slice
+# add PRINTPIT_SPOOLMAN_URL=http://127.0.0.1:7912/spoolman for the Spools tab
 cargo fmt --all && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
 docker build -f Dockerfile.slicer -t printpit-slicer . && slicer-worker/golden/run.sh printpit-slicer   # real OrcaSlicer
 ```

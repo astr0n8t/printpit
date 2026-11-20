@@ -22,6 +22,9 @@
 {%- endif %}{% else %}
       <tr><td><kbd>1</kbd>–<kbd>5</kbd></td><td>dashboard · files · logs · system · history</td></tr>
 {%- endif %}
+{%- if let Some(user) = layout.user %}{% if user.spoolman %}
+      <tr><td><kbd>7</kbd></td><td>spools</td></tr>
+{%- endif %}{% endif %}
       <tr><td><kbd>a</kbd></td><td>account</td></tr>
 {%- if let Some(user) = layout.user %}{% if user.role == "admin" %}
 {%- if user.slicing %}

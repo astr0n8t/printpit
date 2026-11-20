@@ -60,6 +60,9 @@ services:
       # `docker compose --profile slicer up -d`. Empty means off.
       PRINTPIT_SLICER_URL: ${PRINTPIT_SLICER_URL:-}
       PRINTPIT_SLICER_TOKEN: ${PRINTPIT_SLICER_TOKEN:-}
+      # Optional filament tracking in Spoolman (see README). Empty means off.
+      PRINTPIT_SPOOLMAN_URL: ${PRINTPIT_SPOOLMAN_URL:-}
+      PRINTPIT_SPOOLMAN_TOKEN: ${PRINTPIT_SPOOLMAN_TOKEN:-}
       RUST_LOG: ${RUST_LOG:-info}
     volumes:
       - printpit-data:/data

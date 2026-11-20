@@ -127,6 +127,19 @@ impl MoonrakerClient {
         .await
     }
 
+    /// Jobs that started after `since` (unix seconds), oldest first.
+    pub async fn history_since(
+        &self,
+        since: f64,
+        start: u64,
+        limit: u64,
+    ) -> Result<HistoryList, MoonrakerError> {
+        self.get_json(&format!(
+            "/server/history/list?since={since}&start={start}&limit={limit}&order=asc"
+        ))
+        .await
+    }
+
     pub async fn history_totals(&self) -> Result<JobTotals, MoonrakerError> {
         Ok(self
             .get_json::<HistoryTotals>("/server/history/totals")

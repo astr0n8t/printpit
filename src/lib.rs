@@ -7,6 +7,7 @@ pub mod healthcheck;
 pub mod moonraker;
 pub mod notify;
 pub mod slicer;
+pub mod spoolman;
 pub mod state;
 pub mod telemetry;
 pub mod web;
