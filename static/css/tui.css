@@ -243,6 +243,8 @@ pre, .log {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* Multi-line messages, e.g. the slicer's own error with its `^` under the bad spot. */
+p.lines { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* ── Modal (native <dialog>) ──────────────────────────────────────── */
 

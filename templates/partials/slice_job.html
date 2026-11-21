@@ -8,7 +8,7 @@
 {%- endif %}
   <p><span class="badge {{ class }}">{{ label }}</span> <strong>{{ model }}</strong> <span class="dim">for {{ printer }} · {{ created }}</span></p>
 {%- if let Some(m) = message %}
-  <p class="{{ message_class }}">{{ m }}</p>
+  <p class="{{ message_class }} lines">{{ m }}</p>
 {%- endif %}
 {%- if !previews.is_empty() %}
   <div class="slice-preview">

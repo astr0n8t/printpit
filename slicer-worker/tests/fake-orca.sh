@@ -1,7 +1,7 @@
 #!/bin/sh
 # A stand-in for `orca-slicer` in the worker's tests. The model file's first line picks what it does:
 #   FAKE <mode> [record_dir]
-# modes: ok, fail, sleep, crash, noresult, nogcode. With a record_dir it copies its arguments,
+# modes: ok, fail, exportfail, sleep, crash, noresult, nogcode. With a record_dir it copies its arguments,
 # environment and the profiles it was given there, so tests can check them after the temp dir is gone.
 
 for a in "$@"; do last=$a; done
@@ -68,6 +68,19 @@ case "$mode" in
     fail)
         echo '{"return_code": -6, "error_string": "The input model file to the slicer can not be parsed."}' > "$outdir/result.json"
         exit 250
+        ;;
+    exportfail)
+        # What 2.5.1 does when the G-code export throws: a generic result.json, the reason on stderr.
+        [ -n "$logfile" ] && echo "found slicing or export error for partplate $plate" >> "$logfile"
+        {
+            echo "Failed to generate G-code for invalid custom G-code."
+            echo "machine_end_gcode Parsing error at line 4: Not a variable name"
+            echo "G1 Z{nosuchvar} ; in $PWD"
+            echo "     ^"
+            echo "run found error, return -100, exit..."
+        } >&2
+        echo '{"return_code": -100, "error_string": "Failed slicing the model. Please verify the slicing of all plates on Orca Slicer before uploading."}' > "$outdir/result.json"
+        exit 156
         ;;
     sleep)
         sleep 300 &

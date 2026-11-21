@@ -212,15 +212,33 @@ pub fn classify(code: i32) -> &'static str {
     }
 }
 
-/// The last lines of the slicer's log, with the job's paths taken out.
+/// The last lines of the slicer's log, then what it printed itself, with the job's paths taken out.
 pub fn log_tail(dir: &Path, orca: &Path) -> Vec<String> {
-    let text = [LOG, STDIO]
-        .iter()
-        .filter_map(|f| std::fs::read(dir.join(f)).ok())
-        .find(|b| !b.is_empty())
-        .map(|b| String::from_utf8_lossy(&b).into_owned())
-        .unwrap_or_default();
+    let read = |f: &str| {
+        std::fs::read(dir.join(f))
+            .map(|b| String::from_utf8_lossy(&b).into_owned())
+            .unwrap_or_default()
+    };
+    let mut text = read(LOG);
+    let output = read(STDIO);
+    if !text.is_empty() && !output.trim().is_empty() {
+        text.push_str("--- slicer output ---\n");
+    }
+    text.push_str(&output);
     scrub(&text, dir, orca)
+}
+
+/// Why the slicer failed, in its own words, when it printed any. When the G-code export throws
+/// (a bad placeholder in custom G-code, say), the CLI's log and `result.json` only say "found
+/// slicing or export error" / "Failed slicing the model"; the exception's text goes to stderr.
+pub fn failure_reason(dir: &Path, orca: &Path) -> Option<String> {
+    let text = std::fs::read(dir.join(STDIO)).ok()?;
+    let lines: Vec<String> = scrub(&String::from_utf8_lossy(&text), dir, orca)
+        .into_iter()
+        // The CLI's own sign-off, e.g. "run found error, return -100, exit...".
+        .filter(|l| !l.starts_with("run found error"))
+        .collect();
+    (!lines.is_empty()).then(|| lines.join("\n"))
 }
 
 pub fn scrub(text: &str, dir: &Path, orca: &Path) -> Vec<String> {

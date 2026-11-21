@@ -332,11 +332,15 @@ async fn slice(State(app): State<App>, mut multipart: Multipart) -> Result<Respo
     if result.return_code != 0 {
         let kind = orca::classify(result.return_code);
         tracing::info!(secs, code = result.return_code, kind, "slice rejected");
-        let error = if result.error_string.trim().is_empty() {
-            format!("the slicer failed (code {})", result.return_code)
-        } else {
-            result.error_string.trim().to_string()
-        };
+        // Orca's own words beat result.json's, which for an export error is only a generic
+        // "Failed slicing the model".
+        let error = orca::failure_reason(dir.path(), &app.config.orca).unwrap_or_else(|| {
+            if result.error_string.trim().is_empty() {
+                format!("the slicer failed (code {})", result.return_code)
+            } else {
+                result.error_string.trim().to_string()
+            }
+        });
         return Err(ApiError::slicer(kind, error, Some(result.return_code), tail()));
     }
     let gcode = orca::gcode_path(dir.path(), options.plate);
