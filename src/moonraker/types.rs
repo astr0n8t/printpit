@@ -132,6 +132,10 @@ pub struct FileMetadata {
     pub estimated_time: Option<f64>,
     pub filament_total: Option<f64>,
     pub filament_weight_total: Option<f64>,
+    /// Grams per filament (index = tool), from slicers that write `; filament used [g] = a, b`.
+    pub filament_weights: Option<Vec<f64>>,
+    /// The tools the G-code selects (`; referenced_tools = 0,2`), where the slicer says.
+    pub referenced_tools: Option<Vec<i64>>,
     pub layer_height: Option<f64>,
     pub first_layer_height: Option<f64>,
     pub object_height: Option<f64>,

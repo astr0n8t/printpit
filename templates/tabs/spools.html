@@ -1,0 +1,60 @@
+{%- if let Some(sel) = select %}
+<div class="tab-head">{{ sel|safe }}</div>
+{%- if let Some(n) = notice %}
+<p class="ok" role="status">✓ {{ n }}</p>
+{%- endif %}
+{%- if let Some(e) = error %}
+<p class="err" role="alert">! {{ e }}</p>
+{%- endif %}
+<section class="panel" id="tracking">
+  <h2 class="panel-title">filament tracking</h2>
+{%- if tracking %}
+  <p><span class="badge badge-ok">TRACKING</span> Each job's filament is booked to the loaded spools when it ends. Jobs that started before tracking was turned on ({{ since }}) aren't counted.</p>
+{%- if let Some(e) = sync_error %}
+  <p class="err" role="alert">! last sync{% if let Some(at) = last_sync %} ({{ at }}){% endif %}: {{ e }}</p>
+{%- else if let Some(at) = last_sync %}
+  <p class="dim">Last read the printer's job history {{ at }}.</p>
+{%- endif %}
+{%- if is_operator %}
+  <div class="actions"><button hx-post="/p/{{ id }}/spools/sync" hx-target="#main" hx-disabled-elt="this">sync now</button></div>
+{%- endif %}
+{%- else %}
+  <p><span class="badge badge-dim">OFF</span> Nothing is booked to Spoolman for this printer.{% if !is_admin %} An admin can turn tracking on.{% endif %}</p>
+{%- endif %}
+{%- if is_admin %}
+  <form hx-post="/p/{{ id }}/spools/settings" hx-target="#main">
+    <div class="field">
+      <label><input type="checkbox" name="tracking"{% if tracking %} checked{% endif %}>track this printer's filament in Spoolman</label>
+      <p class="dim">printpit reads the printer's job history and books the filament itself; the printer never talks to Spoolman (leave Moonraker's [spoolman] section out). printpit then keeps this printer's connection open all the time, to see jobs end. Needs Moonraker's [history].</p>
+    </div>
+    <div class="field">
+      <label for="spool-tools">tools</label>
+      <input id="spool-tools" name="tools" type="number" min="1" max="{{ max_tools }}" value="{{ tools }}" inputmode="numeric">
+      <p class="dim">Filament slots: extruders, or the lanes of a multi-material unit (T0, T1, …). With more than one, a job is split by the slicer's per-tool filament weights, which OrcaSlicer, PrusaSlicer and SuperSlicer write.</p>
+    </div>
+    <div class="actions"><button class="primary">save tracking</button></div>
+  </form>
+{%- endif %}
+</section>
+<div id="spool-slots" hx-get="/p/{{ id }}/spools" hx-trigger="load"><p class="dim">loading spools…</p></div>
+<section class="panel" id="bookings">
+  <h2 class="panel-title">bookings</h2>
+{%- if bookings.is_empty() %}
+  <p class="dim">Nothing booked yet.</p>
+{%- else %}
+  <ul class="report">
+{%- for b in bookings %}
+    <li><span class="badge {{ b.class }}">{{ b.label }}</span> {{ b.filename }} <span class="dim">· ended {{ b.ended }} · {{ b.used }}</span>
+{%- if !b.parts.is_empty() %}<br>{{ b.parts|join(", ") }}{% endif %}
+{%- if !b.note.is_empty() %}<br><span class="dim">{{ b.note }}</span>{% endif %}
+{%- if let Some(e) = b.error %}<br><span class="err">! {{ e }}</span>{% endif %}</li>
+{%- endfor %}
+  </ul>
+{%- endif %}
+</section>
+{%- else %}
+<section class="panel">
+  <h2 class="panel-title">spools</h2>
+  <p>No printers configured yet.</p>
+</section>
+{%- endif %}

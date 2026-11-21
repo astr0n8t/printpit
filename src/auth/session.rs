@@ -98,6 +98,8 @@ pub struct CurrentUser {
     pub theme: Theme,
     /// Slicing is configured (`PRINTPIT_SLICER_URL`): shows the slicing tabs.
     pub slicing: bool,
+    /// Spoolman is configured (`PRINTPIT_SPOOLMAN_URL`): shows the Spools tab.
+    pub spoolman: bool,
 }
 
 impl CurrentUser {
@@ -199,6 +201,7 @@ fn current_user(s: sessions::SessionUser, hash: Vec<u8>) -> CurrentUser {
         session_hash: hash,
         theme: Theme::parse(s.theme.as_deref()),
         slicing: false,
+        spoolman: false,
     }
 }
 
@@ -286,11 +289,13 @@ pub async fn require_auth(
     match (check, sso_name) {
         (SessionCheck::Valid(mut user), None) => {
             user.slicing = state.slicing.is_some();
+            user.spoolman = state.spoolman.is_some();
             req.extensions_mut().insert(*user);
             Ok(next.run(req).await)
         }
         (SessionCheck::Valid(mut user), Some(name)) if name.eq_ignore_ascii_case(&user.username) => {
             user.slicing = state.slicing.is_some();
+            user.spoolman = state.spoolman.is_some();
             req.extensions_mut().insert(*user);
             Ok(next.run(req).await)
         }
@@ -306,6 +311,7 @@ pub async fn require_auth(
                 .map(str::to_string);
             let (mut user, cookie) = sso_session(&state, ip, user_agent.as_deref(), &name).await?;
             user.slicing = state.slicing.is_some();
+            user.spoolman = state.spoolman.is_some();
             req.extensions_mut().insert(user);
             let mut res = next.run(req).await;
             if let Ok(v) = HeaderValue::from_str(&cookie.to_string()) {

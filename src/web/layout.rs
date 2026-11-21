@@ -34,6 +34,7 @@ pub enum Tab {
     System,
     History,
     Slice,
+    Spools,
     Printers,
     Slicer,
     Users,
@@ -42,13 +43,14 @@ pub enum Tab {
 }
 
 impl Tab {
-    pub const ALL: [Tab; 11] = [
+    pub const ALL: [Tab; 12] = [
         Tab::Dashboard,
         Tab::Files,
         Tab::Logs,
         Tab::System,
         Tab::History,
         Tab::Slice,
+        Tab::Spools,
         Tab::Printers,
         Tab::Slicer,
         Tab::Users,
@@ -64,6 +66,7 @@ impl Tab {
             Tab::System => "/ui/system",
             Tab::History => "/ui/history",
             Tab::Slice => "/ui/slice",
+            Tab::Spools => "/ui/spools",
             Tab::Printers => "/ui/printers",
             Tab::Slicer => "/ui/slicer",
             Tab::Users => "/ui/users",
@@ -80,6 +83,7 @@ impl Tab {
             Tab::System => "System",
             Tab::History => "History",
             Tab::Slice => "Slice",
+            Tab::Spools => "Spools",
             Tab::Printers => "Printers",
             Tab::Slicer => "Slicer",
             Tab::Users => "Users",
@@ -96,6 +100,7 @@ impl Tab {
             Tab::System => "system",
             Tab::History => "history",
             Tab::Slice => "slice",
+            Tab::Spools => "spools",
             Tab::Printers => "printers",
             Tab::Slicer => "slicer",
             Tab::Users => "users",
@@ -112,6 +117,7 @@ impl Tab {
             Tab::System => "4",
             Tab::History => "5",
             Tab::Slice => "6",
+            Tab::Spools => "7",
             Tab::Printers => "p",
             Tab::Slicer => "s",
             Tab::Users => "u",
@@ -133,6 +139,11 @@ impl Tab {
         matches!(self, Tab::Slice | Tab::Slicer)
     }
 
+    /// Shown only when Spoolman is configured.
+    pub fn needs_spoolman(self) -> bool {
+        self == Tab::Spools
+    }
+
     /// Pushed to the right-hand end of the strip.
     pub fn is_secondary(self) -> bool {
         self == Tab::Account
@@ -144,6 +155,7 @@ pub struct UserBadge {
     pub username: String,
     pub role: &'static str,
     pub slicing: bool,
+    pub spoolman: bool,
 }
 
 /// Data every full page needs.
@@ -174,6 +186,7 @@ impl Layout {
                 username: user.username.clone(),
                 role: user.role.as_str(),
                 slicing: user.slicing,
+                spoolman: user.spoolman,
             }),
             csrf: Some(user.csrf_token.clone()),
             theme: Some(user.theme.as_str()).filter(|t| *t != "auto"),
@@ -209,7 +222,11 @@ impl TabsTemplate {
             oob,
             tabs: Tab::ALL
                 .into_iter()
-                .filter(|t| user.has(t.min_role()) && (user.slicing || !t.needs_slicing()))
+                .filter(|t| {
+                    user.has(t.min_role())
+                        && (user.slicing || !t.needs_slicing())
+                        && (user.spoolman || !t.needs_spoolman())
+                })
                 .collect(),
         }
     }

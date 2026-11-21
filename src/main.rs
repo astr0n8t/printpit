@@ -55,6 +55,7 @@ async fn serve(config: Config) -> std::io::Result<()> {
     state.spawn_maintenance();
     state.start_notifications().await;
     state.start_slicing().await;
+    state.start_spoolman().await;
     let app = web::router(state);
     let listener = tokio::net::TcpListener::bind(bind).await?;
     tracing::info!(%bind, version = printpit::VERSION, "printpit listening");

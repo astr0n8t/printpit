@@ -181,7 +181,8 @@ This is the core rule: **printpit talks to a printer only because a logged-in us
    - **Off:** no SSE stream and no timers. Each card and the System tab show a `[r] refresh` action that fetches a single snapshot (`/printer/objects/query` for cards). This is the lowest-traffic mode.
    - Toggling the box saves the setting (`POST /account/prefs`, CSRF-protected) and starts or stops the live stream right away, without a page reload.
    - The Logs tab's follow mode stays a separate toggle on that tab and is not remembered.
-8. **The one exception: print notifications.** A printer an admin has opted in to notifications (`printers.notify`, only offered when `PRINTPIT_NOTIFY_WEBHOOK_URL` is set) is watched permanently: `notify.rs` holds a hub subscription for it, so its WebSocket stays open with or without viewers, and posts to the webhook when a print leaves `printing`/`paused` for `complete`, `error` or `cancelled`. All other printers stay lazy.
+8. **Exception one: print notifications.** A printer an admin has opted in to notifications (`printers.notify`, only offered when `PRINTPIT_NOTIFY_WEBHOOK_URL` is set) is watched permanently: `notify.rs` holds a hub subscription for it, so its WebSocket stays open with or without viewers, and posts to the webhook when a print leaves `printing`/`paused` for `complete`, `error` or `cancelled`.
+9. **The second exception: filament tracking (§16).** A printer an admin turned Spoolman tracking on for (only offered when `PRINTPIT_SPOOLMAN_URL` is set) is watched the same way, so printpit sees jobs end and reads the history to book their filament. All other printers stay lazy.
 
 ---
 
@@ -260,6 +261,12 @@ GET  /p/{id}/temps                      temperatures modal (operator)
 POST /p/{id}/temp | /preset/{pid} | /cooldown
 POST /presets, POST|DELETE /presets/{id}   temperature presets (admin)
 GET  /ui/history, /p/{id}/history?start=, /p/{id}/history/job?uid=
+-- spoolman (§16; all 404 when PRINTPIT_SPOOLMAN_URL is unset) --
+GET  /ui/spools                         Spools tab: tracking, bookings (DB only)
+GET  /p/{id}/spools                     loaded-spools picker (one Spoolman call, no printer calls)
+POST /p/{id}/spools/assign              tool0..toolN = spool ids; syncs first (operator)
+POST /p/{id}/spools/sync                read history, book new jobs, retry failed ones (operator)
+POST /p/{id}/spools/settings            tracking on/off + tool count (admin)
 GET  /login/totp, POST /login/totp      second sign-in step (public, needs the pending cookie)
 GET  /account/totp/setup, POST /account/totp/{enable|disable|recovery}
 POST /users/{id}/totp/reset             (admin)
@@ -305,6 +312,13 @@ slice_jobs(id, user_id NULL, printer_id NULL /* SET NULL: a job outlives its use
            process_id NULL, filament_id NULL, options_json, start_print, output_name NULL, est_seconds NULL,
            filament_mm NULL, filament_g NULL, layers NULL, gcode_size NULL, error NULL, log_tail NULL,
            created_at, started_at NULL, finished_at NULL)
+-- M10 Spoolman (§16; migration 0010)
+spoolman_printers(printer_id PK FK CASCADE, tracking, tools, since REAL /* history cursor */, synced_at NULL,
+                  sync_error NULL)
+spoolman_slots(printer_id FK CASCADE, tool, spool_id, PK (printer_id, tool))
+spoolman_bookings(id, printer_id FK CASCADE, job_id, job_start, filename, job_status, job_end NULL, used_mm,
+                  status /* sending|booked|failed|error|skipped|unknown */, parts /* JSON */, note, error NULL,
+                  created_at, updated_at, UNIQUE (printer_id, job_id, job_start))
 ```
 
 ---
@@ -329,6 +343,7 @@ slice_jobs(id, user_id NULL, printer_id NULL /* SET NULL: a job outlives its use
 | `PRINTPIT_AUTH_HEADER` | *(unset)* | Trusted-header SSO header, e.g. `Remote-User` (§3.8) |
 | `PRINTPIT_AUTH_PROXY_CIDRS` | *(unset)* | Required with the header: peers whose header is believed |
 | `PRINTPIT_AUTH_LOGOUT_URL` | *(unset)* | Logout destination behind an auth proxy |
+| `PRINTPIT_SPOOLMAN_URL` / `_TOKEN` (+`_FILE`) | *(unset)* | Spoolman base URL and optional proxy bearer token. Unset = no Spools tab (§16) |
 | `PRINTPIT_SLICER_URL` | *(unset)* | Slicer worker base URL, e.g. `http://slicer:8090` (no credentials). Unset = slicing off (§15) |
 | `PRINTPIT_SLICER_TOKEN` (+`_FILE`) | *(required with the URL)* | Shared bearer token for the worker (≥24 printable characters) |
 | `PRINTPIT_SLICER_TIMEOUT_SECS` | `1800` | Give up on a worker request (upload, slice and download) after this; the worker then kills the slice |
@@ -374,6 +389,7 @@ slice_jobs(id, user_id NULL, printer_id NULL /* SET NULL: a job outlives its use
 
 9. **M8 – Later items:** slicer ETA, camera orientation, temperatures, history, notifications, TOTP, SSO.
 10. **M9 – Slicing:** OrcaSlicer sidecar worker, profile library, Slice tab, slice → upload → print (§15).
+11. **M10 – Spoolman:** book each job's filament to the loaded spools from Moonraker's history, printer never talks to Spoolman (§16).
 
 See `CHECKLIST.md` for the task-level breakdown.
 
@@ -507,3 +523,32 @@ The worker moved from 2.4.2 to **v2.5.1**. Assets as before: `OrcaSlicer_Linux_A
 - **Unchanged:** no thumbnails (the CLI still exports with a null thumbnail callback), the flags the worker uses (incl. `--clone-objects`, `--mstpp`), `result.json`, the config keys and enum values `slicer::options` writes, and the G-code markers the previews read. The golden test passes in full.
 - **Size:** the stripped binary is 133 MB (98 MB for 2.4.2); the amd64 image is 446 MB (325 MB). A cube slices in 0.1 s.
 - Not checked: the byte-identical G-code comparison against a full GUI-library install (done for 2.4.2), and running the arm64 image (it builds; the sandbox can't run arm64).
+
+---
+
+## 16. Filament tracking with Spoolman (M10, 2026-11-20)
+
+Goal: keep Spoolman's spools up to date without the printer talking to Spoolman. Moonraker's own `[spoolman]` component stays off; printpit is the only client of Spoolman.
+
+### 16.1 Source of truth: Moonraker's job history
+
+Each finished job in `/server/history/list` has `filament_used` (mm Klipper actually extruded, so a cancelled print counts only what it used) and a snapshot of the file's metadata. printpit books from there, not from live `print_stats` deltas: the history survives printpit restarts and connection drops, and a job is a natural unit to book exactly once.
+
+- `spoolman_printers.since` is a cursor: jobs that *started* after it (Moonraker's `since` filter is `start_time > since`, `order=asc` sorts by job id). It is set to "now" when tracking is turned on, so older jobs never count, and moves forward past settled jobs only, never past one still `in_progress`. It stays one second behind the last settled job, so two jobs with the same start time can't hide each other; re-read jobs are ignored.
+- `spoolman_bookings` has one row per job looked at, `UNIQUE (printer_id, job_id, job_start)` (job ids can repeat if Moonraker's history is reset). The row is inserted (`sending`) **before** Spoolman is called, so a job is never booked twice: if printpit stops mid-send the row becomes `unknown` at the next start and is not retried. Spoolman down or 5xx → `failed`, retried at each sync; a refusal (spool gone, 4xx) → `error`, not retried. Jobs with nothing to book → `skipped`, with the reason.
+- The spools booked are the ones loaded when the job is booked. Changing the loaded spools first syncs (under the same per-printer lock), so finished jobs go to the old spools.
+
+### 16.2 Amounts (`spoolman::plan`)
+
+- One tool: `PUT /api/v1/spool/{id}/use {"use_length": filament_used}`. Spoolman converts with the spool's own density and diameter.
+- Several tools (extruders or MMU lanes, `spoolman_printers.tools`, ≤16): Klipper's total isn't per tool. Moonraker's metadata has `filament_weights` (grams per filament, from `; filament used [g] = a, b, …`; index = tool) and `referenced_tools`. A job that used one tool books the exact length to it. Otherwise each tool gets `use_weight = weight × filament_used / filament_total` (the slicer's plan scaled to the share actually printed). Without per-tool data the job is skipped with a note, unless exactly one tool has a spool loaded.
+
+### 16.3 When it syncs (rule 2)
+
+`Spoolman` (in `AppState.spoolman`) holds a hub `Subscription` per tracked, enabled printer, like the notifier. It reuses `notify::Tracker` to see a job end, and also syncs when the connection comes (back) up. Each trigger reads the history after `SETTLE` (3 s) and again after 30 s, because Moonraker can still have the entry `in_progress` for a moment. A sync is one history request (more pages only when catching up). Operators can also **sync now**. The Spools tab renders from the database; its spool picker asks Spoolman for the spool list when it loads; neither touches the printer.
+
+### 16.4 Security and config
+
+- `PRINTPIT_SPOOLMAN_URL` (base URL; a path prefix such as `/spoolman` works) and optional `PRINTPIT_SPOOLMAN_TOKEN`/`_FILE` (sent as `Authorization: Bearer`, for a proxy: Spoolman has no auth). Both are redacted in `Debug`, and errors are built from `reqwest::Error::without_url` and Spoolman's `message`, so neither appears in pages or logs.
+- Its own `reqwest::Client` (no proxy, no redirects, 3 s connect, 10 s total), not the printer egress: Spoolman isn't a printer.
+- Roles: admins turn tracking on/off and set the tool count (it opens a permanent printer connection); operators choose the loaded spools and sync; viewers see the tab. Audit: `spoolman_settings`, `spoolman_assign`, `spoolman_sync`, and `spoolman_use` (no user) for each booking.

@@ -80,6 +80,41 @@ impl fmt::Debug for SlicerToken {
     }
 }
 
+/// Spoolman's base URL (always ending in `/`). Like a printer address it stays out of pages and
+/// logs.
+#[derive(Clone)]
+pub struct SpoolmanUrl(pub url::Url);
+
+impl fmt::Debug for SpoolmanUrl {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("SpoolmanUrl(<redacted>)")
+    }
+}
+
+/// Spoolman has no auth of its own; this is for a reverse proxy in front of it, sent as
+/// `Authorization: Bearer`. Never printed.
+#[derive(Clone)]
+pub struct SpoolmanToken(String);
+
+impl SpoolmanToken {
+    pub fn secret(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for SpoolmanToken {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("SpoolmanToken(<redacted>)")
+    }
+}
+
+/// Filament tracking in Spoolman. Present only when `PRINTPIT_SPOOLMAN_URL` is set.
+#[derive(Debug, Clone)]
+pub struct SpoolmanConfig {
+    pub url: SpoolmanUrl,
+    pub token: Option<SpoolmanToken>,
+}
+
 /// Slicing (PLAN §15). Present only when `PRINTPIT_SLICER_URL` is set; otherwise the feature is off.
 #[derive(Debug, Clone)]
 pub struct SlicerConfig {
@@ -118,6 +153,7 @@ pub struct Config {
     /// Where logout sends SSO users (the proxy's own logout), if set.
     pub auth_logout_url: Option<String>,
     pub slicer: Option<SlicerConfig>,
+    pub spoolman: Option<SpoolmanConfig>,
 }
 
 pub const DEFAULT_BIND: &str = "0.0.0.0:8080";
@@ -246,6 +282,7 @@ impl Config {
             .transpose()?;
 
         let slicer = parse_slicer(&get)?;
+        let spoolman = parse_spoolman(&get)?;
 
         let log_format = match get("PRINTPIT_LOG_FORMAT").as_deref().map(str::trim) {
             None | Some("pretty") => LogFormat::Pretty,
@@ -278,6 +315,7 @@ impl Config {
             auth_proxies,
             auth_logout_url,
             slicer,
+            spoolman,
         })
     }
 }
@@ -319,24 +357,7 @@ fn parse_slicer(get: &impl Fn(&str) -> Option<String>) -> Result<Option<SlicerCo
         }
         return Ok(None);
     };
-    let url_err = |reason: &str| ConfigError::Invalid {
-        var: "PRINTPIT_SLICER_URL",
-        reason: reason.into(),
-    };
-    let mut url = url::Url::parse(raw_url.trim()).map_err(|_| url_err("not a valid URL"))?;
-    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
-        return Err(url_err("must be an http:// or https:// URL"));
-    }
-    if !url.username().is_empty() || url.password().is_some() {
-        return Err(url_err("must not contain credentials; use PRINTPIT_SLICER_TOKEN"));
-    }
-    if url.query().is_some() || url.fragment().is_some() {
-        return Err(url_err("must not have a query or fragment"));
-    }
-    if !url.path().ends_with('/') {
-        let path = format!("{}/", url.path());
-        url.set_path(&path);
-    }
+    let url = parse_base_url("PRINTPIT_SLICER_URL", &raw_url, "use PRINTPIT_SLICER_TOKEN")?;
 
     let token = token.ok_or(ConfigError::Missing {
         var: "PRINTPIT_SLICER_TOKEN",
@@ -372,6 +393,61 @@ fn parse_slicer(get: &impl Fn(&str) -> Option<String>) -> Result<Option<SlicerCo
         timeout: Duration::from_secs(positive("PRINTPIT_SLICER_TIMEOUT_SECS", "1800")?),
         max_model_bytes: positive("PRINTPIT_SLICER_MAX_MODEL_MB", "200")? * 1024 * 1024,
         retention: Duration::from_secs(3600 * positive("PRINTPIT_SLICER_RETENTION_HOURS", "72")?),
+    }))
+}
+
+/// A base URL for a side service: http(s), no credentials, query or fragment, ending in `/`.
+/// The reason never quotes the value.
+fn parse_base_url(var: &'static str, raw: &str, creds_hint: &str) -> Result<url::Url, ConfigError> {
+    let err = |reason: &str| ConfigError::Invalid {
+        var,
+        reason: reason.into(),
+    };
+    let mut url = url::Url::parse(raw.trim()).map_err(|_| err("not a valid URL"))?;
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        return Err(err("must be an http:// or https:// URL"));
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(err(&format!("must not contain credentials; {creds_hint}")));
+    }
+    if url.query().is_some() || url.fragment().is_some() {
+        return Err(err("must not have a query or fragment"));
+    }
+    if !url.path().ends_with('/') {
+        let path = format!("{}/", url.path());
+        url.set_path(&path);
+    }
+    Ok(url)
+}
+
+fn parse_spoolman(get: &impl Fn(&str) -> Option<String>) -> Result<Option<SpoolmanConfig>, ConfigError> {
+    let token = secret(get, "PRINTPIT_SPOOLMAN_TOKEN")?.filter(|t| !t.trim().is_empty());
+    let Some(raw_url) = get("PRINTPIT_SPOOLMAN_URL") else {
+        if token.is_some() {
+            return Err(ConfigError::Missing {
+                var: "PRINTPIT_SPOOLMAN_URL",
+                hint: " when PRINTPIT_SPOOLMAN_TOKEN is set (Spoolman's address, e.g. http://spoolman:7912)",
+            });
+        }
+        return Ok(None);
+    };
+    let url = parse_base_url("PRINTPIT_SPOOLMAN_URL", &raw_url, "use PRINTPIT_SPOOLMAN_TOKEN")?;
+    let token = match token {
+        Some(t) => {
+            let t = t.trim();
+            if !t.bytes().all(|b| b.is_ascii_graphic()) {
+                return Err(ConfigError::Invalid {
+                    var: "PRINTPIT_SPOOLMAN_TOKEN",
+                    reason: "must be printable ASCII without spaces".into(),
+                });
+            }
+            Some(SpoolmanToken(t.to_string()))
+        }
+        None => None,
+    };
+    Ok(Some(SpoolmanConfig {
+        url: SpoolmanUrl(url),
+        token,
     }))
 }
 
@@ -692,5 +768,58 @@ mod tests {
                 load(&[("PRINTPIT_SECRET_KEY", KEY), ("PRINTPIT_NOTIFY_WEBHOOK_URL", bad)]).unwrap_err();
             assert!(!err.to_string().contains(bad), "{err}");
         }
+    }
+
+    #[test]
+    fn spoolman_config() {
+        let key = ("PRINTPIT_SECRET_KEY", KEY);
+        assert!(load(&[key]).unwrap().spoolman.is_none());
+        // Compose passes unset variables as empty strings.
+        assert!(
+            load(&[
+                key,
+                ("PRINTPIT_SPOOLMAN_URL", ""),
+                ("PRINTPIT_SPOOLMAN_TOKEN", "")
+            ])
+            .unwrap()
+            .spoolman
+            .is_none()
+        );
+        let c = load(&[key, ("PRINTPIT_SPOOLMAN_URL", "http://spoolman:7912")]).unwrap();
+        let s = c.spoolman.as_ref().unwrap();
+        assert_eq!(s.url.0.as_str(), "http://spoolman:7912/");
+        assert!(s.token.is_none());
+        assert!(!format!("{c:?}").contains("spoolman:7912"));
+
+        let c = load(&[
+            key,
+            ("PRINTPIT_SPOOLMAN_URL", "https://tools.lan/spoolman"),
+            ("PRINTPIT_SPOOLMAN_TOKEN", "proxy-T0KEN"),
+        ])
+        .unwrap();
+        let s = c.spoolman.as_ref().unwrap();
+        assert_eq!(s.url.0.as_str(), "https://tools.lan/spoolman/");
+        assert_eq!(s.token.as_ref().unwrap().secret(), "proxy-T0KEN");
+        assert!(!format!("{c:?}").contains("proxy-T0KEN"));
+
+        assert!(matches!(
+            load(&[key, ("PRINTPIT_SPOOLMAN_TOKEN", "x")]).unwrap_err(),
+            ConfigError::Missing {
+                var: "PRINTPIT_SPOOLMAN_URL",
+                ..
+            }
+        ));
+        for bad in [
+            "spoolman:7912",
+            "ftp://x/",
+            "http://u:pass@spoolman/",
+            "http://s/?a=1",
+        ] {
+            let err = load(&[key, ("PRINTPIT_SPOOLMAN_URL", bad)]).unwrap_err();
+            assert!(!err.to_string().contains("pass"), "{err}");
+            assert!(matches!(err, ConfigError::Invalid { .. }), "{bad}");
+        }
+        let url = ("PRINTPIT_SPOOLMAN_URL", "http://spoolman:7912");
+        assert!(load(&[key, url, ("PRINTPIT_SPOOLMAN_TOKEN", "a b")]).is_err());
     }
 }

@@ -269,6 +269,19 @@ Same rules as M8: new protected routes go into `PROTECTED_GET`/`PROTECTED_POST`,
 - [x] Checked against real Orca 2.4.2 output (cube, copies, cylinder, supports, 21 MB two-vase plate) and end to end in Chromium (desktop + iPhone 13, no console/CSP errors). Golden test asserts the markers the reader needs. `cargo run --release --example render_preview -- file.gcode out/` renders any G-code
 - [ ] Layer-by-layer preview (a layer slider in the job panel)
 
+## M10 — Spoolman filament tracking (2026-11-20, PLAN §16)
+- [x] Config `PRINTPIT_SPOOLMAN_URL` + optional `PRINTPIT_SPOOLMAN_TOKEN`/`_FILE` (bearer for a proxy), redacted; shared `parse_base_url` with the slicer URL
+- [x] `spoolman::client`: own reqwest client (no proxy/redirects), spool list, `PUT /spool/{id}/use`, address-free `SpoolmanError` (label/detail/is_transient)
+- [x] Migration `0010`: `spoolman_printers` (tracking, tools, history cursor, last sync), `spoolman_slots`, `spoolman_bookings` (unique per job, status, parts JSON)
+- [x] `spoolman::plan`: one tool → exact `use_length`; several → split by metadata `filament_weights` scaled by used/planned, single-tool jobs exact, `referenced_tools` fallback, reasons noted when nothing can be booked (unit-tested)
+- [x] Sync from `/server/history/list?since=&order=asc`: cursor never passes an `in_progress` job and stays 1 s behind; row inserted before sending; `failed` retried, `error`/`unknown` not; restart marks `sending` as `unknown`
+- [x] Watcher per tracked printer (second rule-2 exception, admin opt-in): reuses `notify::Tracker`, syncs after a job ends and when the connection comes back (3 s, then 30 s)
+- [x] `[7]Spools` tab (only when configured; 404 routes otherwise): tracking + tools (admin), loaded spools picker (operator; syncs to the old spools first), sync now, recent bookings with notes/errors. Audit `spoolman_settings/assign/sync/use`
+- [x] `tests/spoolman.rs` (12, against `tests/common/spoolman.rs` mock under a path prefix + dynamic jobs in the mock Moonraker); `examples/mock_spoolman.rs`; checked in Chromium at 1200 and 390 px (no horizontal scroll, no CSP errors)
+- [x] Docs: README section + config table, compose env, PLAN §16, CLAUDE.md
+- [ ] Try against a real Spoolman and a real multi-material print (AFC/Happy Hare/toolchanger) to confirm the per-tool split matches what users expect
+- [ ] Maybe: show the loaded spool on dashboard cards (needs a cached Spoolman lookup so the dashboard stays cheap)
+
 ## Extras
 
 ### Per-printer custom CA (2026-11-15)

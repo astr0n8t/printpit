@@ -1,0 +1,34 @@
+<section class="panel" id="spool-slots">
+  <h2 class="panel-title">loaded spools</h2>
+{%- if let Some(e) = error %}
+  <p class="err" role="alert">! {{ e }}</p>
+{%- endif %}
+{%- if can_edit %}
+  <form hx-post="/p/{{ id }}/spools/assign" hx-target="#main" hx-disabled-elt="find button">
+{%- for s in slots %}
+    <div class="field">
+      <label for="tool{{ s.tool }}">{{ s.label }}</label>
+      <select id="tool{{ s.tool }}" name="tool{{ s.tool }}">
+        <option value="">(empty)</option>
+{%- if let Some(m) = self.missing(s) %}
+        <option value="{{ m }}" selected>#{{ m }} (archived or not in Spoolman)</option>
+{%- endif %}
+{%- for (sid, label) in spools %}
+        <option value="{{ sid }}"{% if self.is_selected(s, sid) %} selected{% endif %}>{{ label }}</option>
+{%- endfor %}
+      </select>
+    </div>
+{%- endfor %}
+    <p class="dim">Finished jobs are booked to the spools loaded until now before the change is saved.</p>
+    <div class="actions"><button class="primary">save spools</button></div>
+  </form>
+{%- else %}
+  <table>
+    <tbody>
+{%- for s in slots %}
+      <tr><th>{{ s.label }}</th><td class="wrap">{{ s.current }}</td></tr>
+{%- endfor %}
+    </tbody>
+  </table>
+{%- endif %}
+</section>

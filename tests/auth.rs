@@ -47,6 +47,8 @@ const PROTECTED_GET: &[&str] = &[
     "/ui/slice",
     "/slice/jobs/1",
     "/slice/jobs/1/preview/plate.png",
+    "/ui/spools",
+    "/p/1/spools",
 ];
 const PROTECTED_POST: &[&str] = &[
     "/logout",
@@ -85,6 +87,9 @@ const PROTECTED_POST: &[&str] = &[
     "/slice/jobs/1/reslice",
     "/slice/jobs/1/upload",
     "/slice/jobs/1/print",
+    "/p/1/spools/assign",
+    "/p/1/spools/sync",
+    "/p/1/spools/settings",
 ];
 const PROTECTED_DELETE: &[&str] = &[
     "/printers/1",
@@ -689,6 +694,7 @@ const ADMIN_POST: &[&str] = &[
     "/slicer/test",
     "/slicer/import/system",
     "/slicer/import/user",
+    "/p/1/spools/settings",
 ];
 const ADMIN_DELETE: &[&str] = &["/printers/1", "/users/1", "/presets/1", "/slicer/profiles/1"];
 
