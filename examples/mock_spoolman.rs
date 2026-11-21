@@ -26,13 +26,15 @@ async fn main() {
     println!("mock Spoolman on http://127.0.0.1:7912/spoolman, mock Moonraker on 127.0.0.1:7204");
     let mut tick = tokio::time::interval(Duration::from_secs(20));
     tick.tick().await;
-    for n in 0u64.. {
+    let mut n = 0u64;
+    loop {
         tick.tick().await;
+        n += 1;
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs_f64();
-        let job = if n % 2 == 0 {
+        let job = if n % 2 == 1 {
             json!({"filename": "benchy.gcode", "status": "completed", "start_time": now - 10.0,
                    "end_time": now, "filament_used": 1520.5})
         } else {

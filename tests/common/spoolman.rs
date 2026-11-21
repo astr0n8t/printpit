@@ -2,7 +2,7 @@
 //! served under a path prefix like a Spoolman behind a reverse proxy. Records every request.
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use axum::Router;
@@ -30,7 +30,7 @@ struct Inner {
     uses: Mutex<Vec<(i64, Value)>>,
     down: AtomicBool,
     /// Answer this many `use` calls with 500 before accepting.
-    fail_uses: AtomicUsize,
+    fail_uses: Mutex<usize>,
     required_token: Mutex<Option<String>>,
 }
 
@@ -90,7 +90,7 @@ impl MockSpoolman {
     }
 
     pub fn fail_next_uses(&self, n: usize) {
-        self.inner.fail_uses.store(n, Ordering::SeqCst);
+        *self.inner.fail_uses.lock().unwrap() = n;
     }
 
     pub fn require_token(&self, token: &str) {
@@ -149,11 +149,13 @@ async fn use_spool(
     Path(id): Path<i64>,
     axum::Json(body): axum::Json<Value>,
 ) -> Response {
-    if mock
-        .fail_uses
-        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
-        .is_ok()
-    {
+    let failing = {
+        let mut left = mock.fail_uses.lock().unwrap();
+        let failing = *left > 0;
+        *left = left.saturating_sub(1);
+        failing
+    };
+    if failing {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             axum::Json(json!({"message": "database is locked"})),
