@@ -469,6 +469,29 @@ async fn failures_show_the_slicer_log() {
 }
 
 #[tokio::test]
+async fn export_errors_show_the_slicers_reason() {
+    // A bad placeholder in custom G-code: Orca's result.json only says "Failed slicing the model".
+    let mut s = setup().await;
+    s.submit(&[], "part.obj", &s.model("exportfail")).await;
+    let job = s.latest().await.unwrap();
+    let job = s.wait(job.id, JobStatus::Failed).await;
+    let error = job.error.as_deref().unwrap();
+    assert!(
+        error.contains("machine_end_gcode Parsing error at line 4: Not a variable name"),
+        "{error}"
+    );
+    assert!(!error.contains("Failed slicing the model"), "{error}");
+    let panel = s.c.get_hx(&format!("/slice/jobs/{}", job.id)).await;
+    assert!(
+        panel
+            .body
+            .contains(r#"<p class="err lines">Failed to generate G-code"#),
+        "{}",
+        panel.body
+    );
+}
+
+#[tokio::test]
 async fn cancel_while_slicing_kills_the_slice() {
     let mut s = setup().await;
     s.submit(&[], "part.obj", &s.model("sleep")).await;

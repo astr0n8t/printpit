@@ -295,3 +295,4 @@ Same rules as M8: new protected routes go into `PROTECTED_GET`/`PROTECTED_POST`,
 - [x] Per-printer "skip tls certificate verification" checkbox (migration `0009`, `Trust::Insecure`, `INSECURE` badge, audit `verify=`); supersedes the earlier "no skip-verify on purpose" note at the user's request (2026-11-16)
 - [x] File inputs drop `accept` so the iOS picker doesn't grey out STL/3MF/STEP/G-code/Orca files; the server validates (2026-11-17)
 - [x] Installable PWA: public `/static/manifest.webmanifest`, PNG + maskable icons, iOS touch icon and meta, `theme-color`; no service worker (`tests/pwa.rs`) (2026-11-17)
+- [x] Slicer export errors show Orca's own reason (from its stderr) instead of the generic "Failed slicing the model"; the stderr also ends the job's slicer log, and the job message keeps its line breaks (2026-11-21)

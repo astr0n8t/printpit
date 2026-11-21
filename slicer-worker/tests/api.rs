@@ -383,6 +383,39 @@ async fn slicer_failures_are_422_with_a_scrubbed_log() {
 }
 
 #[tokio::test]
+async fn export_errors_carry_the_slicers_own_reason() {
+    // Orca's result.json only says "Failed slicing the model"; the reason is on its stderr.
+    let w = start().await;
+    let res = w.slice(w.form("exportfail")).await;
+    assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let e = error(res).await;
+    assert_eq!(e["kind"], "slicer");
+    assert_eq!(e["code"], -100);
+    assert_eq!(
+        e["error"],
+        "Failed to generate G-code for invalid custom G-code.\n\
+         machine_end_gcode Parsing error at line 4: Not a variable name\n\
+         G1 Z{nosuchvar} ; in .\n     ^"
+    );
+    let log: Vec<String> = serde_json::from_value(e["log_tail"].clone()).unwrap();
+    let at = |l: &str| log.iter().position(|x| x == l);
+    let marker = at("--- slicer output ---").expect("output section");
+    assert!(
+        at("found slicing or export error for partplate 1").unwrap() < marker,
+        "{log:?}"
+    );
+    assert!(
+        at("run found error, return -100, exit...").unwrap() > marker,
+        "{log:?}"
+    );
+    assert!(
+        !e.to_string().contains(&w.work.path().display().to_string()),
+        "{e}"
+    );
+    w.assert_work_dir_empty().await;
+}
+
+#[tokio::test]
 async fn timeout_kills_the_process_group() {
     let w = start_with(|c| c.timeout = Duration::from_millis(500)).await;
     let res = w.slice(w.form("sleep")).await;
