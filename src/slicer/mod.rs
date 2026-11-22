@@ -13,6 +13,7 @@ pub mod model;
 pub mod options;
 pub mod preview;
 pub mod queue;
+pub mod settings;
 pub mod storage;
 
 pub use client::SlicerClient;

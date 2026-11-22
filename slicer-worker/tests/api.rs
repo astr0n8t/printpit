@@ -324,7 +324,56 @@ async fn slices_and_streams_gcode_with_stats() {
         assert_eq!(p["from"], "system");
         assert!(p.get("inherits").is_none());
     }
+    // No plate anywhere: Orca's GUI default, not the CLI's Cool Plate.
+    assert_eq!(m["curr_bed_type"], "High Temp Plate");
+    assert_eq!(p["curr_bed_type"], "High Temp Plate");
     w.assert_work_dir_empty().await;
+}
+
+#[tokio::test]
+async fn the_plate_comes_from_the_job_then_the_printer() {
+    let w = start().await;
+    let slice = |machine: Value, process: Value| {
+        let form = Form::new()
+            .text("machine", machine.to_string())
+            .text("process", process.to_string())
+            .text("filament", json!({"name": "PLA", "from": "system"}).to_string())
+            .part("model", Part::bytes(w.model("ok")).file_name("part.stl"));
+        w.slice(form)
+    };
+    let plate = |file: &str| -> String {
+        let v: Value = serde_json::from_str(&w.rec(file)).unwrap();
+        v["curr_bed_type"].as_str().unwrap_or_default().to_string()
+    };
+    // The printer model's default, from Orca's library.
+    let acme = json!({"name": "My Acme", "printer_model": "Acme One"});
+    assert_eq!(slice(acme.clone(), process()).await.status(), StatusCode::OK);
+    assert_eq!(plate("machine.json"), "Textured PEI Plate");
+    // The machine profile's own choice (legacy numbers too).
+    let mut m = acme.clone();
+    m["curr_bed_type"] = json!("2");
+    assert_eq!(slice(m.clone(), process()).await.status(), StatusCode::OK);
+    assert_eq!(plate("machine.json"), "Engineering Plate");
+    // The job's, in the process, wins and reaches both files.
+    let mut p = process();
+    p["curr_bed_type"] = json!("Cool Plate");
+    assert_eq!(slice(m, p).await.status(), StatusCode::OK);
+    assert_eq!(plate("machine.json"), "Cool Plate");
+    assert_eq!(plate("process.json"), "Cool Plate");
+    w.assert_work_dir_empty().await;
+}
+
+#[tokio::test]
+async fn system_machines_carry_their_models_default_plate() {
+    let w = start().await;
+    let res = w
+        .get("/v1/profiles/machine/Acme/Acme%20One%200.4%20nozzle")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let m: Value = res.json().await.unwrap();
+    assert_eq!(m["default_bed_type"], "Textured PEI Plate");
 }
 
 #[tokio::test]

@@ -438,11 +438,15 @@ OrcaSlicer's CLI wants complete machine/process/filament JSON. Presets made in t
 
 Each printer gets one **machine profile** (and optional default process/filament) on the Printers page (`printer_slicer`). At slice time the process and filament lists are filtered by Orca's `compatible_printers` / `compatible_printers_condition` where it can be evaluated simply; otherwise everything is shown.
 
+**Editing (2026-11-22):** each library profile has a *settings* panel (`/ui/slicer/profiles/{id}`, admin) for a fixed, typed list of the keys that matter day to day (`slicer::settings`): the machine's build plate (`curr_bed_type`), z offset, retraction and z hop; the process's layers, walls, shells, seam, infill, ironing, supports, brim, skirt and main speeds; the filament's nozzle temperatures, bed temperatures per plate type, flow ratio, pressure advance, max volumetric speed, fan and density/cost. Values are range-checked and keep the shape the profile has (string or per-extruder list). G-code fields aren't in the list. Importing the same profile again replaces the edits.
+
+**Build plate:** the plate picks which of the filament's bed temperatures Orca uses (`hot_plate_temp`, `textured_plate_temp_initial_layer`, …). Orca's GUI keeps it outside the presets and starts from the printer's `default_bed_type`, which most vendors put in the printer *model* file, else the High Temp Plate. The CLI has neither and uses the Cool Plate. So the worker (`slicer_worker::bed`) chooses, in order: the job's plate (a Slice-form override, in the process), the machine profile's `curr_bed_type`, its `default_bed_type`, the printer model's `default_bed_type`, then High Temp Plate, and writes it into both the machine and the process it hands Orca. A 3MF sliced with its project settings keeps its own plate. System machine profiles come from the worker with the model's `default_bed_type` filled in, so the panel can show it.
+
 Profiles hold G-code (`machine_start_gcode`, filament start G-code, …) that runs on the printer, so editing them is admin-only. (Operators can already upload arbitrary G-code, so this isn't a new privilege, but the library is shared by everyone.)
 
 ### 15.4 Slice options (the phone form)
 A short, whitelisted set of overrides applied to a copy of the process profile. Never arbitrary keys:
-- layer height (from the process's allowed range), infill density %, wall loops, supports (off / normal / tree, build plate only), brim (auto/off/width), copies, auto-arrange, auto-orient.
+- layer height (from the process's allowed range), infill density %, wall loops, supports (off / normal / tree, build plate only), brim (auto/off/width), build plate (§15.3), copies, auto-arrange, auto-orient.
 - Copies are the CLI's `--clone-objects N`, which also spreads them over the bed (`--repetitions` is rejected by the 2.4.2 CLI; checked with real Orca and covered by the golden test). Not for a 3MF, whose layout is the project's.
 - Each one is a typed field with a range check, written as an Orca config key by a fixed table in `slicer::options`. Out-of-range values are form errors.
 - **3MF projects:** an Orca `.3mf` can be sliced "with project settings" (its plate layout, painted supports, modifiers), with the printer's machine profile still enforced so G-code for the wrong printer can't be produced by accident.

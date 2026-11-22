@@ -296,3 +296,6 @@ Same rules as M8: new protected routes go into `PROTECTED_GET`/`PROTECTED_POST`,
 - [x] File inputs drop `accept` so the iOS picker doesn't grey out STL/3MF/STEP/G-code/Orca files; the server validates (2026-11-17)
 - [x] Installable PWA: public `/static/manifest.webmanifest`, PNG + maskable icons, iOS touch icon and meta, `theme-color`; no service worker (`tests/pwa.rs`) (2026-11-17)
 - [x] Slicer export errors show Orca's own reason (from its stderr) instead of the generic "Failed slicing the model"; the stderr also ends the job's slicer log, and the job message keeps its line breaks (2026-11-21)
+- [x] Build plate (2026-11-22): the worker picks `curr_bed_type` like Orca's GUI (job → machine profile → `default_bed_type` → printer model's → High Temp Plate) instead of the CLI's Cool Plate, so stock presets get the right bed temperatures; a "build plate" choice on the Slice and slice-again forms
+- [x] Profile settings panel (2026-11-22): admins edit a fixed, range-checked list of the important machine/process/filament keys per library profile (`slicer::settings`, `/ui/slicer/profiles/{id}`), audited as `slicer_profile_edit`; no G-code fields
+- [ ] Per-printer build plate (two printers sharing one machine profile but with different plates) — today it's per machine profile or per job

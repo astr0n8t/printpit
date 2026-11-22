@@ -106,6 +106,8 @@ struct Vendor {
     files: HashMap<(Kind, String), PathBuf>,
     /// Names in index order, per kind.
     order: BTreeMap<Kind, Vec<String>>,
+    /// Printer models (`machine_model_list`): name → file.
+    models: HashMap<String, PathBuf>,
 }
 
 #[derive(Debug)]
@@ -255,9 +257,28 @@ impl Library {
         Ok(index)
     }
 
-    /// One system profile, flattened.
+    /// One system profile, flattened. A machine also gets its printer model's `default_bed_type`
+    /// when it has none of its own (see [`crate::bed`]), so printpit can show it.
     pub fn system(&self, vendor: &str, kind: Kind, name: &str) -> Result<Profile, LibError> {
-        self.system_memo(vendor, kind, name, &mut HashMap::new())
+        let mut p = self.system_memo(vendor, kind, name, &mut HashMap::new())?;
+        if kind == Kind::Machine
+            && crate::bed::normalize(&text(&p, "default_bed_type")).is_none()
+            && let Some(bed) = self.model_bed_type(&text(&p, "printer_model"))
+        {
+            p.insert("default_bed_type".into(), Value::String(bed.into()));
+        }
+        Ok(p)
+    }
+
+    /// A printer model's `default_bed_type` (from its `machine_model_list` file), as Orca's name.
+    /// Models are looked up in every vendor; their names are unique in practice.
+    pub fn model_bed_type(&self, model: &str) -> Option<&'static str> {
+        if model.trim().is_empty() {
+            return None;
+        }
+        let path = self.vendors.values().find_map(|v| v.models.get(model))?;
+        let doc = read_profile(path, model).ok()?;
+        crate::bed::normalize(&text(&doc, "default_bed_type"))
     }
 
     /// Flattens user presets (exported from Orca, or a bundle's files). A preset's parent is looked
@@ -419,28 +440,36 @@ fn read_vendor(root: &Path, name: &str, index: &Path) -> Result<Vendor, String> 
     };
     let dir = root.join(name);
     for kind in Kind::ALL {
-        let Some(items) = doc.get(kind.list_key()).and_then(Value::as_array) else {
-            continue;
-        };
-        for item in items {
-            let (Some(n), Some(sub)) = (
-                item.get("name").and_then(Value::as_str),
-                item.get("sub_path").and_then(Value::as_str),
-            ) else {
-                continue;
-            };
-            // The index is bundled with Orca, but a path that climbs out of the vendor folder is
-            // still refused.
-            let sub = Path::new(sub);
-            if !sub.components().all(|c| matches!(c, Component::Normal(_))) {
-                continue;
-            }
-            if v.files.insert((kind, n.to_string()), dir.join(sub)).is_none() {
-                v.order.entry(kind).or_default().push(n.to_string());
+        for (n, path) in index_entries(&doc, kind.list_key(), &dir) {
+            if v.files.insert((kind, n.clone()), path).is_none() {
+                v.order.entry(kind).or_default().push(n);
             }
         }
     }
+    for (n, path) in index_entries(&doc, "machine_model_list", &dir) {
+        v.models.entry(n).or_insert(path);
+    }
     Ok(v)
+}
+
+/// `{name, sub_path}` entries of one list in a vendor index, as (name, file).
+fn index_entries(doc: &Profile, key: &str, dir: &Path) -> Vec<(String, PathBuf)> {
+    let Some(items) = doc.get(key).and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .filter_map(|item| {
+            let n = item.get("name").and_then(Value::as_str)?;
+            let sub = Path::new(item.get("sub_path").and_then(Value::as_str)?);
+            // The index is bundled with Orca, but a path that climbs out of the vendor folder is
+            // still refused.
+            if !sub.components().all(|c| matches!(c, Component::Normal(_))) {
+                return None;
+            }
+            Some((n.to_string(), dir.join(sub)))
+        })
+        .collect()
 }
 
 fn read_profile(path: &Path, name: &str) -> Result<Profile, LibError> {

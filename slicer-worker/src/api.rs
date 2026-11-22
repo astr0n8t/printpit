@@ -284,14 +284,17 @@ async fn slice(State(app): State<App>, mut multipart: Multipart) -> Result<Respo
         model,
     } = up;
     let system_name = prepare_machine(&mut machine)?;
-    write_json(dir.path(), orca::MACHINE, &machine).await?;
     if let (Some(mut process), Some(mut filament)) = (process, filament) {
+        // A 3MF with its own settings (no process sent) keeps its project's plate.
+        let bed = crate::bed::choose(&machine, Some(&process), &app.library);
+        crate::bed::apply(bed, &mut machine, Some(&mut process));
         make_compatible(&mut process, &system_name);
         standalone(&mut process, Kind::Process);
         standalone(&mut filament, Kind::Filament);
         write_json(dir.path(), orca::PROCESS, &process).await?;
         write_json(dir.path(), orca::FILAMENT, &filament).await?;
     }
+    write_json(dir.path(), orca::MACHINE, &machine).await?;
 
     let timeout = app.config.timeout;
     let args = orca::args(&model, &options, timeout.as_secs());

@@ -164,6 +164,17 @@ pub async fn update_profile(
     Ok(res.rows_affected() == 1)
 }
 
+/// Replaces a profile's settings, keeping where it came from (an admin's edit).
+pub async fn update_settings(db: &Db, id: i64, settings: &Profile) -> Result<bool, sqlx::Error> {
+    let res = sqlx::query("UPDATE slicer_profiles SET settings_json = ?, updated_at = ? WHERE id = ?")
+        .bind(encode(settings)?)
+        .bind(now())
+        .bind(id)
+        .execute(db)
+        .await?;
+    Ok(res.rows_affected() == 1)
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum DeleteProfile {
     Deleted,

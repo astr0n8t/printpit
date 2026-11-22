@@ -1,0 +1,34 @@
+<section class="panel" id="profile-settings">
+  <h2 class="panel-title">{{ kind }} settings: {{ name }}</h2>
+{%- if let Some(n) = notice %}
+  <p class="ok" role="status">✓ {{ n }}</p>
+{%- endif %}
+{%- if let Some(e) = error %}
+  <p class="err" role="alert">! {{ e }}</p>
+{%- endif %}
+  <p class="dim">The settings that matter most day to day. Blank numbers are left as they are. Changes apply to the next slice{% if system %}; importing this profile from Orca's library again replaces them{% endif %}.</p>
+  <form hx-post="/slicer/profiles/{{ id }}" hx-target="#profile-edit" hx-disabled-elt="find button">
+{%- for s in sections %}
+    <h3 class="sub">{{ s.title }}</h3>
+    <div class="slice-grid settings-grid">
+{%- for f in s.fields %}
+      <label>{{ f.label }}{% if !f.unit.is_empty() %} ({{ f.unit }}){% endif %}
+{%- if f.options.is_empty() %}
+        <input name="{{ f.key }}" type="number" min="{{ f.min }}" max="{{ f.max }}" step="{{ f.step }}" inputmode="decimal" value="{{ f.value }}"{% if f.value.is_empty() %} placeholder="not set"{% endif %}>
+{%- else %}
+        <select name="{{ f.key }}">
+{%- for o in f.options %}
+          <option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.label }}</option>
+{%- endfor %}
+        </select>
+{%- endif %}
+      </label>
+{%- endfor %}
+    </div>
+{%- endfor %}
+    <div class="actions">
+      <button class="primary">save</button>
+      <button type="button" hx-get="/ui/slicer/profiles/{{ id }}" hx-target="#profile-edit">reset form</button>
+    </div>
+  </form>
+</section>
