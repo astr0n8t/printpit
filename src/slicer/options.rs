@@ -10,6 +10,7 @@ use serde_json::Value;
 
 use super::Profile;
 use super::client::WorkerOptions;
+use super::settings;
 
 pub const LAYER_HEIGHT: (f64, f64) = (0.04, 1.0);
 pub const WALLS: (u8, u8) = (1, 20);
@@ -44,6 +45,9 @@ pub struct SliceOptions {
     pub walls: Option<u8>,
     pub supports: Option<Supports>,
     pub brim: Option<Brim>,
+    /// The build plate (Orca's `curr_bed_type`), which picks the filament's bed temperatures.
+    /// `None` is the machine profile's, else the printer's default.
+    pub bed_type: Option<String>,
     pub arrange: bool,
     pub orient: bool,
     /// 3MF only: the project's own process and filament settings.
@@ -64,6 +68,7 @@ impl Default for SliceOptions {
             walls: None,
             supports: None,
             brim: None,
+            bed_type: None,
             arrange: false,
             orient: false,
             project_settings: false,
@@ -90,6 +95,8 @@ pub struct OptionsForm {
     #[serde(default)]
     pub brim_width: String,
     #[serde(default)]
+    pub bed_type: String,
+    #[serde(default)]
     pub arrange: Option<String>,
     #[serde(default)]
     pub orient: Option<String>,
@@ -112,6 +119,7 @@ impl OptionsForm {
             "supports" => self.supports = value,
             "brim" => self.brim = value,
             "brim_width" => self.brim_width = value,
+            "bed_type" => self.bed_type = value,
             "arrange" => self.arrange = Some(value),
             "orient" => self.orient = Some(value),
             "project_settings" => self.project_settings = Some(value),
@@ -162,6 +170,14 @@ impl OptionsForm {
             }
             _ => return Err("Brim must be auto, off or a width.".into()),
         };
+        let bed_type = match self.bed_type.trim() {
+            "" => None,
+            raw => Some(
+                settings::bed_type(raw)
+                    .ok_or_else(|| "Pick one of Orca's build plates.".to_string())?
+                    .to_string(),
+            ),
+        };
         let project_settings = is_3mf && self.project_settings.is_some();
         let plate = if is_3mf {
             number::<u32>(&self.plate, "Plate")?.unwrap_or(1)
@@ -187,6 +203,7 @@ impl OptionsForm {
             walls,
             supports,
             brim,
+            bed_type,
             arrange: self.arrange.is_some(),
             orient: self.orient.is_some(),
             project_settings,
@@ -286,6 +303,9 @@ impl SliceOptions {
                 set("brim_width", decimal(w));
             }
         }
+        if let Some(b) = &self.bed_type {
+            set("curr_bed_type", b.clone());
+        }
         Ok(())
     }
 
@@ -326,6 +346,9 @@ impl SliceOptions {
             Some(Brim::Off) => out.push("no brim".into()),
             Some(Brim::Width(w)) => out.push(format!("{} mm brim", decimal(w))),
             None => {}
+        }
+        if let Some(b) = &self.bed_type {
+            out.push(settings::bed_label(b).to_string());
         }
         if self.arrange {
             out.push("arranged".into());
@@ -375,6 +398,7 @@ impl SliceOptions {
                 Some(Brim::Width(w)) => decimal(w),
                 _ => String::new(),
             },
+            bed_type: self.bed_type.clone().unwrap_or_default(),
             arrange: self.arrange.then(|| "on".into()),
             orient: self.orient.then(|| "on".into()),
             project_settings: self.project_settings.then(|| "on".into()),
@@ -546,6 +570,24 @@ mod tests {
         let machine = obj(json!({"max_layer_height": ["0.32"]}));
         let err = o.apply(&mut Profile::new(), &machine).unwrap_err();
         assert!(err.contains("0.32"), "{err}");
+    }
+
+    #[test]
+    fn bed_type() {
+        let o = form(&[("bed_type", "Textured PEI Plate")]).parse(false).unwrap();
+        assert_eq!(o.bed_type.as_deref(), Some("Textured PEI Plate"));
+        let mut p = Profile::new();
+        o.apply(&mut p, &Profile::new()).unwrap();
+        assert_eq!(p, obj(json!({"curr_bed_type": "Textured PEI Plate"})));
+        assert_eq!(o.summary(), ["Textured PEI Plate"]);
+        assert_eq!(SliceOptions::from_json(&o.to_json()), o);
+        assert_eq!(o.to_form().parse(false).unwrap(), o);
+        assert!(form(&[("bed_type", "Glass")]).parse(false).is_err());
+        assert_eq!(
+            SliceOptions::from_json(r#"{"infill": 20}"#).bed_type,
+            None,
+            "old jobs"
+        );
     }
 
     #[test]

@@ -2,6 +2,7 @@
 //! sidecar. It never talks to printers and needs no network beyond printpit. See PLAN.md §15.
 
 pub mod api;
+pub mod bed;
 pub mod config;
 pub mod gcode;
 pub mod healthcheck;

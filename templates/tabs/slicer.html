@@ -39,7 +39,7 @@
 {%- for r in g.rows %}
       <tr>
         <td class="wrap">{{ r.name }}<br><span class="dim">{{ r.source }} · updated {{ r.updated }}</span></td>
-        <td class="row-actions"><button class="danger" hx-delete="/slicer/profiles/{{ r.id }}" hx-target="#main" hx-confirm="Delete {{ r.name }}?">delete</button></td>
+        <td class="row-actions"><button hx-get="/ui/slicer/profiles/{{ r.id }}" hx-target="#profile-edit" hx-swap="innerHTML show:top">settings</button> <button class="danger" hx-delete="/slicer/profiles/{{ r.id }}" hx-target="#main" hx-confirm="Delete {{ r.name }}?">delete</button></td>
       </tr>
 {%- endfor %}
     </tbody>
@@ -47,6 +47,7 @@
 {%- endif %}
 {%- endfor %}
 </section>
+<div id="profile-edit">{% if let Some(e) = edit %}{{ e|safe }}{% endif %}</div>
 <section class="panel" id="import-system">
   <h2 class="panel-title">import from orca's library</h2>
   <p class="dim">Pick a printer from the profiles bundled with OrcaSlicer, then the processes and filaments that go with it. Importing one that's already here updates it.</p>

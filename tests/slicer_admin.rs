@@ -496,3 +496,114 @@ async fn printer_settings_and_the_delete_guard() {
         StatusCode::NOT_FOUND
     );
 }
+
+#[tokio::test]
+async fn profile_settings_edit_a_fixed_set_of_keys() {
+    let worker = Worker::start().await;
+    let (app, mut c) = app_with(&worker).await;
+    let csrf = c.session_csrf().await;
+    import_acme(&mut c, &csrf).await;
+    let find = |kind, name: &'static str| {
+        let db = app.state.db.clone();
+        async move {
+            let p = store::find_profile(&db, kind, name).await.unwrap().unwrap();
+            store::get_profile(&db, p.id).await.unwrap().unwrap()
+        }
+    };
+    let m = find(Kind::Machine, "Acme One 0.4 nozzle").await;
+    // The worker adds the printer model's default plate on import.
+    assert_eq!(m.settings["default_bed_type"], "Textured PEI Plate");
+    let before = worker.requests().len();
+
+    // The panel opens from the library, shows the plate's default, and asks the worker nothing.
+    let tab = c.get("/ui/slicer").await;
+    assert!(
+        tab.body
+            .contains(&format!("hx-get=\"/ui/slicer/profiles/{}\"", m.info.id))
+    );
+    let panel = c.get_hx(&format!("/ui/slicer/profiles/{}", m.info.id)).await;
+    assert_eq!(panel.status, StatusCode::OK);
+    assert!(
+        panel.body.contains("machine settings: Acme One 0.4 nozzle"),
+        "{}",
+        panel.body
+    );
+    assert!(
+        panel.body.contains("printer default (Textured PEI Plate)"),
+        "{}",
+        panel.body
+    );
+    assert!(panel.body.contains(r#"name="retraction_length""#));
+    assert!(panel.body.contains(r#"value="0.5""#), "the current retraction");
+    // A deep link renders the whole tab with the panel open.
+    let full = c.get(&format!("/ui/slicer/profiles/{}", m.info.id)).await;
+    assert!(full.body.contains("profile library") && full.body.contains("printer default ("));
+
+    let path = format!("/slicer/profiles/{}", m.info.id);
+    let res = c
+        .post_hx(
+            &path,
+            &csrf,
+            &[
+                ("curr_bed_type", "Engineering Plate"),
+                ("retraction_length", "1.2"),
+                ("z_hop", ""),
+                ("machine_start_gcode", "M112"),
+            ],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert!(
+        res.body
+            .contains("Saved: curr_bed_type unset→Engineering Plate, retraction_length 0.5→1.2."),
+        "{}",
+        res.body
+    );
+    let m2 = find(Kind::Machine, "Acme One 0.4 nozzle").await;
+    assert_eq!(m2.settings["curr_bed_type"], "Engineering Plate");
+    assert_eq!(m2.settings["retraction_length"], serde_json::json!(["1.2"]));
+    assert_eq!(
+        m2.settings.get("machine_start_gcode"),
+        m.settings.get("machine_start_gcode")
+    );
+    assert_eq!(m2.info.source, "system", "still Orca's profile");
+    assert!(actions(&app).await.contains(&"slicer_profile_edit".to_string()));
+
+    // A bad value changes nothing and says why.
+    let res = c
+        .post_hx(
+            &path,
+            &csrf,
+            &[("curr_bed_type", ""), ("retraction_length", "99")],
+        )
+        .await;
+    assert!(res.body.contains("retraction length must be"), "{}", res.body);
+    let m3 = find(Kind::Machine, "Acme One 0.4 nozzle").await;
+    assert_eq!(m3.settings["curr_bed_type"], "Engineering Plate");
+
+    // Filament bed temperatures per plate.
+    let f = find(Kind::Filament, "Acme PLA").await;
+    let res = c
+        .post_hx(
+            &format!("/slicer/profiles/{}", f.info.id),
+            &csrf,
+            &[
+                ("textured_plate_temp_initial_layer", "65"),
+                ("nozzle_temperature", "215"),
+            ],
+        )
+        .await;
+    assert!(res.body.contains("Saved:"), "{}", res.body);
+    let f = find(Kind::Filament, "Acme PLA").await;
+    assert_eq!(
+        f.settings["textured_plate_temp_initial_layer"],
+        serde_json::json!(["65"])
+    );
+    assert_eq!(f.settings["nozzle_temperature"][0], "215");
+
+    assert_eq!(worker.requests().len(), before, "editing makes no worker calls");
+    assert_eq!(
+        c.get_hx("/ui/slicer/profiles/9999").await.status,
+        StatusCode::NOT_FOUND
+    );
+}

@@ -8,17 +8,19 @@ use std::sync::Arc;
 
 use askama::Template;
 use axum::body::Bytes;
-use axum::extract::{Multipart, Path, Query, State};
+use axum::extract::{Form, Multipart, Path, Query, State};
 use axum::response::{Html, IntoResponse, Response};
 use serde::Deserialize;
 
 use crate::auth::{Admin, ClientIp, RequireRole};
-use crate::db::slicer::{self as store, DeleteProfile, NewProfile, PrinterSlicer, ProfileInfo, Source};
+use crate::db::slicer::{
+    self as store, DeleteProfile, NewProfile, PrinterSlicer, ProfileInfo, Source, StoredProfile,
+};
 use crate::db::{audit, printers};
 use crate::error::AppError;
 use crate::slicer::client::{CompatEntry, VendorIndex};
 use crate::slicer::import::{self, Fit, Parsed};
-use crate::slicer::{Kind, Profile, SlicerError, Slicing};
+use crate::slicer::{Kind, Profile, SlicerError, Slicing, settings};
 use crate::state::AppState;
 use crate::web::layout::{HxRequest, Tab, page};
 use crate::web::widgets;
@@ -99,6 +101,8 @@ struct TabTemplate {
     error: Option<String>,
     report: Option<Report>,
     max_files: usize,
+    /// A profile's settings panel, for a deep link to it.
+    edit: Option<String>,
 }
 
 async fn tab_page(
@@ -108,6 +112,18 @@ async fn tab_page(
     notice: Option<String>,
     error: Option<String>,
     report: Option<Report>,
+) -> Result<Response, AppError> {
+    tab_page_with(state, hx, user, notice, error, report, None).await
+}
+
+async fn tab_page_with(
+    state: &AppState,
+    hx: HxRequest,
+    user: &RequireRole<Admin>,
+    notice: Option<String>,
+    error: Option<String>,
+    report: Option<Report>,
+    edit: Option<String>,
 ) -> Result<Response, AppError> {
     let profiles = store::list_profiles(&state.db, None).await?;
     let mut groups: Vec<Group> = [
@@ -137,6 +153,7 @@ async fn tab_page(
         error,
         report,
         max_files: import::MAX_FILES,
+        edit,
     }
     .render()?;
     page(hx, user, Tab::Slicer, html)
@@ -621,6 +638,184 @@ async fn store_profile(
     );
     record(state, ip, user, action, None, detail).await;
     Ok(stored)
+}
+
+// ── a profile's settings ─────────────────────────────────────────────────────────────────
+
+#[derive(Template)]
+#[template(path = "partials/slicer_profile.html")]
+struct ProfileTemplate {
+    id: i64,
+    kind: &'static str,
+    name: String,
+    system: bool,
+    sections: Vec<SectionView>,
+    notice: Option<String>,
+    error: Option<String>,
+}
+
+struct SectionView {
+    title: &'static str,
+    fields: Vec<FieldView>,
+}
+
+struct FieldView {
+    key: &'static str,
+    label: &'static str,
+    unit: &'static str,
+    value: String,
+    min: String,
+    max: String,
+    step: &'static str,
+    /// Empty for a number input.
+    options: Vec<OptionView>,
+}
+
+struct OptionView {
+    value: &'static str,
+    label: String,
+    selected: bool,
+}
+
+fn profile_panel(
+    p: &StoredProfile,
+    notice: Option<String>,
+    error: Option<String>,
+) -> Result<String, AppError> {
+    let kind = p.info.kind().ok_or(AppError::NotFound)?;
+    let sections = settings::sections(kind)
+        .iter()
+        .map(|s| SectionView {
+            title: s.title,
+            fields: s.fields.iter().map(|f| field_view(f, &p.settings)).collect(),
+        })
+        .collect();
+    Ok(ProfileTemplate {
+        id: p.info.id,
+        kind: kind.as_str(),
+        name: p.info.name.clone(),
+        system: p.info.source == Source::System.as_str(),
+        sections,
+        notice,
+        error,
+    }
+    .render()?)
+}
+
+fn field_view(f: &settings::Field, profile: &Profile) -> FieldView {
+    let mut value = settings::current(profile, f.key);
+    let mut view = FieldView {
+        key: f.key,
+        label: f.label,
+        unit: f.unit,
+        value: String::new(),
+        min: String::new(),
+        max: String::new(),
+        step: "any",
+        options: Vec::new(),
+    };
+    match f.input {
+        settings::Input::Number { min, max, step, .. } => {
+            view.value = value.trim_end_matches('%').trim().to_string();
+            view.min = min.to_string();
+            view.max = max.to_string();
+            view.step = step;
+        }
+        settings::Input::Choice { options, clear } => {
+            if f.key == "curr_bed_type" {
+                value = settings::bed_type(&value).unwrap_or_default().to_string();
+            }
+            let known = options.iter().any(|o| o.0 == value);
+            if let Some(clear) = clear {
+                let default = settings::bed_type(&settings::current(profile, "default_bed_type"));
+                let label = match default {
+                    Some(d) => format!("{clear} ({})", settings::bed_label(d)),
+                    None => format!("{clear} (Orca's choice for this printer)"),
+                };
+                view.options.push(OptionView {
+                    value: "",
+                    label,
+                    selected: !known,
+                });
+            } else if !known {
+                // Blank leaves it alone.
+                let label = if value.is_empty() {
+                    "(not set)".to_string()
+                } else {
+                    format!("(as is: {value})")
+                };
+                view.options.push(OptionView {
+                    value: "",
+                    label,
+                    selected: true,
+                });
+            }
+            view.options.extend(options.iter().map(|o| OptionView {
+                value: o.0,
+                label: o.1.to_string(),
+                selected: o.0 == value,
+            }));
+        }
+    }
+    view
+}
+
+/// `GET /ui/slicer/profiles/{id}`: the settings panel (or the tab with it open).
+pub async fn profile_settings(
+    State(state): State<AppState>,
+    hx: HxRequest,
+    user: RequireRole<Admin>,
+    Path(id): Path<i64>,
+) -> Result<Response, AppError> {
+    slicing(&state)?;
+    let p = store::get_profile(&state.db, id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    let html = profile_panel(&p, None, None)?;
+    if hx.0 {
+        Ok(Html(html).into_response())
+    } else {
+        tab_page_with(&state, hx, &user, None, None, None, Some(html)).await
+    }
+}
+
+/// `POST /slicer/profiles/{id}`: saves the panel's settings.
+pub async fn save_profile_settings(
+    State(state): State<AppState>,
+    ip: ClientIp,
+    user: RequireRole<Admin>,
+    Path(id): Path<i64>,
+    Form(form): Form<Vec<(String, String)>>,
+) -> Result<Response, AppError> {
+    slicing(&state)?;
+    let mut p = store::get_profile(&state.db, id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    let kind = p.info.kind().ok_or(AppError::NotFound)?;
+    let (notice, error) = match settings::apply(kind, &mut p.settings, &form) {
+        Err(e) => (None, Some(e)),
+        Ok(changes) if changes.is_empty() => (Some("Nothing changed.".to_string()), None),
+        Ok(changes) => {
+            if !store::update_settings(&state.db, id, &p.settings).await? {
+                return Err(AppError::NotFound);
+            }
+            let list = changes
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let detail = format!("profile={id} kind={} name={} {list}", p.info.kind, p.info.name);
+            record(&state, ip, &user, "slicer_profile_edit", None, detail).await;
+            (Some(format!("Saved: {list}.")), None)
+        }
+    };
+    if error.is_some() {
+        // Show what's stored, not the rejected form.
+        p = store::get_profile(&state.db, id)
+            .await?
+            .ok_or(AppError::NotFound)?;
+    }
+    Ok(Html(profile_panel(&p, notice, error)?).into_response())
 }
 
 pub async fn delete_profile(

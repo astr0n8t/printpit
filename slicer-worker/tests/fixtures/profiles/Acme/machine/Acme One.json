@@ -1,0 +1,9 @@
+{
+ "type": "machine_model",
+ "name": "Acme One",
+ "model_id": "acme-one",
+ "nozzle_diameter": "0.4",
+ "machine_tech": "FFF",
+ "family": "Acme",
+ "default_bed_type": "Textured PEI Plate"
+}

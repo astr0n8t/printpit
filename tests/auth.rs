@@ -44,6 +44,7 @@ const PROTECTED_GET: &[&str] = &[
     "/ui/audit",
     "/ui/slicer",
     "/ui/slicer/system",
+    "/ui/slicer/profiles/1",
     "/ui/slice",
     "/slice/jobs/1",
     "/slice/jobs/1/preview/plate.png",
@@ -82,6 +83,7 @@ const PROTECTED_POST: &[&str] = &[
     "/slicer/test",
     "/slicer/import/system",
     "/slicer/import/user",
+    "/slicer/profiles/1",
     "/slice/jobs",
     "/slice/jobs/1/cancel",
     "/slice/jobs/1/reslice",
@@ -676,6 +678,7 @@ const ADMIN_GET: &[&str] = &[
     "/ui/audit",
     "/ui/slicer",
     "/ui/slicer/system",
+    "/ui/slicer/profiles/1",
 ];
 const ADMIN_POST: &[&str] = &[
     "/printers",
@@ -694,6 +697,7 @@ const ADMIN_POST: &[&str] = &[
     "/slicer/test",
     "/slicer/import/system",
     "/slicer/import/user",
+    "/slicer/profiles/1",
     "/p/1/spools/settings",
 ];
 const ADMIN_DELETE: &[&str] = &["/printers/1", "/users/1", "/presets/1", "/slicer/profiles/1"];

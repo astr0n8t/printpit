@@ -120,7 +120,11 @@ pub fn router(state: AppState) -> Router {
                 crate::slicer::import::MAX_UPLOAD_BYTES + (1 << 20),
             )),
         )
-        .route("/slicer/profiles/{id}", delete(slicer::delete_profile))
+        .route("/ui/slicer/profiles/{id}", get(slicer::profile_settings))
+        .route(
+            "/slicer/profiles/{id}",
+            post(slicer::save_profile_settings).delete(slicer::delete_profile),
+        )
         .route("/ui/spools", get(spools::tab))
         .route("/p/{id}/spools", get(spools::slots))
         .route("/p/{id}/spools/assign", post(spools::assign))

@@ -358,7 +358,15 @@ async fn previews_and_thumbnails() {
 async fn slices_uploads_and_reports() {
     let mut s = setup().await;
     let res = s
-        .submit(&[("infill", "40"), ("walls", "4")], "part.obj", &s.model("ok"))
+        .submit(
+            &[
+                ("infill", "40"),
+                ("walls", "4"),
+                ("bed_type", "Textured PEI Plate"),
+            ],
+            "part.obj",
+            &s.model("ok"),
+        )
         .await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
     assert!(res.body.contains("Queued part.obj for Voron."), "{}", res.body);
@@ -376,6 +384,10 @@ async fn slices_uploads_and_reports() {
     let p: Value = serde_json::from_str(&s.rec("process.json")).unwrap();
     assert_eq!(p["sparse_infill_density"], "40%");
     assert_eq!(p["wall_loops"], "4");
+    // The job's plate goes to both profiles Orca loads.
+    assert_eq!(p["curr_bed_type"], "Textured PEI Plate");
+    let m: Value = serde_json::from_str(&s.rec("machine.json")).unwrap();
+    assert_eq!(m["curr_bed_type"], "Textured PEI Plate");
     // Fixed names only on the worker's side, too.
     assert!(s.rec("args.txt").lines().any(|l| l == "model.obj"));
     assert!(
@@ -386,7 +398,13 @@ async fn slices_uploads_and_reports() {
     let panel = s.c.get_hx(&format!("/slice/jobs/{}", job.id)).await;
     assert!(panel.body.contains("DONE"), "{}", panel.body);
     assert!(panel.body.contains("09:55"), "{}", panel.body);
-    assert!(panel.body.contains("40 % infill · 4 walls"));
+    assert!(panel.body.contains("40 % infill · 4 walls · Textured PEI Plate"));
+    assert!(
+        panel
+            .body
+            .contains(r#"<option value="Textured PEI Plate" selected>"#),
+        "slice again keeps the plate"
+    );
     assert!(panel.body.contains("/print"), "print button");
     assert!(!panel.body.contains("data-every"), "no timer once it's done");
     // The refresh also updates the job's badge in the recent-jobs list.
