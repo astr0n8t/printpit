@@ -274,6 +274,7 @@ async fn process(state: &AppState, slicing: &Slicing, job: Job) -> Result<(), St
         (Some(c), Some(p), Some(f)) => {
             c.prepare(&mut machine.settings, p, f);
             c.plan(&machine.settings, p, f)
+                .map(|plan| (plan, c.on_belt(&machine.settings)))
         }
         (Some(_), ..) => return Err(Stop::failed("a calibration needs a process and a filament")),
         _ => None,
@@ -304,8 +305,8 @@ async fn process(state: &AppState, slicing: &Slicing, job: Job) -> Result<(), St
             });
         }
     };
-    if let Some(plan) = calibration {
-        let sum = calibrate::rewrite_output(&slicing.storage, job.id, plan)
+    if let Some((plan, on_belt)) = calibration {
+        let sum = calibrate::rewrite_output(&slicing.storage, job.id, plan, on_belt)
             .await
             .map_err(|e| Stop::failed(format!("the calibration couldn't be set up: {e}")))?;
         tracing::info!(

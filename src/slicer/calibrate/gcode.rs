@@ -29,6 +29,9 @@ pub enum Plan {
         cells: Vec<[f64; 4]>,
         factors: Vec<f64>,
         center: (f64, f64),
+        /// Match cells by x alone (a belt printer's G-code is in its tilted frame, where only the
+        /// axis it tilts about, x, is the model's).
+        x_only: bool,
     },
     /// Every retraction (and the matching unretraction) uses its band's length. Bands start at
     /// `base` mm (below it, the first band's).
@@ -41,16 +44,52 @@ pub enum Plan {
         values: Vec<f64>,
         area: Option<f64>,
     },
-    /// The pressure advance line test: each bar (a cell, as for [`Plan::Flow`]) gets its value, and
-    /// its moves are cut at `slow.0`/`slow.1` (model x) to print slow, fast between them, slow.
-    PaLine {
-        bars: Vec<[f64; 4]>,
+    /// The pressure advance line and pattern tests: each part (a bar, a chevron) is a union of
+    /// convex polygons in model coordinates, as for [`Plan::Flow`]'s cells, and gets its value
+    /// before its first move. With `cut`, a part's moves are also cut into slow, fast, slow pieces.
+    PressureAdvanceParts {
+        parts: Vec<Part>,
         values: Vec<f64>,
-        slow: (f64, f64),
-        /// mm/s.
-        speeds: (f64, f64),
+        cut: Option<Cut>,
         center: (f64, f64),
+        /// What a part is called in the G-code's comments (`line`, `chevron`).
+        name: &'static str,
     },
+}
+
+/// A test piece's part as a union of convex polygons (model coordinates, corners in order).
+pub type Part = Vec<Vec<(f64, f64)>>;
+
+/// Where the pressure advance lines speed up and slow down.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Cut {
+    /// Model x where the fast middle starts and ends.
+    pub fast_from: f64,
+    pub fast_to: f64,
+    /// Slow and fast speeds, mm/s.
+    pub slow: f64,
+    pub fast: f64,
+}
+
+/// Whether `p` is inside the convex polygon `poly`, or within `margin` of it.
+pub fn in_convex(poly: &[(f64, f64)], p: (f64, f64), margin: f64) -> bool {
+    let n = poly.len();
+    if n < 3 {
+        return false;
+    }
+    let area: f64 = (0..n)
+        .map(|i| {
+            let (a, b) = (poly[i], poly[(i + 1) % n]);
+            a.0 * b.1 - b.0 * a.1
+        })
+        .sum();
+    let sign = if area >= 0.0 { 1.0 } else { -1.0 };
+    (0..n).all(|i| {
+        let (a, b) = (poly[i], poly[(i + 1) % n]);
+        let (ex, ey) = (b.0 - a.0, b.1 - a.1);
+        let len = (ex * ex + ey * ey).sqrt();
+        len < 1e-12 || sign * (ex * (p.1 - a.1) - ey * (p.0 - a.0)) / len >= -margin
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,10 +131,12 @@ pub struct Summary {
 
 /// Which band a layer whose top is at `z` belongs to: band `i` holds `(base + i·band, base + (i+1)·band]`.
 pub fn band_of(z: f64, base: f64, band: f64, count: usize) -> usize {
-    if count == 0 || z <= base + 1e-6 {
+    if count == 0 || z <= base + 1e-3 * band {
         return 0;
     }
-    let i = ((z - base) / band - 1e-6).ceil() as i64 - 1;
+    // Orca's layer heights are a little inexact (0.199951), so a layer ending within 1 µm per mm
+    // of band of a boundary belongs below it.
+    let i = ((z - base) / band - 1e-3).ceil() as i64 - 1;
     i.clamp(0, count as i64 - 1) as usize
 }
 
@@ -186,8 +227,22 @@ impl Machine {
     }
 }
 
-/// The extrusion's XY bounds outside start/end G-code, skirt and brim.
-fn extrusion_bounds(input: impl BufRead) -> std::io::Result<Option<[f64; 4]>> {
+/// Kinds of extrusion that aren't the test piece itself.
+fn is_piece(kind: Option<&str>) -> bool {
+    kind.is_some_and(|k| !matches!(k, "Custom" | "Skirt" | "Brim") && !k.starts_with("Support"))
+}
+
+/// What a first pass over the G-code finds about the test piece.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+struct Pre {
+    /// Its extrusion's XY bounds (start/end G-code, skirt, brim and supports left out).
+    bounds: Option<[f64; 4]>,
+    /// The bottom of its first layer (`;Z:` minus `;HEIGHT:`): on a belt printer it stands on a
+    /// support wedge, so its bands start there rather than at 0.
+    base: Option<f64>,
+}
+
+fn prepass(input: impl BufRead) -> std::io::Result<Pre> {
     let mut m = Machine {
         pos: [0.0; 3],
         absolute: true,
@@ -198,22 +253,30 @@ fn extrusion_bounds(input: impl BufRead) -> std::io::Result<Option<[f64; 4]>> {
         f_new: None,
     };
     let mut kind: Option<String> = None;
-    let mut b: Option<[f64; 4]> = None;
+    let mut pre = Pre::default();
+    let (mut z, mut height) = (0.0f64, None::<f64>);
     for line in input.lines() {
         let line = line?;
         if let Some(t) = line.strip_prefix(";TYPE:") {
             kind = Some(t.trim().to_string());
             continue;
         }
+        if let Some(v) = line.strip_prefix(";Z:") {
+            z = v.trim().parse().unwrap_or(z);
+            height = None;
+            continue;
+        }
+        if let Some(v) = line.strip_prefix(";HEIGHT:") {
+            height = height.or(v.trim().parse().ok());
+            continue;
+        }
         let w = Words::split(&line);
         let Some(delta) = motion(&mut m, &w) else {
             continue;
         };
-        let counted = kind
-            .as_deref()
-            .is_some_and(|k| !matches!(k, "Custom" | "Skirt" | "Brim"));
-        if counted && delta.e > 0.0 && delta.moved_xy {
-            let r = b.get_or_insert([f64::MAX, f64::MAX, f64::MIN, f64::MIN]);
+        if is_piece(kind.as_deref()) && delta.e > 0.0 && delta.moved_xy {
+            pre.base.get_or_insert(z - height.unwrap_or(0.0));
+            let r = pre.bounds.get_or_insert([f64::MAX, f64::MAX, f64::MIN, f64::MIN]);
             for p in [delta.from, m.pos] {
                 r[0] = r[0].min(p[0]);
                 r[1] = r[1].min(p[1]);
@@ -222,7 +285,7 @@ fn extrusion_bounds(input: impl BufRead) -> std::io::Result<Option<[f64; 4]>> {
             }
         }
     }
-    Ok(b)
+    Ok(pre)
 }
 
 struct Delta {
@@ -282,21 +345,33 @@ fn motion(m: &mut Machine, w: &Words) -> Option<Delta> {
 }
 
 /// Rewrites `input` into `out` by `plan`.
+/// With `from_piece`, bands are measured from the test piece's first layer (a belt printer's,
+/// standing on its support wedge) instead of from 0.
 pub fn rewrite(
     input: impl BufRead,
-    bounds_pass: impl FnOnce() -> std::io::Result<Box<dyn BufRead>>,
+    first_pass: impl FnOnce() -> std::io::Result<Box<dyn BufRead>>,
     mut out: impl Write,
     plan: &Plan,
+    from_piece: bool,
 ) -> Result<Summary, String> {
     let io = |e: std::io::Error| format!("couldn't rewrite the G-code: {e}");
+    let needs_bounds = matches!(plan, Plan::Flow { .. } | Plan::PressureAdvanceParts { .. });
+    let pre = if needs_bounds || from_piece {
+        prepass(first_pass().map_err(io)?).map_err(io)?
+    } else {
+        Pre::default()
+    };
     let offset = match plan {
-        Plan::Flow { center, .. } | Plan::PaLine { center, .. } => {
-            let b = extrusion_bounds(bounds_pass().map_err(io)?)
-                .map_err(io)?
-                .ok_or("the G-code has no extrusion to calibrate")?;
+        Plan::Flow { center, .. } | Plan::PressureAdvanceParts { center, .. } => {
+            let b = pre.bounds.ok_or("the G-code has no extrusion to calibrate")?;
             Some(((b[0] + b[2]) / 2.0 - center.0, (b[1] + b[3]) / 2.0 - center.1))
         }
         _ => None,
+    };
+    let base = if from_piece {
+        pre.base.ok_or("the G-code has no extrusion to calibrate")?
+    } else {
+        0.0
     };
     let mut m = Machine {
         pos: [0.0; 3],
@@ -323,7 +398,7 @@ pub fn rewrite(
         }
         if let Some(v) = line.strip_prefix(";Z:") {
             writeln!(out, "{line}").map_err(io)?;
-            z = v.trim().parse().unwrap_or(z);
+            z = v.trim().parse::<f64>().map_or(z, |v| v - base);
             sum.layers += 1;
             if let Plan::Command {
                 command,
@@ -359,100 +434,103 @@ pub fn rewrite(
             writeln!(out, "{line}").map_err(io)?;
             continue;
         };
-        if let Plan::PaLine {
-            bars,
+        if let Plan::PressureAdvanceParts {
+            parts,
             values,
-            slow,
-            speeds,
+            cut,
+            name,
             ..
         } = plan
             && printing
             && d.e > 0.0
             && d.moved_xy
-            && w.command() == "G1"
         {
             let (ox, oy) = offset.unwrap_or_default();
             let a = (d.from[0] - ox, d.from[1] - oy);
             let b = (m.pos[0] - ox, m.pos[1] - oy);
             let mid = ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
-            const MARGIN: f64 = 0.8;
-            if let Some(i) = bars.iter().position(|c| {
-                mid.0 >= c[0] - MARGIN
-                    && mid.0 <= c[2] + MARGIN
-                    && mid.1 >= c[1] - MARGIN
-                    && mid.1 <= c[3] + MARGIN
-            }) {
+            const MARGIN: f64 = 0.6;
+            if let Some(i) = parts
+                .iter()
+                .position(|polys| polys.iter().any(|poly| in_convex(poly, mid, MARGIN)))
+            {
                 if band != Some(i) {
                     band = Some(i);
                     writeln!(
                         out,
-                        "{} ; printpit calibration: line {}",
+                        "{} ; printpit calibration: {name} {}",
                         Command::PressureAdvance.line(values[i]),
                         i + 1
                     )
                     .map_err(io)?;
                     sum.commands += 1;
                 }
-                if let Some(f) = f_word {
-                    m.f_old = Some(f);
-                }
-                // Cut where the speed changes, then one move per piece.
-                let mut cuts = vec![0.0, 1.0];
-                if (b.0 - a.0).abs() > 1e-9 {
-                    for x in [slow.0, slow.1] {
-                        let t = (x - a.0) / (b.0 - a.0);
-                        if t > 1e-6 && t < 1.0 - 1e-6 {
-                            cuts.push(t);
+                sum.moves += 1;
+                if let Some(cut) = cut
+                    && w.command() == "G1"
+                {
+                    if let Some(f) = f_word {
+                        m.f_old = Some(f);
+                    }
+                    // Cut where the speed changes, then one move per piece.
+                    let mut cuts = vec![0.0, 1.0];
+                    if (b.0 - a.0).abs() > 1e-9 {
+                        for x in [cut.fast_from, cut.fast_to] {
+                            let t = (x - a.0) / (b.0 - a.0);
+                            if t > 1e-6 && t < 1.0 - 1e-6 {
+                                cuts.push(t);
+                            }
                         }
                     }
+                    cuts.sort_by(f64::total_cmp);
+                    sum.moves += cuts.len() - 2;
+                    for pair in cuts.windows(2) {
+                        let (t0, t1) = (pair[0], pair[1]);
+                        let end = [
+                            d.from[0] + (m.pos[0] - d.from[0]) * t1,
+                            d.from[1] + (m.pos[1] - d.from[1]) * t1,
+                        ];
+                        let xm = a.0 + (b.0 - a.0) * (t0 + t1) / 2.0;
+                        let speed = if xm > cut.fast_from && xm < cut.fast_to {
+                            cut.fast
+                        } else {
+                            cut.slow
+                        };
+                        let f = (speed * 60.0).round();
+                        let e = d.e * (t1 - t0);
+                        let e_word = if m.e_relative() {
+                            fmt(e, 5)
+                        } else {
+                            m.e_new += e;
+                            fmt(m.e_new, 5)
+                        };
+                        writeln!(
+                            out,
+                            "G1 X{} Y{} E{} F{}",
+                            fmt(end[0], 3),
+                            fmt(end[1], 3),
+                            e_word,
+                            fmt(f, 0)
+                        )
+                        .map_err(io)?;
+                        m.f_new = Some(f);
+                    }
+                    continue;
                 }
-                cuts.sort_by(f64::total_cmp);
-                for pair in cuts.windows(2) {
-                    let (t0, t1) = (pair[0], pair[1]);
-                    let at = |t: f64| {
-                        [
-                            d.from[0] + (m.pos[0] - d.from[0]) * t,
-                            d.from[1] + (m.pos[1] - d.from[1]) * t,
-                        ]
-                    };
-                    let end = at(t1);
-                    let xm = a.0 + (b.0 - a.0) * (t0 + t1) / 2.0;
-                    let speed = if xm > slow.0 && xm < slow.1 {
-                        speeds.1
-                    } else {
-                        speeds.0
-                    };
-                    let f = (speed * 60.0).round();
-                    let e = d.e * (t1 - t0);
-                    let e_word = if m.e_relative() {
-                        fmt(e, 5)
-                    } else {
-                        m.e_new += e;
-                        fmt(m.e_new, 5)
-                    };
-                    writeln!(
-                        out,
-                        "G1 X{} Y{} E{} F{}",
-                        fmt(end[0], 3),
-                        fmt(end[1], 3),
-                        e_word,
-                        fmt(f, 0)
-                    )
-                    .map_err(io)?;
-                    m.f_new = Some(f);
-                    sum.moves += 1;
-                }
-                continue;
             }
         }
         let mut new_e = d.e;
         let mut new_f: Option<f64> = None;
         if printing {
             match plan {
-                Plan::Command { .. } | Plan::PaLine { .. } => {}
-                Plan::Flow { cells, factors, .. } => {
-                    let edge = matches!(kind.as_deref(), Some("Skirt" | "Brim"));
-                    if d.e > 0.0 && d.moved_xy && !edge {
+                Plan::Command { .. } | Plan::PressureAdvanceParts { .. } => {}
+                Plan::Flow {
+                    cells,
+                    factors,
+                    x_only,
+                    ..
+                } => {
+                    if d.e > 0.0 && d.moved_xy && is_piece(kind.as_deref()) {
                         let (ox, oy) = offset.unwrap_or_default();
                         let x = (d.from[0] + m.pos[0]) / 2.0 - ox;
                         let y = (d.from[1] + m.pos[1]) / 2.0 - oy;
@@ -460,8 +538,7 @@ pub fn rewrite(
                         if let Some(i) = cells.iter().position(|c| {
                             x >= c[0] - MARGIN
                                 && x <= c[2] + MARGIN
-                                && y >= c[1] - MARGIN
-                                && y <= c[3] + MARGIN
+                                && (*x_only || (y >= c[1] - MARGIN && y <= c[3] + MARGIN))
                         }) {
                             new_e = d.e * factors[i];
                             sum.moves += 1;
@@ -573,6 +650,7 @@ mod tests {
             move || Ok(Box::new(std::io::Cursor::new(owned.into_bytes())) as Box<dyn BufRead>),
             &mut out,
             plan,
+            false,
         )
         .unwrap();
         (String::from_utf8(out).unwrap(), sum)
@@ -649,6 +727,7 @@ mod tests {
             cells,
             factors: vec![0.8, 1.1],
             center: (15.0, 5.0),
+            x_only: false,
         };
         let (out, sum) = run(src, &plan);
         assert_eq!(sum.moves, 4);
@@ -666,6 +745,7 @@ mod tests {
             cells: vec![[0.0, 0.0, 10.0, 10.0]],
             factors: vec![0.5],
             center: (5.0, 5.0),
+            x_only: false,
         };
         let (out, _) = run(src, &plan);
         assert!(out.contains("G1 X10 Y0 E0.5\n"), "{out}");
@@ -782,15 +862,21 @@ mod tests {
     #[test]
     fn pa_line_bars_are_cut_into_slow_fast_slow() {
         // Two 80 mm bars, 4 mm apart, centred on (100, 100) in the G-code.
-        let bars = vec![[0.0, 0.0, 80.0, 1.0], [0.0, 4.0, 80.0, 5.0]];
+        let rect = |y: f64| vec![vec![(0.0, y), (80.0, y), (80.0, y + 1.0), (0.0, y + 1.0)]];
+        let bars = vec![rect(0.0), rect(4.0)];
         let src = "M83\n;Z:0.2\n;TYPE:Outer wall\nG1 X60 Y97.5 F600\nG1 X140 Y97.5 E4\nG1 X140 Y97.8 E.05\n\
                    G1 X60 Y101.5\nG1 X140 Y101.5 E4\n;TYPE:Custom\nG1 X0 Y0 E1\n";
-        let plan = Plan::PaLine {
-            bars,
+        let plan = Plan::PressureAdvanceParts {
+            parts: bars,
             values: vec![0.0, 0.02],
-            slow: (20.0, 60.0),
-            speeds: (20.0, 100.0),
+            cut: Some(Cut {
+                fast_from: 20.0,
+                fast_to: 60.0,
+                slow: 20.0,
+                fast: 100.0,
+            }),
             center: (40.0, 2.5),
+            name: "line",
         };
         let (out, sum) = run(src, &plan);
         assert_eq!(sum.commands, 2);
@@ -817,6 +903,103 @@ mod tests {
     }
 
     #[test]
+    fn belt_bands_start_at_the_piece() {
+        // Support wedge layers from 600, the piece from 610 (its first layer 0.2 high).
+        let mut src = String::from("M83\n");
+        for i in 0..60 {
+            let z = 600.2 + i as f64 * 0.2;
+            let kind = if z < 610.1 { "Support" } else { "Outer wall" };
+            src.push_str(&format!(
+                ";LAYER_CHANGE\n;Z:{z:.1}\n;HEIGHT:0.2\n;TYPE:{kind}\nG1 X1 Y{i} E.1\n"
+            ));
+        }
+        let plan = Plan::Command {
+            command: Command::Temperature,
+            band: 1.0,
+            values: vec![230.0, 225.0],
+            first: Vec::new(),
+        };
+        let mut out = Vec::new();
+        let owned = src.clone();
+        let sum = rewrite(
+            src.as_bytes(),
+            move || Ok(Box::new(std::io::Cursor::new(owned.into_bytes())) as Box<dyn BufRead>),
+            &mut out,
+            &plan,
+            true,
+        )
+        .unwrap();
+        let out = String::from_utf8(out).unwrap();
+        assert_eq!(sum.commands, 2);
+        // The piece's first layer is 610.2 (bottom 610.0); band 2 starts above 611.0.
+        assert!(out.contains(";Z:611.2\nM104 S225 ;"), "{out}");
+        assert!(out.contains(";Z:600.2\nM104 S230 ;"), "{out}");
+    }
+
+    #[test]
+    fn flow_by_x_alone() {
+        let src = "M83\n;Z:500\n;TYPE:Support\nG1 X0 Y0\nG1 X40 Y0 E1\n;TYPE:Top surface\nG1 X5 Y900 F600\n\
+                   G1 X9 Y950 E1\nG1 X25 Y700 E1\nG1 X29 Y720 E1\n";
+        let plan = Plan::Flow {
+            cells: vec![[0.0, 0.0, 10.0, 10.0], [20.0, 0.0, 30.0, 10.0]],
+            factors: vec![0.5, 2.0],
+            center: (15.0, 5.0),
+            x_only: true,
+        };
+        let (out, sum) = run(src, &plan);
+        assert_eq!(sum.moves, 2);
+        assert!(out.contains("G1 X9 Y950 E0.5\n"), "{out}");
+        // Between the cells: neither.
+        assert!(out.contains("G1 X25 Y700 E1\n"), "{out}");
+        assert!(out.contains("G1 X29 Y720 E2\n"), "{out}");
+        // Supports aren't the piece.
+        assert!(out.contains("G1 X40 Y0 E1\n"));
+    }
+
+    #[test]
+    fn convex_containment() {
+        let sq = [(0.0, 0.0), (2.0, 0.0), (2.0, 2.0), (0.0, 2.0)];
+        let back: Vec<_> = sq.iter().rev().copied().collect();
+        for poly in [&sq[..], &back[..]] {
+            assert!(in_convex(poly, (1.0, 1.0), 0.0));
+            assert!(!in_convex(poly, (2.5, 1.0), 0.0));
+            assert!(in_convex(poly, (2.5, 1.0), 0.6));
+            assert!(!in_convex(poly, (2.5, 2.5), 0.4));
+        }
+    }
+
+    #[test]
+    fn pa_chevrons_get_their_values_without_cuts() {
+        // Two diamonds side by side, centred on (100, 100) in the G-code.
+        let diamond = |cx: f64| vec![vec![(cx - 1.0, 0.0), (cx, -1.0), (cx + 1.0, 0.0), (cx, 1.0)]];
+        let plan = Plan::PressureAdvanceParts {
+            parts: vec![diamond(0.0), diamond(5.0)],
+            values: vec![0.01, 0.02],
+            cut: None,
+            center: (2.5, 0.0),
+            name: "chevron",
+        };
+        let src = "M83\n;Z:0.2\n;TYPE:Outer wall\nG1 X96.5 Y100 F600\nG1 X98.5 Y100 E.1\nG1 X97.5 Y100.5 E.1\n\
+                   G1 X101.5 Y100\nG1 X103.5 Y100 E.1\n;Z:0.4\nG1 X96.5 Y100\nG1 X98.5 Y100 E.1\n";
+        let (out, sum) = run(src, &plan);
+        assert_eq!(sum.commands, 3);
+        assert!(
+            out.contains(
+                "SET_PRESSURE_ADVANCE ADVANCE=0.01 ; printpit calibration: chevron 1\nG1 X98.5 Y100 E.1\n"
+            ),
+            "{out}"
+        );
+        assert!(
+            out.contains(
+                "SET_PRESSURE_ADVANCE ADVANCE=0.02 ; printpit calibration: chevron 2\nG1 X103.5 Y100 E.1\n"
+            ),
+            "{out}"
+        );
+        // Moves are left as they were.
+        assert!(!out.contains(" F1"), "{out}");
+    }
+
+    #[test]
     fn refuses_gcode_without_layers() {
         let mut out = Vec::new();
         let plan = Plan::Command {
@@ -830,6 +1013,7 @@ mod tests {
             || Ok(Box::new(std::io::Cursor::new(Vec::new())) as Box<dyn BufRead>),
             &mut out,
             &plan,
+            false,
         );
         assert!(r.unwrap_err().contains("no layer markers"));
     }

@@ -617,3 +617,99 @@ async fn optional_tests_tune_the_printer_and_the_process() {
     assert!(page.body.contains("progress: 0/6"));
     assert!(page.body.contains("1/6 · temperature tower"));
 }
+
+#[tokio::test]
+async fn belt_printers_tip_the_pieces_back_and_skip_the_pa_lines() {
+    let mut s = setup().await;
+    // Make the printer's machine profile a 45° belt printer.
+    let machine_id = store::printer_slicer(&s.app.state.db, s.printer)
+        .await
+        .unwrap()
+        .unwrap()
+        .machine_profile_id;
+    let mut machine = store::get_profile(&s.app.state.db, machine_id)
+        .await
+        .unwrap()
+        .unwrap()
+        .settings;
+    machine.insert("belt_printer".into(), json!("1"));
+    machine.insert("belt_slice_rotation".into(), json!("x"));
+    machine.insert("belt_slice_rotation_angle".into(), json!("45"));
+    store::update_settings(&s.app.state.db, machine_id, &machine)
+        .await
+        .unwrap();
+
+    let page =
+        s.c.get(&format!("/ui/slice/calibrate?printer={}", s.printer))
+            .await;
+    assert!(page.body.contains("A belt printer"), "{}", page.body);
+    assert!(
+        page.body.contains("pressure advance pattern"),
+        "listed with the others"
+    );
+    for t in ["pressure_advance_pattern", "pressure_advance_line"] {
+        let page =
+            s.c.get_hx(&format!("/ui/slice/calibrate?printer={}&test={t}", s.printer))
+                .await;
+        assert!(page.body.contains("Use the pressure advance tower"), "{t}");
+        assert!(
+            !page.body.contains("/slice/calibrate/slice"),
+            "no slice form for {t}"
+        );
+        let res = s
+            .post(
+                "/slice/calibrate/slice",
+                &[("test", t), ("start", "0"), ("end", "0.04"), ("step", "0.005")],
+            )
+            .await;
+        assert!(
+            res.body.contains("Use the pressure advance tower"),
+            "{}",
+            res.body
+        );
+    }
+    assert!(
+        store::recent_jobs(&s.app.state.db, None, 5)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    // The PA tower is tipped back onto the belt, and its G-code still gets its values.
+    s.post(
+        "/slice/calibrate/slice",
+        &[
+            ("test", "pressure_advance"),
+            ("start", "0"),
+            ("end", "0.01"),
+            ("step", "0.005"),
+        ],
+    )
+    .await;
+    let job = s.wait(s.latest().await.id, JobStatus::Done).await;
+    let model = std::fs::read(
+        s.app
+            .state
+            .slicing
+            .as_ref()
+            .unwrap()
+            .storage
+            .model_path(job.id, "stl")
+            .unwrap(),
+    )
+    .unwrap();
+    let process = store::get_profile(&s.app.state.db, s.process)
+        .await
+        .unwrap()
+        .unwrap()
+        .settings;
+    let c = SliceOptions::from_json(&job.options_json).calibration.unwrap();
+    assert_eq!(model, c.model(&machine, &process), "the tipped-back tower");
+    let mut flat = machine.clone();
+    flat.remove("belt_printer");
+    assert_ne!(model, c.model(&flat, &process));
+    assert!(
+        s.uploaded(&job)
+            .contains("SET_PRESSURE_ADVANCE ADVANCE=0 ; printpit calibration: band 1")
+    );
+}

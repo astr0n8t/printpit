@@ -127,6 +127,24 @@ impl Mesh {
         }
     }
 
+    /// Turns the mesh `deg` degrees about the X axis (right-handed: +y towards +z).
+    pub fn rotate_x(&mut self, deg: f64) {
+        let (s, c) = deg.to_radians().sin_cos();
+        for p in self.tris.iter_mut().flatten() {
+            let (y, z) = (p[1], p[2]);
+            p[1] = y * c - z * s;
+            p[2] = y * s + z * c;
+        }
+    }
+
+    /// Moves the mesh so its lowest point is at z = 0.
+    pub fn drop_to_bed(&mut self) {
+        let lo = self.bounds().0[2];
+        for p in self.tris.iter_mut().flatten() {
+            p[2] -= lo;
+        }
+    }
+
     /// Binary STL.
     pub fn to_stl(&self, title: &str) -> Vec<u8> {
         let mut out = Vec::with_capacity(84 + self.tris.len() * 50);
@@ -325,6 +343,21 @@ mod tests {
         let (lo, hi) = m.bounds();
         assert!((lo[1] + 0.8).abs() < 1e-9 && (hi[1] - 0.2).abs() < 1e-9);
         assert!((hi[0] - 6.5).abs() < 1e-9 && (hi[2] - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn rotating_keeps_the_solid() {
+        let mut m = Mesh::new();
+        m.cuboid([0.0, 0.0, 0.0], [10.0, 10.0, 20.0]);
+        m.rotate_x(-45.0);
+        m.drop_to_bed();
+        assert!((volume(&m) - 2000.0).abs() < 1e-6);
+        let (lo, hi) = m.bounds();
+        assert!(lo[2].abs() < 1e-9);
+        // The far bottom edge (y = 10, z = 0) goes down; the near top edge (y = 0, z = 20) up.
+        let h = 2.0f64.sqrt() / 2.0;
+        assert!((hi[2] - (10.0 * h + 20.0 * h)).abs() < 1e-9, "{hi:?}");
+        assert!((hi[1] - lo[1] - (10.0 * h + 20.0 * h)).abs() < 1e-9);
     }
 
     #[test]

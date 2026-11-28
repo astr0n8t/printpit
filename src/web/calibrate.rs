@@ -98,6 +98,8 @@ struct Current {
     job_pending: bool,
     skipped: bool,
     printed: bool,
+    /// Why this printer can't print the test (and so no slice form).
+    unavailable: Option<String>,
     /// The print's job: `(id, badge label, badge class)`. The job panel's refresh updates the
     /// badge (`job-badge-{id}`) out of band.
     job: Option<(i64, &'static str, &'static str)>,
@@ -116,6 +118,8 @@ struct PageTemplate {
     process_id: i64,
     filament_id: i64,
     filament_name: String,
+    /// The printer is a belt printer (tilt in degrees): the pieces are tipped back onto a wedge.
+    belt: Option<String>,
     rows: Vec<Row>,
     /// The optional tests, listed after the core ones.
     extras: Vec<Row>,
@@ -290,6 +294,7 @@ async fn render(
                 process_id: 0,
                 filament_id: 0,
                 filament_name: String::new(),
+                belt: None,
                 rows: Vec::new(),
                 extras: Vec::new(),
                 done: 0,
@@ -394,6 +399,7 @@ async fn render(
         job_pending,
         skipped: step.is_some_and(|s| s.skipped),
         printed: job.is_some(),
+        unavailable: calibrate::unavailable(current_test, &now.machine),
         job: job.as_ref().map(|(j, _)| {
             let (label, class) = badge(j.status());
             (j.id, label, class)
@@ -412,6 +418,10 @@ async fn render(
         process_id: ctx.process.info.id,
         filament_id: ctx.filament.info.id,
         filament_name: ctx.filament.info.name.clone(),
+        belt: calibrate::belt_tilt(&ctx.machine.settings)
+            .ok()
+            .flatten()
+            .map(|a| calibrate::gcode::fmt(a, 1)),
         rows,
         extras,
         done,

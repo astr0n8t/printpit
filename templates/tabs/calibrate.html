@@ -33,6 +33,9 @@
     </div>
   </form>
   <p class="dim">Each test is sliced as <strong>{{ machine }}</strong> with this process and filament, and goes to <code>printpit/</code> on the printer. What you read off a print goes into <strong>{{ filament_name }}</strong>, and the next tests use it.</p>
+{%- if let Some(a) = belt %}
+  <p class="dim">A belt printer: like OrcaSlicer, printpit tips each test piece back {{ a }}° so it stands upright on the tilted layers, on a support wedge. Bands are measured from the piece's own first layer, above the wedge.</p>
+{%- endif %}
   <p>progress: {{ done }}/{{ total }}</p>
   <ol class="calib-steps">
 {%- for r in rows %}
@@ -85,7 +88,9 @@
 {%- if let Some((id, label, class)) = c.job %}
   <p>printed as <a href="/slice/jobs/{{ id }}" hx-get="/slice/jobs/{{ id }}" hx-target="#job">job #{{ id }}</a> <span id="job-badge-{{ id }}" class="badge {{ class }}">{{ label }}</span></p>
 {%- endif %}
-{%- if operator %}
+{%- if let Some(why) = c.unavailable %}
+  <p class="warn">{{ why }}</p>
+{%- else if operator %}
   <form hx-post="/slice/calibrate/slice" hx-target="#main" hx-disabled-elt="find button.primary">
     <input type="hidden" name="printer" value="{{ printer_id }}">
     <input type="hidden" name="process" value="{{ process_id }}">

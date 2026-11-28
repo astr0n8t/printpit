@@ -25,7 +25,7 @@ pub mod mesh;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use self::gcode::{Command, Plan};
+use self::gcode::{Command, Cut, Plan};
 use self::mesh::{Glyph, Mesh};
 use super::Profile;
 
@@ -40,6 +40,7 @@ pub enum Test {
     Retraction,
     VolumetricSpeed,
     PressureAdvanceLine,
+    PressureAdvancePattern,
     Tolerance,
     Cornering,
     ShaperFrequency,
@@ -49,7 +50,7 @@ pub enum Test {
 
 impl Test {
     /// Core tests first, then the optional ones.
-    pub const ALL: [Test; 12] = [
+    pub const ALL: [Test; 13] = [
         Test::Temperature,
         Test::FlowCoarse,
         Test::FlowFine,
@@ -57,6 +58,7 @@ impl Test {
         Test::Retraction,
         Test::VolumetricSpeed,
         Test::PressureAdvanceLine,
+        Test::PressureAdvancePattern,
         Test::Tolerance,
         Test::Cornering,
         Test::ShaperFrequency,
@@ -93,6 +95,7 @@ impl Test {
             Test::Retraction => "retraction",
             Test::VolumetricSpeed => "volumetric_speed",
             Test::PressureAdvanceLine => "pressure_advance_line",
+            Test::PressureAdvancePattern => "pressure_advance_pattern",
             Test::Tolerance => "tolerance",
             Test::Cornering => "cornering",
             Test::ShaperFrequency => "input_shaping_frequency",
@@ -114,6 +117,7 @@ impl Test {
             Test::Retraction => "retraction test",
             Test::VolumetricSpeed => "max volumetric speed",
             Test::PressureAdvanceLine => "pressure advance lines",
+            Test::PressureAdvancePattern => "pressure advance pattern",
             Test::Tolerance => "tolerance",
             Test::Cornering => "cornering (square corner velocity)",
             Test::ShaperFrequency => "input shaping · frequency",
@@ -145,6 +149,9 @@ impl Test {
             }
             Test::PressureAdvanceLine => {
                 "Another way to find pressure advance: one layer of numbered lines, each with its own value, printed slow, fast, then slow again. Quicker than the tower, and easier to read for some."
+            }
+            Test::PressureAdvancePattern => {
+                "Another way to find pressure advance, and the one Orca recommends: nested chevrons with sharp 90° tips, four layers high, each with its own value and numbered every other one. Good for high-speed printers, where lines are too short to show much."
             }
             Test::Tolerance => {
                 "Finds how much bigger holes should be: a plate with 8 mm square holes, each 0.05 mm larger than the last (numbered in hundredths), and an 8 mm peg to try in them."
@@ -185,6 +192,9 @@ impl Test {
             Test::PressureAdvanceLine => {
                 "Pick the line that's the same width all along: too low bulges where it speeds up and thins where it slows down, too high the opposite (or gaps)."
             }
+            Test::PressureAdvancePattern => {
+                "Look at the tips from above. Pick the chevron with the sharpest tip and even lines along the arms: too low bulges at the tip, too high leaves a gap or a rounded, thin tip. Count from the left (the numbers are on every other one)."
+            }
             Test::Tolerance => {
                 "Find the smallest hole the peg slides into without forcing. Holes are numbered by how much larger they are, in hundredths of a millimetre."
             }
@@ -212,7 +222,10 @@ impl Test {
         match self {
             Test::Temperature => "°C",
             Test::FlowCoarse | Test::FlowFine => "%",
-            Test::PressureAdvance | Test::PressureAdvanceLine | Test::ShaperDamping => "",
+            Test::PressureAdvance
+            | Test::PressureAdvanceLine
+            | Test::PressureAdvancePattern
+            | Test::ShaperDamping => "",
             Test::Retraction | Test::Tolerance => "mm",
             Test::VolumetricSpeed => "mm³/s",
             Test::Cornering | Test::Vfa => "mm/s",
@@ -224,7 +237,7 @@ impl Test {
     pub fn places(self) -> usize {
         match self {
             Test::Temperature | Test::FlowCoarse | Test::FlowFine | Test::Vfa => 0,
-            Test::PressureAdvance | Test::PressureAdvanceLine => 4,
+            Test::PressureAdvance | Test::PressureAdvanceLine | Test::PressureAdvancePattern => 4,
             Test::Retraction | Test::Tolerance => 2,
             Test::VolumetricSpeed | Test::Cornering | Test::ShaperFrequency => 1,
             Test::ShaperDamping => 3,
@@ -236,7 +249,9 @@ impl Test {
         match self {
             Test::Temperature => "nozzle temperature",
             Test::FlowCoarse | Test::FlowFine => "flow ratio",
-            Test::PressureAdvance | Test::PressureAdvanceLine => "pressure advance",
+            Test::PressureAdvance | Test::PressureAdvanceLine | Test::PressureAdvancePattern => {
+                "pressure advance"
+            }
             Test::Retraction => "retraction length (filament override)",
             Test::VolumetricSpeed => "max volumetric speed",
             Test::Tolerance => "X-Y hole compensation",
@@ -272,10 +287,17 @@ const FLOW_FINE: [i32; 10] = [-9, -8, -7, -6, -5, -4, -3, -2, -1, 0];
 /// Tolerance holes' extra size (mm), and their nominal size.
 const TOLERANCES: [f64; 7] = [0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3];
 const HOLE: f64 = 8.0;
+/// The flow blocks' size and the gap between them.
+const FLOW_BLOCK: f64 = 20.0;
+const FLOW_GAP: f64 = 4.0;
 /// The pressure advance lines: length, pitch, and where the fast middle part starts and ends.
 const PA_LINE: f64 = 80.0;
 const PA_PITCH: f64 = 4.0;
 const PA_FAST: (f64, f64) = (20.0, 60.0);
+/// The pressure advance pattern's arm length (Orca's `m_wall_side_length`), four layers high.
+const CHEVRON_ARM: f64 = 30.0;
+const CHEVRON_LAYERS: f64 = 4.0;
+use std::f64::consts::FRAC_1_SQRT_2;
 
 /// One setting a result changes. Only keys in [`RESULT_KEYS`] are ever written.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -411,8 +433,8 @@ pub fn defaults(test: Test, machine: &Profile, filament: &Profile) -> (f64, f64,
         Test::Retraction if bowden => (1.0, 6.0, 0.25),
         Test::Retraction => (0.0, 2.0, 0.1),
         Test::VolumetricSpeed => (5.0, 20.0, 0.5),
-        Test::PressureAdvanceLine if bowden => (0.0, 0.8, 0.05),
-        Test::PressureAdvanceLine => (0.0, 0.08, 0.005),
+        Test::PressureAdvanceLine | Test::PressureAdvancePattern if bowden => (0.0, 0.8, 0.05),
+        Test::PressureAdvanceLine | Test::PressureAdvancePattern => (0.0, 0.08, 0.005),
         Test::Tolerance => (0.0, 0.0, 0.0),
         Test::Cornering => (1.0, 20.0, 1.0),
         Test::ShaperFrequency => (20.0, 80.0, 1.0),
@@ -431,6 +453,24 @@ impl Calibration {
             step,
             carry: Vec::new(),
         };
+        if let Some(why) = unavailable(test, machine) {
+            return Err(why);
+        }
+        let belt = belt_tilt(machine)?;
+        if belt.is_some()
+            && matches!(test, Test::FlowCoarse | Test::FlowFine)
+            && let Some((w, _)) = bed_size(machine)
+        {
+            // On a belt the blocks go in one row across it.
+            let row = c.modifiers().len() as f64 * (FLOW_BLOCK + FLOW_GAP) - FLOW_GAP;
+            if row + 10.0 > w {
+                return Err(format!(
+                    "The flow blocks need {} mm across the belt; this one is {} mm.",
+                    gcode::fmt(row + 10.0, 0),
+                    gcode::fmt(w, 0)
+                ));
+            }
+        }
         if !test.has_range() {
             (c.start, c.end, c.step) = (0.0, 0.0, 0.0);
             return Ok(c);
@@ -441,7 +481,7 @@ impl Calibration {
         let (lo, hi, min_step, max_bands) = match test {
             Test::Temperature => (150.0, 350.0, 1.0, 15),
             Test::PressureAdvance => (0.0, 2.0, 0.0005, 100),
-            Test::PressureAdvanceLine => (0.0, 2.0, 0.0005, 30),
+            Test::PressureAdvanceLine | Test::PressureAdvancePattern => (0.0, 2.0, 0.0005, 30),
             Test::Retraction => (0.0, 10.0, 0.05, 60),
             Test::Cornering => (0.5, 50.0, 0.1, 60),
             Test::ShaperFrequency => (5.0, 200.0, 0.5, 150),
@@ -486,13 +526,27 @@ impl Calibration {
                 "That's {bands} steps; the most is {max_bands}. Use a bigger step or a smaller range."
             ));
         }
-        if test == Test::PressureAdvanceLine {
-            let (lines, deep) = (PA_LINE + 20.0, bands as f64 * PA_PITCH + 10.0);
+        if matches!(test, Test::PressureAdvanceLine | Test::PressureAdvancePattern) {
+            let (lines, deep) = if test == Test::PressureAdvanceLine {
+                (PA_LINE + 20.0, bands as f64 * PA_PITCH + 10.0)
+            } else {
+                // Nested chevrons, with a margin for the numbers.
+                let pitch = chevron_pitch(0.45);
+                (
+                    bands as f64 * pitch + CHEVRON_ARM * FRAC_1_SQRT_2 + 10.0,
+                    2.0 * CHEVRON_ARM * FRAC_1_SQRT_2 + 15.0,
+                )
+            };
             if let Some((w, d)) = bed_size(machine)
                 && (lines > w || deep > d)
             {
                 return Err(format!(
-                    "{bands} lines need {} × {} mm of bed; this one is {} × {} mm.",
+                    "{bands} {} need {} × {} mm of bed; this one is {} × {} mm.",
+                    if test == Test::PressureAdvanceLine {
+                        "lines"
+                    } else {
+                        "chevrons"
+                    },
                     gcode::fmt(lines, 0),
                     gcode::fmt(deep, 0),
                     gcode::fmt(w, 0),
@@ -502,7 +556,12 @@ impl Calibration {
             c.start = start;
             return Ok(c);
         }
-        let height = c.height_for(bands);
+        let mut height = c.height_for(bands);
+        if let Some(a) = belt {
+            // Tipped back onto the belt, the tower leans: its top is lower, its foot further out.
+            let (s, co) = a.to_radians().sin_cos();
+            height = height * co + 60.0 * s;
+        }
         if let Some(max) = number(machine, "printable_height").filter(|h| *h > 0.0)
             && height > max
         {
@@ -580,20 +639,30 @@ impl Calibration {
 
     /// The test piece as STL bytes.
     pub fn model(&self, machine: &Profile, process: &Profile) -> Vec<u8> {
-        let mesh = match self.test {
+        let belt = belt_tilt(machine).ok().flatten();
+        let mut mesh = match self.test {
             Test::Temperature => self.temperature_tower(),
             Test::FlowCoarse | Test::FlowFine => {
                 let (first, layer) = flow_layers(machine, process);
-                flow_blocks(self.modifiers(), first, layer).0
+                flow_blocks(self.modifiers(), first, layer, belt.is_some()).0
             }
-            Test::PressureAdvance => self.pa_tower(),
-            Test::Retraction => self.retraction_towers(),
+            Test::PressureAdvance => self.pa_tower(belt.is_some()),
+            Test::Retraction => self.retraction_towers(belt.is_some()),
             Test::VolumetricSpeed => self.speed_vase(machine),
             Test::PressureAdvanceLine => self.pa_lines(machine, process).0,
+            Test::PressureAdvancePattern => self.pa_chevrons(machine, process).0,
             Test::Tolerance => tolerance_plate(),
             Test::Cornering | Test::ShaperFrequency | Test::ShaperDamping => self.ringing_tower(),
             Test::Vfa => self.vfa_tower(),
         };
+        // A belt printer slices on planes tilted by its belt angle. Tipped back by that angle, the
+        // piece stands upright in slicing space (on a support wedge), as Orca's GUI does it.
+        if let Some(a) = belt
+            && self.tipped_on_belt()
+        {
+            mesh.rotate_x(-a);
+            mesh.drop_to_bed();
+        }
         mesh.to_stl(&format!("printpit calibration: {}", self.test.title()))
     }
 
@@ -623,12 +692,28 @@ impl Calibration {
         m
     }
 
-    fn pa_tower(&self) -> Mesh {
+    /// Whether the test piece is tipped back onto a support wedge on a belt printer (everything but
+    /// the flat tolerance plate; the pressure advance lines and pattern aren't offered there).
+    pub fn tipped_on_belt(&self) -> bool {
+        !matches!(
+            self.test,
+            Test::Tolerance | Test::PressureAdvanceLine | Test::PressureAdvancePattern
+        )
+    }
+
+    /// Whether the job's G-code is a belt printer's: its bands are then measured from the test
+    /// piece's first layer, which stands on a support wedge.
+    pub fn on_belt(&self, machine: &Profile) -> bool {
+        belt_tilt(machine).ok().flatten().is_some() && self.tipped_on_belt()
+    }
+
+    fn pa_tower(&self, belt: bool) -> Mesh {
         let mut m = Mesh::new();
         let height = self.height_for(self.values().len());
         m.cuboid([0.0, 0.0, 0.0], [40.0, 40.0, height]);
-        // A tick on the front every 5 mm, away from the corners.
-        let mut k = 5.0;
+        // A tick on the front every 5 mm, away from the corners (not on a belt, where each
+        // tick's underside would get support).
+        let mut k = if belt { f64::INFINITY } else { 5.0 };
         while k < height - 0.6 {
             m.cuboid([19.0, -0.8, k], [21.0, 0.3, k + 0.6]);
             k += 5.0;
@@ -636,15 +721,16 @@ impl Calibration {
         m
     }
 
-    fn retraction_towers(&self) -> Mesh {
+    fn retraction_towers(&self, belt: bool) -> Mesh {
         let mut m = Mesh::new();
         let n = self.values().len();
         m.cuboid([0.0, 0.0, 0.0], [50.0, 10.0, RETRACT_BASE]);
         for x in [0.0, 40.0] {
             for i in 0..n {
                 let z = RETRACT_BASE + i as f64;
-                // Every other band is 0.4 mm narrower all round, so the bands can be counted.
-                let inset = if i % 2 == 1 { 0.4 } else { 0.0 };
+                // Every other band is 0.4 mm narrower all round, so the bands can be counted (not
+                // on a belt, where the ledges would get support).
+                let inset = if i % 2 == 1 && !belt { 0.4 } else { 0.0 };
                 m.cuboid(
                     [x + inset, inset, z - 0.01],
                     [x + 10.0 - inset, 10.0 - inset, z + 1.0],
@@ -666,7 +752,7 @@ impl Calibration {
 
     /// One layer of bars (two first-layer lines wide), numbered on the left every other one.
     /// Returns the mesh and each bar's cell.
-    fn pa_lines(&self, machine: &Profile, process: &Profile) -> (Mesh, Vec<[f64; 4]>) {
+    fn pa_lines(&self, machine: &Profile, process: &Profile) -> (Mesh, Vec<gcode::Part>) {
         let h = first_layer(process);
         let bar = 2.0 * pa_line_width(machine);
         let glyph = Glyph {
@@ -681,7 +767,12 @@ impl Calibration {
         for (i, v) in self.values().iter().enumerate() {
             let y = i as f64 * PA_PITCH;
             m.cuboid([0.0, y, 0.0], [PA_LINE, y + bar, h]);
-            cells.push([0.0, y, PA_LINE, y + bar]);
+            cells.push(vec![vec![
+                (0.0, y),
+                (PA_LINE, y),
+                (PA_LINE, y + bar),
+                (0.0, y + bar),
+            ]]);
             if i % 2 == 0 {
                 let label = gcode::fmt(*v, 4);
                 let x = -2.5 - glyph.measure(&label);
@@ -689,6 +780,54 @@ impl Calibration {
             }
         }
         (m, cells)
+    }
+
+    /// Nested `>` chevrons (two lines wide, 30 mm arms at ±45°, a sharp 90° tip), four layers high,
+    /// numbered above every other one. Returns the mesh and each chevron's two arms as polygons.
+    fn pa_chevrons(&self, machine: &Profile, process: &Profile) -> (Mesh, Vec<gcode::Part>) {
+        let w = pa_line_width(machine);
+        let (first, layer) = (first_layer(process), layer_height(process));
+        let height = first + (CHEVRON_LAYERS - 1.0) * layer;
+        let half = w; // half the arm's width (two lines)
+        let pitch = chevron_pitch(w);
+        let reach = CHEVRON_ARM * FRAC_1_SQRT_2;
+        let glyph = Glyph {
+            width: 2.4,
+            height: 4.0,
+            stroke: 0.8,
+            gap: 0.5,
+            sink: 0.0,
+        };
+        let mut m = Mesh::new();
+        let mut parts = Vec::new();
+        for i in 0..self.values().len() {
+            let x = i as f64 * pitch;
+            // The centre line runs from (x, ±reach) to the tip (x + reach, 0); the outline is it
+            // offset by `half` each side, so the outer tip is sharp.
+            let d = half * FRAC_1_SQRT_2;
+            let apex = half * std::f64::consts::SQRT_2;
+            let tip = x + reach;
+            let mut arms = Vec::new();
+            for side in [1.0, -1.0] {
+                // Round the outline: outer end, outer tip, inner tip, inner end. The ends are
+                // offset square to the arm, so the outer and inner edges stay parallel to it.
+                let poly = vec![
+                    (x + d, side * (reach + d)),
+                    (tip + apex, 0.0),
+                    (tip - apex, 0.0),
+                    (x - d, side * (reach - d)),
+                ];
+                m.prism_z(&poly, 0.0, height);
+                arms.push(poly);
+            }
+            parts.push(arms);
+            if i % 2 == 0 {
+                let label = (i + 1).to_string();
+                let lx = x - glyph.measure(&label) / 2.0;
+                m.text_top(&label, lx, reach + 2.5, 0.0, glyph, first);
+            }
+        }
+        (m, parts)
     }
 
     /// A 50 mm square single-wall tower with a rib on the front (−y) and the right (+x) face, so
@@ -867,6 +1006,31 @@ impl Calibration {
                     s(process, k, v);
                 }
             }
+            Test::PressureAdvancePattern => {
+                // Orca's suggested settings for its pattern, with one loop per arm.
+                let w = gcode::fmt(pa_line_width(machine), 3);
+                for (k, v) in [
+                    ("wall_loops", "1"),
+                    ("top_shell_layers", "0"),
+                    ("bottom_shell_layers", "0"),
+                    ("sparse_infill_density", "0%"),
+                    ("brim_type", "no_brim"),
+                    ("skirt_loops", "0"),
+                    ("detect_thin_wall", "0"),
+                    ("line_width", w.as_str()),
+                    ("outer_wall_line_width", w.as_str()),
+                    ("initial_layer_line_width", w.as_str()),
+                    ("print_sequence", "by layer"),
+                ] {
+                    s(process, k, v);
+                }
+                l(process, "initial_layer_speed", "30");
+                l(machine, "wipe", "0");
+                l(machine, "retract_when_changing_layer", "0");
+                if filament.contains_key("filament_wipe") {
+                    l(filament, "filament_wipe", "0");
+                }
+            }
             Test::Tolerance => {}
             Test::Cornering | Test::ShaperFrequency | Test::ShaperDamping | Test::Vfa => {
                 for (k, v) in [
@@ -922,6 +1086,28 @@ impl Calibration {
                 }
             }
         }
+        if let Some(Some(_)) = belt_tilt(machine).ok()
+            && self.tipped_on_belt()
+        {
+            // The tipped-back piece stands on a support wedge, which Orca's automatic tree
+            // support builds under its floating bottom. Critical regions only, a low threshold and
+            // no bridge support keep it off the test's own overhangs, bridges and lettering
+            // (checked with Orca 2.5.1: without "critical only" the temperature tower's front gets
+            // supported all the way up). Spiral vase mode can't be combined
+            // with supports, and a skirt would lie in the first tilted plane, mostly off the belt.
+            for (k, v) in [
+                ("enable_support", "1"),
+                ("support_type", "tree(auto)"),
+                ("support_on_build_plate_only", "0"),
+                ("support_threshold_angle", "15"),
+                ("support_critical_regions_only", "1"),
+                ("bridge_no_support", "1"),
+                ("spiral_mode", "0"),
+                ("skirt_loops", "0"),
+            ] {
+                s(process, k, v);
+            }
+        }
     }
 
     // ── 3. the G-code ─────────────────────────────────────────────────────────────────────
@@ -960,19 +1146,33 @@ impl Calibration {
             },
             Test::Tolerance => return None,
             Test::PressureAdvanceLine => {
-                let (mesh, bars) = self.pa_lines(machine, process);
+                let (mesh, parts) = self.pa_lines(machine, process);
                 let (lo, hi) = mesh.bounds();
-                // The bars' own bounds (the labels stick out to the left).
-                let lo_x = bars.iter().map(|b| b[0]).fold(f64::MAX, f64::min).min(lo[0]);
                 let fast = number(process, "outer_wall_speed")
                     .unwrap_or(100.0)
                     .clamp(30.0, 150.0);
-                Plan::PaLine {
-                    bars,
+                Plan::PressureAdvanceParts {
+                    parts,
                     values: values.clone(),
-                    slow: PA_FAST,
-                    speeds: (round(fast / 5.0, 1), fast),
-                    center: ((lo_x + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0),
+                    cut: Some(Cut {
+                        fast_from: PA_FAST.0,
+                        fast_to: PA_FAST.1,
+                        slow: round(fast / 5.0, 1),
+                        fast,
+                    }),
+                    center: ((lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0),
+                    name: "line",
+                }
+            }
+            Test::PressureAdvancePattern => {
+                let (mesh, parts) = self.pa_chevrons(machine, process);
+                let (lo, hi) = mesh.bounds();
+                Plan::PressureAdvanceParts {
+                    parts,
+                    values: values.clone(),
+                    cut: None,
+                    center: ((lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0),
+                    name: "chevron",
                 }
             }
             Test::Retraction => Plan::Retraction {
@@ -992,12 +1192,14 @@ impl Calibration {
             }
             Test::FlowCoarse | Test::FlowFine => {
                 let (first, layer) = flow_layers(machine, process);
-                let (mesh, cells) = flow_blocks(self.modifiers(), first, layer);
+                let belt = belt_tilt(machine).ok().flatten().is_some();
+                let (mesh, cells) = flow_blocks(self.modifiers(), first, layer, belt);
                 let (lo, hi) = mesh.bounds();
                 Plan::Flow {
                     cells,
                     factors: self.modifiers().iter().map(|m| 1.0 + *m as f64 / 100.0).collect(),
                     center: ((lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0),
+                    x_only: belt,
                 }
             }
         })
@@ -1050,6 +1252,7 @@ impl Calibration {
                 let where_ = match self.test {
                     Test::Temperature => format!("block {}", i + 1),
                     Test::PressureAdvanceLine => format!("line {}", i + 1),
+                    Test::PressureAdvancePattern => format!("chevron {}", i + 1),
                     _ => {
                         let lo = base + i as f64 * band;
                         format!("{}–{} mm", gcode::fmt(lo, 1), gcode::fmt(lo + band, 1))
@@ -1103,7 +1306,7 @@ impl Calibration {
                 "filament_flow_ratio",
                 gcode::fmt(flow_after(flow_ratio(filament), v[0] as i32), 4),
             )],
-            Test::PressureAdvance | Test::PressureAdvanceLine => vec![
+            Test::PressureAdvance | Test::PressureAdvanceLine | Test::PressureAdvancePattern => vec![
                 ch("pressure_advance", gcode::fmt(v[0], 4)),
                 ch("enable_pressure_advance", "1".into()),
             ],
@@ -1142,6 +1345,7 @@ pub async fn rewrite_output(
     storage: &super::Storage,
     job: i64,
     plan: Plan,
+    from_piece: bool,
 ) -> Result<gcode::Summary, String> {
     let src = storage.output_path(job);
     let tmp = storage.job_dir(job).join(format!(
@@ -1167,6 +1371,7 @@ pub async fn rewrite_output(
             move || Ok(Box::new(BufReader::new(std::fs::File::open(&again)?)) as Box<dyn std::io::BufRead>),
             out,
             &plan,
+            from_piece,
         )
     })
     .await
@@ -1223,6 +1428,50 @@ fn tolerance_plate() -> Mesh {
     m
 }
 
+/// A belt printer's tilt (degrees), from the machine profile: `None` for an ordinary printer (or
+/// a belt that doesn't tilt), an error for a belt that tilts about an axis other than X.
+pub fn belt_tilt(machine: &Profile) -> Result<Option<f64>, String> {
+    let on = matches!(text(machine, "belt_printer").as_str(), "1" | "true");
+    if !on {
+        return Ok(None);
+    }
+    let angle = number(machine, "belt_slice_rotation_angle").unwrap_or(45.0);
+    match text(machine, "belt_slice_rotation").to_ascii_lowercase().as_str() {
+        "x" if angle.abs() > 1e-6 => Ok(Some(angle)),
+        "y" => Err(
+            "This belt printer tilts about Y. printpit's calibration prints handle belts that tilt about X, as all of OrcaSlicer's belt profiles do."
+                .into(),
+        ),
+        _ => Ok(None),
+    }
+}
+
+/// Why `test` can't be printed on this printer, if it can't (a belt printer that tilts about Y; the
+/// pressure advance lines and pattern on any belt printer, which Orca 2.5.1 doesn't offer there).
+pub fn unavailable(test: Test, machine: &Profile) -> Option<String> {
+    match belt_tilt(machine) {
+        Err(e) => Some(e),
+        Ok(Some(_)) if matches!(test, Test::PressureAdvanceLine | Test::PressureAdvancePattern) => Some(
+            "OrcaSlicer doesn't do the pressure advance lines or pattern on belt printers yet. Use the pressure advance tower."
+                .into(),
+        ),
+        _ => None,
+    }
+}
+
+/// The process's layer height.
+fn layer_height(process: &Profile) -> f64 {
+    number(process, "layer_height")
+        .filter(|h| *h > 0.0)
+        .unwrap_or(0.2)
+}
+
+/// How far apart nested chevrons are along x, for line width `w`: two lines and a 1.5 mm gap
+/// between neighbouring arms, measured square to the arms.
+fn chevron_pitch(w: f64) -> f64 {
+    (2.0 * w + 1.5) * std::f64::consts::SQRT_2
+}
+
 /// The process's first layer height.
 fn first_layer(process: &Profile) -> f64 {
     number(process, "initial_layer_print_height")
@@ -1246,11 +1495,17 @@ fn flow_layers(machine: &Profile, process: &Profile) -> (f64, f64) {
 
 /// The flow test: a 20 mm block per modifier (2 bottom, 3 infill and 5 top layers), each with a
 /// numbered tab in front, in rows. Returns the mesh and each block's cell (block and tab).
-fn flow_blocks(modifiers: &[i32], first: f64, layer: f64) -> (Mesh, Vec<[f64; 4]>) {
-    const SIZE: f64 = 20.0;
+fn flow_blocks(modifiers: &[i32], first: f64, layer: f64, one_row: bool) -> (Mesh, Vec<[f64; 4]>) {
+    const SIZE: f64 = FLOW_BLOCK;
     const TAB: f64 = 7.0;
-    const GAP: f64 = 4.0;
-    let cols = if modifiers.len() > 9 { 5 } else { 3 };
+    const GAP: f64 = FLOW_GAP;
+    let cols = if one_row {
+        modifiers.len()
+    } else if modifiers.len() > 9 {
+        5
+    } else {
+        3
+    };
     let rows = modifiers.len().div_ceil(cols);
     let glyph = Glyph {
         width: 3.0,
@@ -1469,9 +1724,9 @@ mod tests {
         assert_eq!(temp.temperature_tower().bounds().1[2], 90.0);
         assert!(size(&temp) > 9 * 5 * 12);
         let pa = Calibration::new(Test::PressureAdvance, 0.0, 0.1, 0.002, &m).unwrap();
-        assert_eq!(pa.pa_tower().bounds().1[2], 51.0);
+        assert_eq!(pa.pa_tower(false).bounds().1[2], 51.0);
         let r = Calibration::new(Test::Retraction, 0.0, 2.0, 0.1, &m).unwrap();
-        let (_, hi) = r.retraction_towers().bounds();
+        let (_, hi) = r.retraction_towers(false).bounds();
         assert!((hi[2] - 21.4).abs() < 1e-9);
         let v = Calibration::new(Test::VolumetricSpeed, 5.0, 20.0, 0.5, &m).unwrap();
         let (lo, hi) = v.speed_vase(&m).bounds();
@@ -1484,7 +1739,7 @@ mod tests {
 
     #[test]
     fn flow_cells_hold_their_blocks() {
-        let (mesh, cells) = flow_blocks(&FLOW_FINE, 0.2, 0.2);
+        let (mesh, cells) = flow_blocks(&FLOW_FINE, 0.2, 0.2, false);
         assert_eq!(cells.len(), 10);
         let (lo, hi) = mesh.bounds();
         assert_eq!(lo[0], 0.0);
@@ -1660,6 +1915,126 @@ mod tests {
         );
     }
 
+    fn belt() -> Profile {
+        let mut m = machine();
+        for (k, v) in [
+            ("belt_printer", json!("1")),
+            ("belt_slice_rotation", json!("x")),
+            ("belt_slice_rotation_angle", json!("45")),
+            ("printable_area", json!(["0x0", "250x0", "250x2000", "0x2000"])),
+        ] {
+            m.insert(k.into(), v);
+        }
+        m
+    }
+
+    #[test]
+    fn belt_printers() {
+        let m = belt();
+        let p = obj(json!({"initial_layer_print_height": "0.2", "spiral_mode": "1"}));
+        assert_eq!(belt_tilt(&m), Ok(Some(45.0)));
+        assert_eq!(belt_tilt(&machine()), Ok(None));
+        let mut y = m.clone();
+        y.insert("belt_slice_rotation".into(), json!("y"));
+        assert!(belt_tilt(&y).unwrap_err().contains("tilts about Y"));
+        assert!(Calibration::new(Test::Temperature, 230.0, 190.0, 5.0, &y).is_err());
+        let mut none = m.clone();
+        none.insert("belt_slice_rotation".into(), json!("none"));
+        assert_eq!(belt_tilt(&none), Ok(None));
+
+        // No PA lines or pattern, as in Orca.
+        for t in [Test::PressureAdvanceLine, Test::PressureAdvancePattern] {
+            let e = Calibration::new(t, 0.0, 0.08, 0.005, &m).unwrap_err();
+            assert!(e.contains("pressure advance tower"), "{e}");
+        }
+
+        // Towers are tipped back by the belt angle, and their G-code is measured from the piece.
+        let pa = Calibration::new(Test::PressureAdvance, 0.0, 0.1, 0.002, &m).unwrap();
+        assert!(pa.on_belt(&m) && !pa.on_belt(&machine()));
+        let stl = pa.model(&m, &p);
+        let flat = pa.model(&machine(), &p);
+        assert_ne!(stl, flat);
+        let mut tipped = pa.pa_tower(true);
+        tipped.rotate_x(-45.0);
+        tipped.drop_to_bed();
+        assert_eq!(stl, tipped.to_stl("printpit calibration: pressure advance tower"));
+        let tol = Calibration::new(Test::Tolerance, 0.0, 0.0, 0.0, &m).unwrap();
+        assert!(!tol.on_belt(&m), "the plate lies flat on the belt");
+        assert_eq!(tol.model(&m, &p), tol.model(&machine(), &p));
+
+        // The profiles get a support wedge and no spiral.
+        let (mut mm, mut pp, mut ff) = (m.clone(), p.clone(), filament());
+        let vfa = Calibration::new(Test::Vfa, 40.0, 200.0, 10.0, &m).unwrap();
+        vfa.prepare(&mut mm, &mut pp, &mut ff);
+        assert_eq!(pp["spiral_mode"], json!("0"));
+        assert_eq!(pp["enable_support"], json!("1"));
+        assert_eq!(pp["support_type"], json!("tree(auto)"));
+        assert_eq!(pp["bridge_no_support"], json!("1"));
+
+        // Flow blocks go in one row across the belt and are matched by x.
+        let coarse = Calibration::new(Test::FlowCoarse, 0.0, 0.0, 0.0, &m).unwrap();
+        let Some(Plan::Flow { cells, x_only, .. }) = coarse.plan(&m, &p, &filament()) else {
+            panic!()
+        };
+        assert!(x_only);
+        assert!(cells.iter().all(|c| c[1] == 0.0), "one row: {cells:?}");
+        let mut narrow = m.clone();
+        narrow.insert(
+            "printable_area".into(),
+            json!(["0x0", "200x0", "200x2000", "0x2000"]),
+        );
+        let e = Calibration::new(Test::FlowFine, 0.0, 0.0, 0.0, &narrow).unwrap_err();
+        assert!(e.contains("need 246 mm across the belt"), "{e}");
+    }
+
+    #[test]
+    fn pa_chevrons_are_sharp_and_nested() {
+        let m = machine();
+        let p = obj(json!({"initial_layer_print_height": "0.2", "layer_height": "0.2"}));
+        let c = Calibration::new(Test::PressureAdvancePattern, 0.0, 0.08, 0.005, &m).unwrap();
+        let (mesh, parts) = c.pa_chevrons(&m, &p);
+        assert_eq!(parts.len(), 17);
+        let (_, hi) = mesh.bounds();
+        assert!((hi[2] - 0.8).abs() < 1e-9, "four layers: {hi:?}");
+        let w = pa_line_width(&m);
+        for (i, arms) in parts.iter().enumerate() {
+            let tip = i as f64 * chevron_pitch(w) + CHEVRON_ARM * FRAC_1_SQRT_2;
+            for arm in arms {
+                // Both arms reach the same sharp outer tip on the x axis.
+                assert!(
+                    arm.iter()
+                        .any(|p| (p.0 - (tip + w * std::f64::consts::SQRT_2)).abs() < 1e-9 && p.1 == 0.0)
+                );
+                // The outer and inner edges are parallel (at 45°) and two lines apart.
+                let (o0, o1, i1, i0) = (arm[0], arm[1], arm[2], arm[3]);
+                let slope = |a: (f64, f64), b: (f64, f64)| (b.1 - a.1) / (b.0 - a.0);
+                assert!((slope(o0, o1) - slope(i0, i1)).abs() < 1e-9);
+                assert!((slope(o0, o1).abs() - 1.0).abs() < 1e-9);
+                let gap = ((o0.0 - i0.0).powi(2) + (o0.1 - i0.1).powi(2)).sqrt();
+                assert!((gap - 2.0 * w).abs() < 1e-9, "{gap}");
+            }
+            // A neighbour's arm is 1.5 mm away square to it, so a point between them is in neither.
+            if i > 0 {
+                let mid = (tip - chevron_pitch(w) / 2.0, 0.0);
+                assert!(
+                    !arms
+                        .iter()
+                        .chain(parts[i - 1].iter())
+                        .any(|a| gcode::in_convex(a, mid, 0.6))
+                );
+            }
+        }
+        let Some(Plan::PressureAdvanceParts { cut, name, .. }) = c.plan(&m, &p, &filament()) else {
+            panic!()
+        };
+        assert_eq!((cut, name), (None, "chevron"));
+        assert_eq!(c.choices(&with(&filament()))[2].1, "chevron 3 · 0.01");
+        let mut small = m.clone();
+        small.insert("printable_area".into(), json!(["0x0", "60x0", "60x60", "0x60"]));
+        let e = Calibration::new(Test::PressureAdvancePattern, 0.0, 0.08, 0.005, &small).unwrap_err();
+        assert!(e.contains("17 chevrons need"), "{e}");
+    }
+
     #[test]
     fn the_optional_tests_models_and_plans() {
         let m = machine();
@@ -1680,10 +2055,11 @@ mod tests {
             lo[0] < -10.0 && hi[0] == PA_LINE && (hi[2] - 0.25).abs() < 1e-9,
             "{lo:?} {hi:?}"
         );
-        let Some(Plan::PaLine { speeds, values, .. }) = line.plan(&m, &p, &f) else {
+        let Some(Plan::PressureAdvanceParts { cut, values, .. }) = line.plan(&m, &p, &f) else {
             panic!()
         };
-        assert_eq!(speeds, (30.0, 150.0));
+        let cut = cut.unwrap();
+        assert_eq!((cut.slow, cut.fast), (30.0, 150.0));
         assert_eq!(values.len(), 17);
 
         let tol = Calibration::new(Test::Tolerance, 0.0, 0.0, 0.0, &m).unwrap();
@@ -1762,6 +2138,7 @@ mod tests {
             cells,
             factors,
             center,
+            x_only: false,
         }) = c.plan(&m, &p, &f)
         else {
             panic!()
