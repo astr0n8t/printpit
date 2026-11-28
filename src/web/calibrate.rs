@@ -21,10 +21,10 @@ use crate::db::calibration::{self as cal_db, Step};
 use crate::db::slicer::{self as store, NewJob, StoredProfile};
 use crate::db::{audit, printers};
 use crate::error::AppError;
-use crate::slicer::calibrate::{self, Calibration, Change, Test};
+use crate::slicer::Kind;
+use crate::slicer::calibrate::{self, Calibration, Change, Profiles, Test};
 use crate::slicer::options::{self, SliceOptions};
 use crate::slicer::queue::{self, MAX_ACTIVE_PER_USER};
-use crate::slicer::{Kind, Profile};
 use crate::state::AppState;
 use crate::web::layout::{HxRequest, Tab, page};
 use crate::web::select::{self, enabled_printer};
@@ -32,6 +32,8 @@ use crate::web::slice::{badge, fits, panel, system_name};
 use crate::web::slicer::slicing;
 
 const PATH: &str = "/ui/slice/calibrate";
+/// The walkthrough's core tests (the rest are optional).
+const CORE: usize = 6;
 
 /// The page's query and every form's fields (each handler reads what it needs).
 #[derive(Debug, Default, Deserialize)]
@@ -49,6 +51,9 @@ pub struct CalForm {
     start_print: Option<String>,
     #[serde(default)]
     value: String,
+    /// The second axis's value (input shaping frequency).
+    #[serde(default)]
+    value_y: String,
     save: Option<String>,
     undo: Option<String>,
 }
@@ -79,9 +84,16 @@ struct Current {
     start: String,
     end: String,
     step: String,
+    /// The profile a result goes to.
+    kind: &'static str,
     /// A print exists, so a result can be picked from these `(value, label)`.
     choices: Vec<(String, String)>,
+    /// Two selects (X and Y) instead of one.
+    two_axes: bool,
     picked: Option<String>,
+    picked_y: Option<String>,
+    /// For a recorded result that's really Klipper's: what to put in its config.
+    klipper: Option<String>,
     /// A sliced job's G-code isn't there yet (still queued or slicing).
     job_pending: bool,
     skipped: bool,
@@ -105,6 +117,8 @@ struct PageTemplate {
     filament_id: i64,
     filament_name: String,
     rows: Vec<Row>,
+    /// The optional tests, listed after the core ones.
+    extras: Vec<Row>,
     done: usize,
     total: usize,
     current: Option<Current>,
@@ -216,11 +230,15 @@ impl Ctx {
             .collect()
     }
 
-    /// The filament as the test `t` sees it: the library's, plus earlier unsaved results.
-    fn filament_for(&self, t: Option<Test>) -> Profile {
-        let mut f = self.filament.settings.clone();
-        calibrate::apply_changes(&mut f, &self.carry(t));
-        f
+    /// The profiles as the test `t` sees them: the library's, plus earlier unsaved results.
+    fn now(&self, t: Option<Test>) -> Profiles {
+        let mut p = Profiles {
+            machine: self.machine.settings.clone(),
+            process: self.process.settings.clone(),
+            filament: self.filament.settings.clone(),
+        };
+        p.apply(&self.carry(t));
+        p
     }
 }
 
@@ -273,8 +291,9 @@ async fn render(
                 filament_id: 0,
                 filament_name: String::new(),
                 rows: Vec::new(),
+                extras: Vec::new(),
                 done: 0,
-                total: Test::ALL.len(),
+                total: CORE,
                 current: None,
                 unsaved: Vec::new(),
                 operator: user.has(Role::Operator),
@@ -290,9 +309,10 @@ async fn render(
     let asked = focus.or_else(|| f.test.as_deref().and_then(Test::parse));
     let first_open = Test::ALL
         .into_iter()
-        .find(|t| !ctx.step(*t).is_some_and(Step::is_done));
-    let current_test = asked.or(first_open).unwrap_or(Test::ALL[Test::ALL.len() - 1]);
+        .find(|t| !t.optional() && !ctx.step(*t).is_some_and(Step::is_done));
+    let current_test = asked.or(first_open).unwrap_or(Test::ALL[CORE - 1]);
     let mut rows = Vec::new();
+    let mut extras = Vec::new();
     for t in Test::ALL {
         let step = ctx.step(t);
         let status = match step {
@@ -303,7 +323,8 @@ async fn render(
                 ..
             }) => (
                 format!(
-                    "✓ {r}{}{}",
+                    "✓ {}{}{}",
+                    show_result(t, r),
                     if t.unit() == "%" { " %" } else { "" },
                     if saved_at.is_some() {
                         " · saved"
@@ -318,21 +339,34 @@ async fn render(
             }
             _ => ("—".to_string(), "dim"),
         };
-        rows.push(Row {
+        let row = Row {
             slug: t.slug(),
             title: t.title(),
             status,
             current: t == current_test,
-        });
+        };
+        if t.optional() {
+            extras.push(row);
+        } else {
+            rows.push(row);
+        }
     }
-    let done = ctx.steps.iter().filter(|s| s.is_done()).count();
+    let done = ctx
+        .steps
+        .iter()
+        .filter(|s| !s.test.optional() && s.is_done())
+        .count();
     let step = ctx.step(current_test);
     let job = step_job(state, step).await?;
-    let filament_now = ctx.filament_for(Some(current_test));
+    let now = ctx.now(Some(current_test));
     let (start, end, st) = match &job {
         Some((_, c)) if c.test.has_range() => (c.start, c.end, c.step),
-        _ => calibrate::defaults(current_test, &ctx.machine.settings, &filament_now),
+        _ => calibrate::defaults(current_test, &now.machine, &now.filament),
     };
+    let picked: Vec<String> = step
+        .and_then(|s| s.result.as_deref())
+        .map(|r| r.split(',').map(String::from).collect())
+        .unwrap_or_default();
     let places = current_test.places();
     let job_pending = job
         .as_ref()
@@ -349,11 +383,14 @@ async fn render(
         start: calibrate::gcode::fmt(start, places),
         end: calibrate::gcode::fmt(end, places),
         step: calibrate::gcode::fmt(st, places),
-        choices: job
-            .as_ref()
-            .map(|(_, c)| c.choices(&filament_now))
-            .unwrap_or_default(),
-        picked: step.and_then(|s| s.result.clone()),
+        kind: current_test.result_kind(),
+        choices: job.as_ref().map(|(_, c)| c.choices(&now)).unwrap_or_default(),
+        two_axes: current_test.axes() == 2,
+        picked: picked.first().cloned(),
+        picked_y: picked.get(1).cloned(),
+        klipper: step
+            .filter(|s| s.result.is_some())
+            .and_then(|s| calibrate::klipper_note(current_test, &s.changes)),
         job_pending,
         skipped: step.is_some_and(|s| s.skipped),
         printed: job.is_some(),
@@ -376,10 +413,15 @@ async fn render(
         filament_id: ctx.filament.info.id,
         filament_name: ctx.filament.info.name.clone(),
         rows,
+        extras,
         done,
-        total: Test::ALL.len(),
+        total: CORE,
         current: Some(current),
-        unsaved: ctx.carry(None).iter().map(|c| c.to_string()).collect(),
+        unsaved: ctx
+            .carry(None)
+            .iter()
+            .map(|c| format!("{}: {c}", c.kind))
+            .collect(),
         operator: user.has(Role::Operator),
         admin: user.has(Role::Admin),
         job: job_html,
@@ -566,11 +608,16 @@ pub async fn result(
         )
         .await;
     };
-    let changes = match c.changes(&f.value, &ctx.filament_for(Some(test))) {
+    let picks: Vec<&str> = [f.value.as_str(), f.value_y.as_str()]
+        .into_iter()
+        .take(test.axes())
+        .map(str::trim)
+        .collect();
+    let changes = match c.changes(&picks, &ctx.now(Some(test))) {
         Ok(ch) => ch,
         Err(e) => return render(&state, hx, &user, &f, Some(test), None, Some(e)).await,
     };
-    let value = f.value.trim().to_string();
+    let value = picks.join(",");
     let (pid, fid) = (ctx.printer.id, ctx.filament.info.id);
     cal_db::set_result(&state.db, pid, fid, test, &value, &changes, false).await?;
     let list: Vec<String> = changes.iter().map(|c| c.to_string()).collect();
@@ -588,53 +635,81 @@ pub async fn result(
         ),
     )
     .await;
-    let mut notice = format!("Recorded {value} for the {}.", test.title());
+    let mut notice = format!("Recorded {} for the {}.", show_result(test, &value), test.title());
     if f.save.is_some() && user.has(Role::Admin) {
         let ctx = ready(&state, &user, &f).await?;
         notice.push(' ');
         notice.push_str(&save_all(&state, ip, &user, &ctx).await?);
     }
-    let next = Test::ALL
-        .into_iter()
-        .skip_while(|t| *t != test)
-        .nth(1)
-        .unwrap_or(test);
+    // A core test moves on to the next core test; an optional one stays put.
+    let next = if test.optional() {
+        test
+    } else {
+        Test::ALL
+            .into_iter()
+            .skip_while(|t| *t != test)
+            .nth(1)
+            .filter(|t| !t.optional())
+            .unwrap_or(test)
+    };
     render(&state, hx, &user, &f, Some(next), Some(notice), None).await
 }
 
-/// Writes every unsaved result to the filament profile, in walkthrough order.
+/// Writes every unsaved result to its profile (filament, machine or process), in walkthrough
+/// order.
 async fn save_all(state: &AppState, ip: ClientIp, user: &CurrentUser, ctx: &Ctx) -> Result<String, AppError> {
     let changes = ctx.carry(None);
     if changes.is_empty() {
         return Ok("Nothing to save.".into());
     }
-    let mut p = store::get_profile(&state.db, ctx.filament.info.id)
-        .await?
-        .ok_or(AppError::NotFound)?;
-    calibrate::apply_changes(&mut p.settings, &changes);
-    store::update_settings(&state.db, p.info.id, &p.settings).await?;
-    let tests: Vec<Test> = ctx.steps.iter().filter(|s| s.unsaved()).map(|s| s.test).collect();
-    cal_db::mark_saved(&state.db, ctx.printer.id, p.info.id, &tests).await?;
-    // The last value of each key is what the profile has now.
-    let mut last: Vec<&Change> = Vec::new();
-    for c in &changes {
-        last.retain(|l| l.key != c.key);
-        last.push(c);
+    let mut saved = Vec::new();
+    for (kind, id) in [
+        ("filament", ctx.filament.info.id),
+        ("machine", ctx.machine.info.id),
+        ("process", ctx.process.info.id),
+    ] {
+        let mine: Vec<&Change> = changes.iter().filter(|c| c.kind == kind).collect();
+        if mine.is_empty() {
+            continue;
+        }
+        let mut p = store::get_profile(&state.db, id)
+            .await?
+            .ok_or(AppError::NotFound)?;
+        let owned: Vec<Change> = mine.iter().map(|c| (*c).clone()).collect();
+        calibrate::apply_changes(&mut p.settings, kind, &owned);
+        store::update_settings(&state.db, p.info.id, &p.settings).await?;
+        // The last value of each key is what the profile has now.
+        let mut last: Vec<&Change> = Vec::new();
+        for c in mine {
+            last.retain(|l| l.key != c.key);
+            last.push(c);
+        }
+        let list = last.iter().map(|c| c.to_string()).collect::<Vec<_>>().join(", ");
+        record(
+            state,
+            ip,
+            user,
+            ctx.printer.id,
+            "slicer_profile_edit",
+            format!(
+                "profile={} kind={kind} name={} calibration {list}",
+                p.info.id, p.info.name
+            ),
+        )
+        .await;
+        saved.push(format!("Saved to {}: {list}.", p.info.name));
     }
-    let list = last.iter().map(|c| c.to_string()).collect::<Vec<_>>().join(", ");
-    record(
-        state,
-        ip,
-        user,
-        ctx.printer.id,
-        "slicer_profile_edit",
-        format!(
-            "profile={} kind=filament name={} calibration {list}",
-            p.info.id, p.info.name
-        ),
-    )
-    .await;
-    Ok(format!("Saved to {}: {list}.", p.info.name))
+    let tests: Vec<Test> = ctx.steps.iter().filter(|s| s.unsaved()).map(|s| s.test).collect();
+    cal_db::mark_saved(&state.db, ctx.printer.id, ctx.filament.info.id, &tests).await?;
+    Ok(saved.join(" "))
+}
+
+/// A result as the page shows it (`48,52` → `X 48 · Y 52`).
+fn show_result(test: Test, r: &str) -> String {
+    match r.split_once(',') {
+        Some((x, y)) if test.axes() == 2 => format!("X {x} · Y {y}"),
+        _ => r.to_string(),
+    }
 }
 
 /// Saves the walkthrough's unsaved results to the filament profile (admin).

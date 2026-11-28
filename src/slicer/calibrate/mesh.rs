@@ -90,6 +90,19 @@ impl Mesh {
         self.convex(&pts, &faces);
     }
 
+    /// A convex polygon in the XY plane (`(x, y)` corners, in order), extruded from `z0` to `z1`.
+    pub fn prism_z(&mut self, xy: &[(f64, f64)], z0: f64, z1: f64) {
+        let n = xy.len();
+        let mut pts: Vec<P> = xy.iter().map(|&(x, y)| [x, y, z0]).collect();
+        pts.extend(xy.iter().map(|&(x, y)| [x, y, z1]));
+        let bottom: Vec<usize> = (0..n).collect();
+        let top: Vec<usize> = (n..2 * n).collect();
+        let sides: Vec<[usize; 4]> = (0..n).map(|i| [i, (i + 1) % n, (i + 1) % n + n, i + n]).collect();
+        let mut faces: Vec<&[usize]> = vec![&bottom, &top];
+        faces.extend(sides.iter().map(|s| &s[..]));
+        self.convex(&pts, &faces);
+    }
+
     /// Seven-segment text standing out of a vertical face at `y = face` (towards −y, `depth`
     /// deep, sunk `sink` into the face). `x`/`z` is the bottom-left of the first character.
     pub fn text_front(&mut self, s: &str, x: f64, z: f64, face: f64, glyph: Glyph, depth: f64) {
@@ -277,6 +290,20 @@ mod tests {
         m.prism_y(&[(0.0, 0.0), (0.0, 3.0), (-2.0, 3.0)], 0.0, 4.0);
         assert_eq!(m.triangles(), 8);
         assert!((volume(&m) - 0.5 * 2.0 * 3.0 * 4.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn an_octagon_faces_out() {
+        let mut m = Mesh::new();
+        let oct: Vec<(f64, f64)> = (0..8)
+            .map(|i| {
+                let a = std::f64::consts::PI / 4.0 * i as f64;
+                (a.cos(), a.sin())
+            })
+            .collect();
+        m.prism_z(&oct, 0.0, 2.0);
+        // A regular octagon of circumradius 1 has area 2√2.
+        assert!((volume(&m) - 2.0 * 2.0f64.sqrt() * 2.0).abs() < 1e-9);
     }
 
     #[test]

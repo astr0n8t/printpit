@@ -1,5 +1,6 @@
 //! Turns Orca's G-code for a calibration model into the test: per-band commands (temperature,
-//! pressure advance), per-band retraction lengths, per-cell flow, and per-band volumetric speed.
+//! pressure advance, input shaper, corner velocity), per-band retraction lengths, per-cell flow,
+//! per-band outer wall speeds, and the pressure advance line test's bars.
 //!
 //! Orca's CLI has no calibration mode (its GUI changes these values while it writes the G-code),
 //! so printpit edits the G-code afterwards. It reads Orca's own markers: `;Z:` after each layer
@@ -18,6 +19,8 @@ pub enum Plan {
         command: Command,
         band: f64,
         values: Vec<f64>,
+        /// Lines that go in once, before the first band's command.
+        first: Vec<String>,
     },
     /// Extrusion inside each cell (model coordinates, `(x0, y0, x1, y1)`) is scaled by its factor.
     /// `center` is the centre of the model's XY bounds: Orca moves the model to the middle of the
@@ -30,9 +33,24 @@ pub enum Plan {
     /// Every retraction (and the matching unretraction) uses its band's length. Bands start at
     /// `base` mm (below it, the first band's).
     Retraction { base: f64, band: f64, values: Vec<f64> },
-    /// The outer wall prints at its band's volumetric speed (mm³/s): the feed rate of each move is
-    /// set from its own extrusion per mm. `area` is the filament's cross-section (mm²).
-    Speed { band: f64, values: Vec<f64>, area: f64 },
+    /// The outer wall prints at its band's speed. With `area` (the filament's cross-section, mm²)
+    /// the values are volumetric (mm³/s) and each move's feed rate comes from its own extrusion
+    /// per mm; without, they're mm/s.
+    Speed {
+        band: f64,
+        values: Vec<f64>,
+        area: Option<f64>,
+    },
+    /// The pressure advance line test: each bar (a cell, as for [`Plan::Flow`]) gets its value, and
+    /// its moves are cut at `slow.0`/`slow.1` (model x) to print slow, fast between them, slow.
+    PaLine {
+        bars: Vec<[f64; 4]>,
+        values: Vec<f64>,
+        slow: (f64, f64),
+        /// mm/s.
+        speeds: (f64, f64),
+        center: (f64, f64),
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +59,27 @@ pub enum Command {
     Temperature,
     /// `SET_PRESSURE_ADVANCE ADVANCE=<v>` (Klipper).
     PressureAdvance,
+    /// `SET_INPUT_SHAPER SHAPER_FREQ_X=<v> SHAPER_FREQ_Y=<v>`.
+    ShaperFrequency,
+    /// `SET_INPUT_SHAPER DAMPING_RATIO_X=<v> DAMPING_RATIO_Y=<v>`.
+    ShaperDamping,
+    /// `SET_VELOCITY_LIMIT SQUARE_CORNER_VELOCITY=<v>`.
+    CornerVelocity,
+}
+
+impl Command {
+    /// The command for `v` (Klipper's, as Orca's GCodeWriter writes them).
+    pub fn line(self, v: f64) -> String {
+        match self {
+            Command::Temperature => format!("M104 S{}", fmt(v, 0)),
+            Command::PressureAdvance => format!("SET_PRESSURE_ADVANCE ADVANCE={}", fmt(v, 4)),
+            Command::ShaperFrequency => format!("SET_INPUT_SHAPER SHAPER_FREQ_X={v:.2} SHAPER_FREQ_Y={v:.2}"),
+            Command::ShaperDamping => {
+                format!("SET_INPUT_SHAPER DAMPING_RATIO_X={v:.3} DAMPING_RATIO_Y={v:.3}")
+            }
+            Command::CornerVelocity => format!("SET_VELOCITY_LIMIT SQUARE_CORNER_VELOCITY={}", fmt(v, 2)),
+        }
+    }
 }
 
 /// What the rewrite did (for the log, and to refuse G-code it couldn't work with).
@@ -251,7 +290,7 @@ pub fn rewrite(
 ) -> Result<Summary, String> {
     let io = |e: std::io::Error| format!("couldn't rewrite the G-code: {e}");
     let offset = match plan {
-        Plan::Flow { center, .. } => {
+        Plan::Flow { center, .. } | Plan::PaLine { center, .. } => {
             let b = extrusion_bounds(bounds_pass().map_err(io)?)
                 .map_err(io)?
                 .ok_or("the G-code has no extrusion to calibrate")?;
@@ -290,23 +329,23 @@ pub fn rewrite(
                 command,
                 band: size,
                 values,
+                first,
             } = plan
             {
                 let i = band_of(z, 0.0, *size, values.len());
                 if band != Some(i) {
-                    band = Some(i);
-                    let v = values[i];
-                    match command {
-                        Command::Temperature => {
-                            writeln!(out, "M104 S{} ; printpit calibration: band {}", fmt(v, 0), i + 1)
+                    if band.is_none() {
+                        for l in first {
+                            writeln!(out, "{l} ; printpit calibration").map_err(io)?;
                         }
-                        Command::PressureAdvance => writeln!(
-                            out,
-                            "SET_PRESSURE_ADVANCE ADVANCE={} ; printpit calibration: band {}",
-                            fmt(v, 4),
-                            i + 1
-                        ),
                     }
+                    band = Some(i);
+                    writeln!(
+                        out,
+                        "{} ; printpit calibration: band {}",
+                        command.line(values[i]),
+                        i + 1
+                    )
                     .map_err(io)?;
                     sum.commands += 1;
                 }
@@ -320,11 +359,97 @@ pub fn rewrite(
             writeln!(out, "{line}").map_err(io)?;
             continue;
         };
+        if let Plan::PaLine {
+            bars,
+            values,
+            slow,
+            speeds,
+            ..
+        } = plan
+            && printing
+            && d.e > 0.0
+            && d.moved_xy
+            && w.command() == "G1"
+        {
+            let (ox, oy) = offset.unwrap_or_default();
+            let a = (d.from[0] - ox, d.from[1] - oy);
+            let b = (m.pos[0] - ox, m.pos[1] - oy);
+            let mid = ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
+            const MARGIN: f64 = 0.8;
+            if let Some(i) = bars.iter().position(|c| {
+                mid.0 >= c[0] - MARGIN
+                    && mid.0 <= c[2] + MARGIN
+                    && mid.1 >= c[1] - MARGIN
+                    && mid.1 <= c[3] + MARGIN
+            }) {
+                if band != Some(i) {
+                    band = Some(i);
+                    writeln!(
+                        out,
+                        "{} ; printpit calibration: line {}",
+                        Command::PressureAdvance.line(values[i]),
+                        i + 1
+                    )
+                    .map_err(io)?;
+                    sum.commands += 1;
+                }
+                if let Some(f) = f_word {
+                    m.f_old = Some(f);
+                }
+                // Cut where the speed changes, then one move per piece.
+                let mut cuts = vec![0.0, 1.0];
+                if (b.0 - a.0).abs() > 1e-9 {
+                    for x in [slow.0, slow.1] {
+                        let t = (x - a.0) / (b.0 - a.0);
+                        if t > 1e-6 && t < 1.0 - 1e-6 {
+                            cuts.push(t);
+                        }
+                    }
+                }
+                cuts.sort_by(f64::total_cmp);
+                for pair in cuts.windows(2) {
+                    let (t0, t1) = (pair[0], pair[1]);
+                    let at = |t: f64| {
+                        [
+                            d.from[0] + (m.pos[0] - d.from[0]) * t,
+                            d.from[1] + (m.pos[1] - d.from[1]) * t,
+                        ]
+                    };
+                    let end = at(t1);
+                    let xm = a.0 + (b.0 - a.0) * (t0 + t1) / 2.0;
+                    let speed = if xm > slow.0 && xm < slow.1 {
+                        speeds.1
+                    } else {
+                        speeds.0
+                    };
+                    let f = (speed * 60.0).round();
+                    let e = d.e * (t1 - t0);
+                    let e_word = if m.e_relative() {
+                        fmt(e, 5)
+                    } else {
+                        m.e_new += e;
+                        fmt(m.e_new, 5)
+                    };
+                    writeln!(
+                        out,
+                        "G1 X{} Y{} E{} F{}",
+                        fmt(end[0], 3),
+                        fmt(end[1], 3),
+                        e_word,
+                        fmt(f, 0)
+                    )
+                    .map_err(io)?;
+                    m.f_new = Some(f);
+                    sum.moves += 1;
+                }
+                continue;
+            }
+        }
         let mut new_e = d.e;
         let mut new_f: Option<f64> = None;
         if printing {
             match plan {
-                Plan::Command { .. } => {}
+                Plan::Command { .. } | Plan::PaLine { .. } => {}
                 Plan::Flow { cells, factors, .. } => {
                     let edge = matches!(kind.as_deref(), Some("Skirt" | "Brim"));
                     if d.e > 0.0 && d.moved_xy && !edge {
@@ -371,10 +496,16 @@ pub fn rewrite(
                         + (m.pos[2] - d.from[2]).powi(2))
                     .sqrt();
                     if kind.as_deref() == Some("Outer wall") && d.e > 0.0 && d.moved_xy && len > 1e-3 {
-                        let per_mm = d.e * area / len;
                         let target = values[band_of(z, 0.0, *size, values.len())];
-                        if per_mm > 1e-6 {
-                            new_f = Some((target / per_mm * 60.0).round());
+                        let mm_s = match area {
+                            Some(area) => {
+                                let per_mm = d.e * area / len;
+                                (per_mm > 1e-6).then(|| target / per_mm)
+                            }
+                            None => Some(target),
+                        };
+                        if let Some(v) = mm_s {
+                            new_f = Some((v * 60.0).round());
                             sum.moves += 1;
                         }
                     }
@@ -476,6 +607,7 @@ mod tests {
             command: Command::Temperature,
             band: 10.0,
             values: vec![230.0, 225.0, 220.0],
+            first: Vec::new(),
         };
         let (out, sum) = run(&src, &plan);
         let cmds: Vec<&str> = out.lines().filter(|l| l.starts_with("M104 S2")).collect();
@@ -495,6 +627,7 @@ mod tests {
             command: Command::PressureAdvance,
             band: 1.0,
             values: vec![0.0, 0.002],
+            first: Vec::new(),
         };
         let (out, _) = run(&src, &plan);
         assert!(out.contains(";Z:0.2\nSET_PRESSURE_ADVANCE ADVANCE=0 ;"), "{out}");
@@ -584,7 +717,7 @@ mod tests {
         let plan = Plan::Speed {
             band: 1.0,
             values: vec![10.0, 20.0],
-            area,
+            area: Some(area),
         };
         let (out, sum) = run(&src, &plan);
         assert_eq!(sum.moves, 4);
@@ -597,12 +730,100 @@ mod tests {
     }
 
     #[test]
+    fn shaper_commands_and_a_preamble() {
+        let src = layers(&[1.0, 2.0, 3.0], ";TYPE:Outer wall\nG1 X1 Y1 E.1\n");
+        let plan = Plan::Command {
+            command: Command::ShaperDamping,
+            band: 2.0,
+            values: vec![0.05, 0.1],
+            first: vec!["SET_INPUT_SHAPER SHAPER_FREQ_X=48.00 SHAPER_FREQ_Y=52.00".into()],
+        };
+        let (out, sum) = run(&src, &plan);
+        assert_eq!(sum.commands, 2);
+        assert!(
+            out.contains(
+                ";Z:1\nSET_INPUT_SHAPER SHAPER_FREQ_X=48.00 SHAPER_FREQ_Y=52.00 ; printpit calibration\n\
+             SET_INPUT_SHAPER DAMPING_RATIO_X=0.050 DAMPING_RATIO_Y=0.050 ; printpit calibration: band 1\n"
+            ),
+            "{out}"
+        );
+        assert!(
+            out.contains(";Z:3\nSET_INPUT_SHAPER DAMPING_RATIO_X=0.100"),
+            "{out}"
+        );
+        assert_eq!(
+            Command::CornerVelocity.line(7.5),
+            "SET_VELOCITY_LIMIT SQUARE_CORNER_VELOCITY=7.5"
+        );
+        assert_eq!(
+            Command::ShaperFrequency.line(40.0),
+            "SET_INPUT_SHAPER SHAPER_FREQ_X=40.00 SHAPER_FREQ_Y=40.00"
+        );
+    }
+
+    #[test]
+    fn linear_speeds_per_band() {
+        let body = ";TYPE:Outer wall\nG1 X10 Y0 E1 F3000\n;TYPE:Inner wall\nG1 X0 Y0 E1\n";
+        let src = format!("M83\n{}", layers(&[2.0, 7.0], body));
+        let plan = Plan::Speed {
+            band: 5.0,
+            values: vec![40.0, 50.0],
+            area: None,
+        };
+        let (out, _) = run(&src, &plan);
+        assert!(out.contains("G1 X10 Y0 E1 F2400\n"), "{out}");
+        assert!(out.contains("G1 X10 Y0 E1 F3000\n"), "{out}");
+        assert!(
+            out.contains("G1 X0 Y0 E1 F3000\n"),
+            "the inner wall keeps the G-code's: {out}"
+        );
+    }
+
+    #[test]
+    fn pa_line_bars_are_cut_into_slow_fast_slow() {
+        // Two 80 mm bars, 4 mm apart, centred on (100, 100) in the G-code.
+        let bars = vec![[0.0, 0.0, 80.0, 1.0], [0.0, 4.0, 80.0, 5.0]];
+        let src = "M83\n;Z:0.2\n;TYPE:Outer wall\nG1 X60 Y97.5 F600\nG1 X140 Y97.5 E4\nG1 X140 Y97.8 E.05\n\
+                   G1 X60 Y101.5\nG1 X140 Y101.5 E4\n;TYPE:Custom\nG1 X0 Y0 E1\n";
+        let plan = Plan::PaLine {
+            bars,
+            values: vec![0.0, 0.02],
+            slow: (20.0, 60.0),
+            speeds: (20.0, 100.0),
+            center: (40.0, 2.5),
+        };
+        let (out, sum) = run(src, &plan);
+        assert_eq!(sum.commands, 2);
+        let lines: Vec<&str> = out.lines().collect();
+        let i = lines
+            .iter()
+            .position(|l| l.starts_with("SET_PRESSURE_ADVANCE ADVANCE=0 "))
+            .unwrap();
+        assert_eq!(
+            &lines[i + 1..i + 4],
+            [
+                "G1 X80 Y97.5 E1 F1200",
+                "G1 X120 Y97.5 E2 F6000",
+                "G1 X140 Y97.5 E1 F1200"
+            ]
+        );
+        // A short move at the end of a bar is slow.
+        assert_eq!(lines[i + 4], "G1 X140 Y97.8 E0.05 F1200");
+        assert!(out.contains("SET_PRESSURE_ADVANCE ADVANCE=0.02 ; printpit calibration: line 2\n"));
+        // The travel after a bar gets the G-code's feed rate back; the end G-code is untouched.
+        assert!(out.contains("G1 X60 Y101.5 F600\n"), "{out}");
+        // The end G-code only gets the feed rate it relied on back.
+        assert!(out.contains(";TYPE:Custom\nG1 X0 Y0 E1 F600\n"), "{out}");
+    }
+
+    #[test]
     fn refuses_gcode_without_layers() {
         let mut out = Vec::new();
         let plan = Plan::Command {
             command: Command::Temperature,
             band: 10.0,
             values: vec![200.0],
+            first: Vec::new(),
         };
         let r = rewrite(
             "G1 X1 E1\n".as_bytes(),

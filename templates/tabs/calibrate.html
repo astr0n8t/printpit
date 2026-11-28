@@ -39,16 +39,22 @@
     <li{% if r.current %} class="current"{% endif %}><a href="/ui/slice/calibrate?printer={{ printer_id }}&process={{ process_id }}&filament={{ filament_id }}&test={{ r.slug }}" hx-get="/ui/slice/calibrate?printer={{ printer_id }}&process={{ process_id }}&filament={{ filament_id }}&test={{ r.slug }}" hx-target="#main" hx-push-url="true">{{ r.title }}</a> <span class="{{ r.status.1 }}">{{ r.status.0 }}</span></li>
 {%- endfor %}
   </ol>
+  <p class="dim">More tests (optional: alternatives, and printer tuning usually kept in Klipper's config):</p>
+  <ul class="calib-steps calib-extras">
+{%- for r in extras %}
+    <li{% if r.current %} class="current"{% endif %}><a href="/ui/slice/calibrate?printer={{ printer_id }}&process={{ process_id }}&filament={{ filament_id }}&test={{ r.slug }}" hx-get="/ui/slice/calibrate?printer={{ printer_id }}&process={{ process_id }}&filament={{ filament_id }}&test={{ r.slug }}" hx-target="#main" hx-push-url="true">{{ r.title }}</a> <span class="{{ r.status.1 }}">{{ r.status.0 }}</span></li>
+{%- endfor %}
+  </ul>
 {%- if !unsaved.is_empty() %}
   <div class="calib-unsaved">
-    <p class="warn">Not in the filament profile yet (the next tests use them anyway):</p>
+    <p class="warn">Not in the profiles yet (the next tests use them anyway):</p>
     <ul>
 {%- for u in unsaved %}
       <li><code>{{ u }}</code></li>
 {%- endfor %}
     </ul>
 {%- if admin %}
-    <form hx-post="/slice/calibrate/save" hx-target="#main" hx-confirm="Save these to {{ filament_name }}?">
+    <form hx-post="/slice/calibrate/save" hx-target="#main" hx-confirm="Save these to the profiles?">
       <input type="hidden" name="printer" value="{{ printer_id }}">
       <input type="hidden" name="process" value="{{ process_id }}">
       <input type="hidden" name="filament" value="{{ filament_id }}">
@@ -73,9 +79,9 @@
 </section>
 {%- if let Some(c) = current %}
 <section class="panel" id="calib-step">
-  <h2 class="panel-title">{{ c.number }}/{{ total }} · {{ c.title }}</h2>
+  <h2 class="panel-title">{% if c.number <= total %}{{ c.number }}/{{ total }}{% else %}optional{% endif %} · {{ c.title }}</h2>
   <p>{{ c.purpose }}</p>
-  <p class="dim">Sets the filament's <strong>{{ c.setting }}</strong>.</p>
+  <p class="dim">Sets the {{ c.kind }} profile's <strong>{{ c.setting }}</strong>.</p>
 {%- if let Some((id, label, class)) = c.job %}
   <p>printed as <a href="/slice/jobs/{{ id }}" hx-get="/slice/jobs/{{ id }}" hx-target="#job">job #{{ id }}</a> <span id="job-badge-{{ id }}" class="badge {{ class }}">{{ label }}</span></p>
 {%- endif %}
@@ -111,16 +117,26 @@
     <input type="hidden" name="filament" value="{{ filament_id }}">
     <input type="hidden" name="test" value="{{ c.test.slug() }}">
     <div class="field">
-      <label for="calib-value">best</label>
+      <label for="calib-value">{% if c.two_axes %}best for X (the face with the front rib){% else %}best{% endif %}</label>
       <select id="calib-value" name="value">
 {%- for (v, l) in c.choices %}
         <option value="{{ v }}"{% if c.picked.as_deref() == Some(v.as_str()) %} selected{% endif %}>{{ l }}</option>
 {%- endfor %}
       </select>
     </div>
+{%- if c.two_axes %}
+    <div class="field">
+      <label for="calib-value-y">best for Y (the face with the right-hand rib)</label>
+      <select id="calib-value-y" name="value_y">
+{%- for (v, l) in c.choices %}
+        <option value="{{ v }}"{% if c.picked_y.as_deref() == Some(v.as_str()) %} selected{% endif %}>{{ l }}</option>
+{%- endfor %}
+      </select>
+    </div>
+{%- endif %}
 {%- if admin %}
     <div class="field">
-      <label><input type="checkbox" name="save" checked>save to {{ filament_name }} now</label>
+      <label><input type="checkbox" name="save" checked>save to the {{ c.kind }} profile now</label>
     </div>
 {%- endif %}
     <div class="actions"><button class="primary">record</button></div>
@@ -128,6 +144,10 @@
 {%- endif %}
 {%- else %}
   <p class="dim">{{ c.reading }}</p>
+{%- endif %}
+{%- if let Some(k) = c.klipper %}
+  <p class="dim">Klipper keeps this in its own config, which overrides the slicer's. To make it stick, put it in <code>printer.cfg</code>:</p>
+  <pre class="log">{{ k }}</pre>
 {%- endif %}
 {%- if operator %}
   <form hx-post="/slice/calibrate/skip" hx-target="#main">

@@ -457,3 +457,163 @@ async fn viewers_follow_but_dont_act() {
     let res = v.post_hx("/slice/calibrate/slice", &csrf, &fields).await;
     assert_eq!(res.status, StatusCode::FORBIDDEN);
 }
+
+#[tokio::test]
+async fn optional_tests_tune_the_printer_and_the_process() {
+    let mut s = setup().await;
+    let page =
+        s.c.get(&format!("/ui/slice/calibrate?printer={}", s.printer))
+            .await;
+    assert!(page.body.contains("More tests (optional"), "{}", page.body);
+    assert!(page.body.contains("input shaping · frequency"));
+    assert!(page.body.contains("progress: 0/6"));
+    let machine_id = store::printer_slicer(&s.app.state.db, s.printer)
+        .await
+        .unwrap()
+        .unwrap()
+        .machine_profile_id;
+    let db = s.app.state.db.clone();
+    let profile = async |id| store::get_profile(&db, id).await.unwrap().unwrap().settings;
+
+    // Input shaping frequency: one value per axis, saved to the machine profile, with the
+    // Klipper config to match.
+    let page =
+        s.c.get_hx(&format!(
+            "/ui/slice/calibrate?printer={}&test=input_shaping_frequency",
+            s.printer
+        ))
+        .await;
+    assert!(page.body.contains("optional · input shaping · frequency"));
+    assert!(page.body.contains("Sets the machine profile"));
+    s.post(
+        "/slice/calibrate/slice",
+        &[
+            ("test", "input_shaping_frequency"),
+            ("start", "40"),
+            ("end", "50"),
+            ("step", "1"),
+        ],
+    )
+    .await;
+    let job = s.wait(s.latest().await.id, JobStatus::Done).await;
+    let gcode = s.uploaded(&job);
+    assert!(
+        gcode.contains("SET_INPUT_SHAPER SHAPER_FREQ_X=40.00 SHAPER_FREQ_Y=40.00 ; printpit calibration"),
+        "{gcode}"
+    );
+    let page =
+        s.c.get_hx(&format!(
+            "/ui/slice/calibrate?printer={}&test=input_shaping_frequency",
+            s.printer
+        ))
+        .await;
+    assert!(page.body.contains(r#"name="value_y""#), "two selects");
+    let res = s
+        .post(
+            "/slice/calibrate/result",
+            &[
+                ("test", "input_shaping_frequency"),
+                ("value", "44"),
+                ("value_y", "47"),
+                ("save", "on"),
+            ],
+        )
+        .await;
+    assert!(res.body.contains("Recorded X 44 · Y 47"), "{}", res.body);
+    assert!(
+        res.body
+            .contains("input_shaping_freq_x = 44, input_shaping_freq_y = 47"),
+        "{}",
+        res.body
+    );
+    assert!(
+        res.body.contains("shaper_freq_x: 44\nshaper_freq_y: 47"),
+        "{}",
+        res.body
+    );
+    // An optional test stays put after its result.
+    assert!(res.body.contains("optional · input shaping · frequency"));
+    let m = profile(machine_id).await;
+    assert_eq!(m["input_shaping_freq_x"], json!("44"));
+    assert_eq!(m["input_shaping_freq_y"], json!("47"));
+    // One value missing is refused.
+    let res = s
+        .post(
+            "/slice/calibrate/result",
+            &[("test", "input_shaping_frequency"), ("value", "44")],
+        )
+        .await;
+    assert!(res.body.contains("Pick one of the values"), "{}", res.body);
+
+    // Damping starts from the saved frequencies.
+    s.post(
+        "/slice/calibrate/slice",
+        &[
+            ("test", "input_shaping_damping"),
+            ("start", "0.05"),
+            ("end", "0.1"),
+            ("step", "0.01"),
+        ],
+    )
+    .await;
+    let job = s.wait(s.latest().await.id, JobStatus::Done).await;
+    assert!(
+        s.uploaded(&job)
+            .contains("SET_INPUT_SHAPER SHAPER_FREQ_X=44.00 SHAPER_FREQ_Y=47.00 ; printpit calibration\n")
+    );
+
+    // Tolerance: the G-code goes up as Orca wrote it; the result is the process's hole
+    // compensation, recorded by an operator and saved later.
+    s.post("/slice/calibrate/slice", &[("test", "tolerance")]).await;
+    let job = s.wait(s.latest().await.id, JobStatus::Done).await;
+    assert!(!s.uploaded(&job).contains("printpit calibration"));
+    let res = s
+        .post(
+            "/slice/calibrate/result",
+            &[("test", "tolerance"), ("value", "0.1")],
+        )
+        .await;
+    assert!(
+        res.body.contains("process: xy_hole_compensation = 0.05"),
+        "{}",
+        res.body
+    );
+    let res = s.post("/slice/calibrate/save", &[]).await;
+    assert!(
+        res.body
+            .contains("Saved to 0.20mm Standard @Acme: xy_hole_compensation = 0.05"),
+        "{}",
+        res.body
+    );
+    assert_eq!(profile(s.process).await["xy_hole_compensation"], json!("0.05"));
+
+    // Cornering and VFA change the G-code per band.
+    s.post(
+        "/slice/calibrate/slice",
+        &[("test", "cornering"), ("start", "4"), ("end", "8"), ("step", "1")],
+    )
+    .await;
+    let job = s.wait(s.latest().await.id, JobStatus::Done).await;
+    assert!(
+        s.uploaded(&job)
+            .contains("SET_VELOCITY_LIMIT SQUARE_CORNER_VELOCITY=4 ; printpit calibration: band 1")
+    );
+    s.post(
+        "/slice/calibrate/slice",
+        &[("test", "vfa"), ("start", "40"), ("end", "60"), ("step", "10")],
+    )
+    .await;
+    let job = s.wait(s.latest().await.id, JobStatus::Done).await;
+    assert!(
+        s.uploaded(&job).contains("G1 X20 Y10 E.5 F2400"),
+        "{}",
+        s.uploaded(&job)
+    );
+
+    // The core walkthrough's progress isn't changed by optional tests.
+    let page =
+        s.c.get_hx(&format!("/ui/slice/calibrate?printer={}", s.printer))
+            .await;
+    assert!(page.body.contains("progress: 0/6"));
+    assert!(page.body.contains("1/6 · temperature tower"));
+}

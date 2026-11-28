@@ -273,7 +273,7 @@ async fn process(state: &AppState, slicing: &Slicing, job: Job) -> Result<(), St
     let calibration = match (&options.calibration, process.as_mut(), filament.as_mut()) {
         (Some(c), Some(p), Some(f)) => {
             c.prepare(&mut machine.settings, p, f);
-            Some(c.plan(&machine.settings, p, f))
+            c.plan(&machine.settings, p, f)
         }
         (Some(_), ..) => return Err(Stop::failed("a calibration needs a process and a filament")),
         _ => None,

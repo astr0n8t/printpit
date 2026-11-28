@@ -1,6 +1,7 @@
-//! Calibration prints (PLAN §15.13): the tests OrcaSlicer's GUI offers (temperature tower, flow
-//! rate in two passes, pressure advance tower, retraction test, max volumetric speed), made with
-//! the CLI the worker runs.
+//! Calibration prints (PLAN §15.13): the tests OrcaSlicer's GUI offers, made with the CLI the
+//! worker runs. The walkthrough's core tests (temperature tower, flow rate in two passes,
+//! pressure advance tower, retraction test, max volumetric speed) and optional ones (pressure
+//! advance lines, tolerance, cornering, input shaping frequency and damping, VFA).
 //!
 //! The CLI has no calibration mode: Orca's GUI loads a model, changes some settings and then
 //! changes values per layer while it writes the G-code. printpit does the same in three steps:
@@ -14,8 +15,9 @@
 //!    pressure advance per band, retraction lengths per band, flow per numbered block, or feed
 //!    rates for a volumetric speed per band.
 //!
-//! What the user reads off the print becomes [`Change`]s to the filament profile
-//! ([`Calibration::changes`]): fixed keys, values computed here, never user text.
+//! What the user reads off the print becomes [`Change`]s to the filament, machine or process
+//! profile ([`Calibration::changes`]): fixed keys ([`RESULT_KEYS`]), values computed here, never
+//! user text.
 
 pub mod gcode;
 pub mod mesh;
@@ -37,17 +39,50 @@ pub enum Test {
     PressureAdvance,
     Retraction,
     VolumetricSpeed,
+    PressureAdvanceLine,
+    Tolerance,
+    Cornering,
+    ShaperFrequency,
+    ShaperDamping,
+    Vfa,
 }
 
 impl Test {
-    pub const ALL: [Test; 6] = [
+    /// Core tests first, then the optional ones.
+    pub const ALL: [Test; 12] = [
         Test::Temperature,
         Test::FlowCoarse,
         Test::FlowFine,
         Test::PressureAdvance,
         Test::Retraction,
         Test::VolumetricSpeed,
+        Test::PressureAdvanceLine,
+        Test::Tolerance,
+        Test::Cornering,
+        Test::ShaperFrequency,
+        Test::ShaperDamping,
+        Test::Vfa,
     ];
+
+    /// Not part of the walkthrough's main path (alternatives, or printer tuning that's usually
+    /// done once in Klipper's config).
+    pub fn optional(self) -> bool {
+        Self::ALL.iter().position(|t| *t == self).unwrap_or(0) >= 6
+    }
+
+    /// How many values a result has (input shaping: one per axis).
+    pub fn axes(self) -> usize {
+        if self == Test::ShaperFrequency { 2 } else { 1 }
+    }
+
+    /// The profile a result changes: `filament`, `machine` or `process`.
+    pub fn result_kind(self) -> &'static str {
+        match self {
+            Test::Cornering | Test::ShaperFrequency | Test::ShaperDamping => "machine",
+            Test::Tolerance | Test::Vfa => "process",
+            _ => "filament",
+        }
+    }
 
     pub fn slug(self) -> &'static str {
         match self {
@@ -57,6 +92,12 @@ impl Test {
             Test::PressureAdvance => "pressure_advance",
             Test::Retraction => "retraction",
             Test::VolumetricSpeed => "volumetric_speed",
+            Test::PressureAdvanceLine => "pressure_advance_line",
+            Test::Tolerance => "tolerance",
+            Test::Cornering => "cornering",
+            Test::ShaperFrequency => "input_shaping_frequency",
+            Test::ShaperDamping => "input_shaping_damping",
+            Test::Vfa => "vfa",
         }
     }
 
@@ -72,6 +113,12 @@ impl Test {
             Test::PressureAdvance => "pressure advance tower",
             Test::Retraction => "retraction test",
             Test::VolumetricSpeed => "max volumetric speed",
+            Test::PressureAdvanceLine => "pressure advance lines",
+            Test::Tolerance => "tolerance",
+            Test::Cornering => "cornering (square corner velocity)",
+            Test::ShaperFrequency => "input shaping · frequency",
+            Test::ShaperDamping => "input shaping · damping",
+            Test::Vfa => "VFA (vertical fine artifacts)",
         }
     }
 
@@ -96,6 +143,24 @@ impl Test {
             Test::VolumetricSpeed => {
                 "Finds how fast the hot end can melt this filament. A single-wall vase prints faster every millimetre, until the hot end can't keep up."
             }
+            Test::PressureAdvanceLine => {
+                "Another way to find pressure advance: one layer of numbered lines, each with its own value, printed slow, fast, then slow again. Quicker than the tower, and easier to read for some."
+            }
+            Test::Tolerance => {
+                "Finds how much bigger holes should be: a plate with 8 mm square holes, each 0.05 mm larger than the last (numbered in hundredths), and an 8 mm peg to try in them."
+            }
+            Test::Cornering => {
+                "Finds Klipper's square corner velocity: how fast the head may take a corner. A single-wall vase prints with a higher value every 2 mm, at the printer's top speed and acceleration."
+            }
+            Test::ShaperFrequency => {
+                "Finds the input shaper frequency for each axis (if you have no accelerometer). A single-wall vase prints at full speed with a higher frequency every millimetre. Needs an [input_shaper] section in Klipper's config."
+            }
+            Test::ShaperDamping => {
+                "Finds the input shaper damping ratio, after the frequency: the same tower, with the frequencies fixed and a higher damping every 2 mm. Needs an [input_shaper] section in Klipper's config."
+            }
+            Test::Vfa => {
+                "Finds outer wall speeds that leave fine vertical ripples (VFA, from motor and belt resonance). An eight-sided single-wall vase prints faster every 5 mm."
+            }
         }
     }
 
@@ -117,42 +182,68 @@ impl Test {
             Test::VolumetricSpeed => {
                 "Find the height where the wall starts to look rough, thin or gappy, measured from the bed. A little below that is a safe value."
             }
+            Test::PressureAdvanceLine => {
+                "Pick the line that's the same width all along: too low bulges where it speeds up and thins where it slows down, too high the opposite (or gaps)."
+            }
+            Test::Tolerance => {
+                "Find the smallest hole the peg slides into without forcing. Holes are numbered by how much larger they are, in hundredths of a millimetre."
+            }
+            Test::Cornering => {
+                "Look at the walls just after the corners and the ribs. Pick the highest band before ripples (ringing) or rounded corners appear, measured from the bed."
+            }
+            Test::ShaperFrequency => {
+                "Ringing after the ribs shows on two faces: the one with a rib on the front (−Y face) shows the X axis, the one on the right (+X face) the Y axis. For each, pick the height where the ripples are faintest."
+            }
+            Test::ShaperDamping => {
+                "Pick the height where the ripples after the ribs are faintest, on both faces."
+            }
+            Test::Vfa => {
+                "Pick the band with the smoothest flat faces (fewest fine vertical lines). Measure from the bed; bands are 5 mm."
+            }
         }
     }
 
-    /// Whether the user picks a range (the flow passes are fixed).
+    /// Whether the user picks a range (the flow passes and tolerance are fixed).
     pub fn has_range(self) -> bool {
-        !matches!(self, Test::FlowCoarse | Test::FlowFine)
+        !matches!(self, Test::FlowCoarse | Test::FlowFine | Test::Tolerance)
     }
 
     pub fn unit(self) -> &'static str {
         match self {
             Test::Temperature => "°C",
             Test::FlowCoarse | Test::FlowFine => "%",
-            Test::PressureAdvance => "",
-            Test::Retraction => "mm",
+            Test::PressureAdvance | Test::PressureAdvanceLine | Test::ShaperDamping => "",
+            Test::Retraction | Test::Tolerance => "mm",
             Test::VolumetricSpeed => "mm³/s",
+            Test::Cornering | Test::Vfa => "mm/s",
+            Test::ShaperFrequency => "Hz",
         }
     }
 
     /// Decimals the range inputs and values use.
     pub fn places(self) -> usize {
         match self {
-            Test::Temperature | Test::FlowCoarse | Test::FlowFine => 0,
-            Test::PressureAdvance => 4,
-            Test::Retraction => 2,
-            Test::VolumetricSpeed => 1,
+            Test::Temperature | Test::FlowCoarse | Test::FlowFine | Test::Vfa => 0,
+            Test::PressureAdvance | Test::PressureAdvanceLine => 4,
+            Test::Retraction | Test::Tolerance => 2,
+            Test::VolumetricSpeed | Test::Cornering | Test::ShaperFrequency => 1,
+            Test::ShaperDamping => 3,
         }
     }
 
-    /// Where a result goes, for the page: the filament profile's setting.
+    /// Where a result goes, for the page: the setting in [`Test::result_kind`]'s profile.
     pub fn setting(self) -> &'static str {
         match self {
             Test::Temperature => "nozzle temperature",
             Test::FlowCoarse | Test::FlowFine => "flow ratio",
-            Test::PressureAdvance => "pressure advance",
+            Test::PressureAdvance | Test::PressureAdvanceLine => "pressure advance",
             Test::Retraction => "retraction length (filament override)",
             Test::VolumetricSpeed => "max volumetric speed",
+            Test::Tolerance => "X-Y hole compensation",
+            Test::Cornering => "max jerk X and Y (Klipper's square corner velocity)",
+            Test::ShaperFrequency => "input shaping frequency X and Y",
+            Test::ShaperDamping => "input shaping damping X and Y",
+            Test::Vfa => "outer wall speed",
         }
     }
 
@@ -160,6 +251,8 @@ impl Test {
     fn band(self) -> f64 {
         match self {
             Test::Temperature => TEMP_BLOCK,
+            Test::Cornering | Test::ShaperDamping => 2.0,
+            Test::Vfa => 5.0,
             _ => 1.0,
         }
     }
@@ -176,23 +269,45 @@ const TEMP_BLOCK: f64 = 10.0;
 const RETRACT_BASE: f64 = 0.4;
 const FLOW_COARSE: [i32; 9] = [-20, -15, -10, -5, 0, 5, 10, 15, 20];
 const FLOW_FINE: [i32; 10] = [-9, -8, -7, -6, -5, -4, -3, -2, -1, 0];
+/// Tolerance holes' extra size (mm), and their nominal size.
+const TOLERANCES: [f64; 7] = [0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3];
+const HOLE: f64 = 8.0;
+/// The pressure advance lines: length, pitch, and where the fast middle part starts and ends.
+const PA_LINE: f64 = 80.0;
+const PA_PITCH: f64 = 4.0;
+const PA_FAST: (f64, f64) = (20.0, 60.0);
 
 /// One setting a result changes. Only keys in [`RESULT_KEYS`] are ever written.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Change {
+    /// `filament`, `machine` or `process` (results stored before 2026-11-28 are all filament).
+    #[serde(default = "filament_kind")]
+    pub kind: String,
     pub key: String,
     pub value: String,
 }
 
-/// The filament settings results can change.
-pub const RESULT_KEYS: [&str; 7] = [
-    "nozzle_temperature",
-    "nozzle_temperature_initial_layer",
-    "filament_flow_ratio",
-    "pressure_advance",
-    "enable_pressure_advance",
-    "filament_retraction_length",
-    "filament_max_volumetric_speed",
+fn filament_kind() -> String {
+    "filament".into()
+}
+
+/// The settings results can change: `(profile kind, key, Orca keeps it as a list)`.
+pub const RESULT_KEYS: [(&str, &str, bool); 15] = [
+    ("filament", "nozzle_temperature", true),
+    ("filament", "nozzle_temperature_initial_layer", true),
+    ("filament", "filament_flow_ratio", true),
+    ("filament", "pressure_advance", true),
+    ("filament", "enable_pressure_advance", true),
+    ("filament", "filament_retraction_length", true),
+    ("filament", "filament_max_volumetric_speed", true),
+    ("machine", "machine_max_jerk_x", true),
+    ("machine", "machine_max_jerk_y", true),
+    ("machine", "input_shaping_freq_x", false),
+    ("machine", "input_shaping_freq_y", false),
+    ("machine", "input_shaping_damp_x", false),
+    ("machine", "input_shaping_damp_y", false),
+    ("process", "outer_wall_speed", true),
+    ("process", "xy_hole_compensation", false),
 ];
 
 impl std::fmt::Display for Change {
@@ -201,10 +316,56 @@ impl std::fmt::Display for Change {
     }
 }
 
-/// Writes `changes` into a filament profile (each per-extruder list gets the value everywhere).
-pub fn apply_changes(filament: &mut Profile, changes: &[Change]) {
-    for c in changes.iter().filter(|c| RESULT_KEYS.contains(&c.key.as_str())) {
-        set(filament, &c.key, &c.value, true);
+/// Writes the `kind` profile's share of `changes` into it (each per-extruder list gets the value
+/// everywhere). Keys outside [`RESULT_KEYS`] are ignored.
+pub fn apply_changes(profile: &mut Profile, kind: &str, changes: &[Change]) {
+    for c in changes.iter().filter(|c| c.kind == kind) {
+        if let Some((_, key, list)) = RESULT_KEYS.iter().find(|(k, key, _)| *k == kind && *key == c.key) {
+            set(profile, key, &c.value, *list);
+        }
+    }
+}
+
+/// The three profiles a calibration works with.
+#[derive(Debug, Clone, Default)]
+pub struct Profiles {
+    pub machine: Profile,
+    pub process: Profile,
+    pub filament: Profile,
+}
+
+impl Profiles {
+    /// Applies results (each to its own profile).
+    pub fn apply(&mut self, changes: &[Change]) {
+        apply_changes(&mut self.machine, "machine", changes);
+        apply_changes(&mut self.process, "process", changes);
+        apply_changes(&mut self.filament, "filament", changes);
+    }
+}
+
+/// What to add to Klipper's config for a result that's really the printer's, or `None`.
+pub fn klipper_note(test: Test, changes: &[Change]) -> Option<String> {
+    let get = |k: &str| changes.iter().find(|c| c.key == k).map(|c| c.value.clone());
+    match test {
+        Test::Cornering => Some(format!(
+            "[printer]\nsquare_corner_velocity: {}",
+            get("machine_max_jerk_x")?
+        )),
+        Test::ShaperFrequency => Some(format!(
+            "[input_shaper]\nshaper_freq_x: {}\nshaper_freq_y: {}",
+            get("input_shaping_freq_x")?,
+            get("input_shaping_freq_y")?
+        )),
+        Test::ShaperDamping => Some(format!(
+            "[input_shaper]\ndamping_ratio_x: {}\ndamping_ratio_y: {}",
+            get("input_shaping_damp_x")?,
+            get("input_shaping_damp_y")?
+        )),
+        Test::PressureAdvance | Test::PressureAdvanceLine => Some(format!(
+            "[extruder]\npressure_advance: {}",
+            get("pressure_advance")?
+        )),
+        _ => None,
     }
 }
 
@@ -250,6 +411,13 @@ pub fn defaults(test: Test, machine: &Profile, filament: &Profile) -> (f64, f64,
         Test::Retraction if bowden => (1.0, 6.0, 0.25),
         Test::Retraction => (0.0, 2.0, 0.1),
         Test::VolumetricSpeed => (5.0, 20.0, 0.5),
+        Test::PressureAdvanceLine if bowden => (0.0, 0.8, 0.05),
+        Test::PressureAdvanceLine => (0.0, 0.08, 0.005),
+        Test::Tolerance => (0.0, 0.0, 0.0),
+        Test::Cornering => (1.0, 20.0, 1.0),
+        Test::ShaperFrequency => (20.0, 80.0, 1.0),
+        Test::ShaperDamping => (0.02, 0.3, 0.01),
+        Test::Vfa => (40.0, 200.0, 10.0),
     }
 }
 
@@ -273,7 +441,12 @@ impl Calibration {
         let (lo, hi, min_step, max_bands) = match test {
             Test::Temperature => (150.0, 350.0, 1.0, 15),
             Test::PressureAdvance => (0.0, 2.0, 0.0005, 100),
+            Test::PressureAdvanceLine => (0.0, 2.0, 0.0005, 30),
             Test::Retraction => (0.0, 10.0, 0.05, 60),
+            Test::Cornering => (0.5, 50.0, 0.1, 60),
+            Test::ShaperFrequency => (5.0, 200.0, 0.5, 150),
+            Test::ShaperDamping => (0.0, 0.9, 0.005, 60),
+            Test::Vfa => (10.0, 1000.0, 1.0, 40),
             _ => (0.5, 100.0, 0.1, 120),
         };
         let u = test.unit();
@@ -312,6 +485,22 @@ impl Calibration {
             return Err(format!(
                 "That's {bands} steps; the most is {max_bands}. Use a bigger step or a smaller range."
             ));
+        }
+        if test == Test::PressureAdvanceLine {
+            let (lines, deep) = (PA_LINE + 20.0, bands as f64 * PA_PITCH + 10.0);
+            if let Some((w, d)) = bed_size(machine)
+                && (lines > w || deep > d)
+            {
+                return Err(format!(
+                    "{bands} lines need {} × {} mm of bed; this one is {} × {} mm.",
+                    gcode::fmt(lines, 0),
+                    gcode::fmt(deep, 0),
+                    gcode::fmt(w, 0),
+                    gcode::fmt(d, 0)
+                ));
+            }
+            c.start = start;
+            return Ok(c);
         }
         let height = c.height_for(bands);
         if let Some(max) = number(machine, "printable_height").filter(|h| *h > 0.0)
@@ -400,6 +589,10 @@ impl Calibration {
             Test::PressureAdvance => self.pa_tower(),
             Test::Retraction => self.retraction_towers(),
             Test::VolumetricSpeed => self.speed_vase(machine),
+            Test::PressureAdvanceLine => self.pa_lines(machine, process).0,
+            Test::Tolerance => tolerance_plate(),
+            Test::Cornering | Test::ShaperFrequency | Test::ShaperDamping => self.ringing_tower(),
+            Test::Vfa => self.vfa_tower(),
         };
         mesh.to_stl(&format!("printpit calibration: {}", self.test.title()))
     }
@@ -471,11 +664,65 @@ impl Calibration {
         m
     }
 
+    /// One layer of bars (two first-layer lines wide), numbered on the left every other one.
+    /// Returns the mesh and each bar's cell.
+    fn pa_lines(&self, machine: &Profile, process: &Profile) -> (Mesh, Vec<[f64; 4]>) {
+        let h = first_layer(process);
+        let bar = 2.0 * pa_line_width(machine);
+        let glyph = Glyph {
+            width: 2.6,
+            height: 4.5,
+            stroke: 0.8,
+            gap: 0.5,
+            sink: 0.0,
+        };
+        let mut m = Mesh::new();
+        let mut cells = Vec::new();
+        for (i, v) in self.values().iter().enumerate() {
+            let y = i as f64 * PA_PITCH;
+            m.cuboid([0.0, y, 0.0], [PA_LINE, y + bar, h]);
+            cells.push([0.0, y, PA_LINE, y + bar]);
+            if i % 2 == 0 {
+                let label = gcode::fmt(*v, 4);
+                let x = -2.5 - glyph.measure(&label);
+                m.text_top(&label, x, y + bar / 2.0 - glyph.height / 2.0, 0.0, glyph, h);
+            }
+        }
+        (m, cells)
+    }
+
+    /// A 50 mm square single-wall tower with a rib on the front (−y) and the right (+x) face, so
+    /// each axis's ringing shows behind a sharp turn.
+    fn ringing_tower(&self) -> Mesh {
+        let mut m = Mesh::new();
+        let h = self.height_for(self.values().len());
+        m.cuboid([0.0, 0.0, 0.0], [50.0, 50.0, h]);
+        m.cuboid([12.0, -2.0, 0.0], [14.0, 0.3, h]);
+        m.cuboid([49.7, 12.0, 0.0], [52.0, 14.0, h]);
+        m
+    }
+
+    /// An eight-sided single-wall tower, 50 mm across.
+    fn vfa_tower(&self) -> Mesh {
+        let mut m = Mesh::new();
+        let r = 25.0 / (std::f64::consts::PI / 8.0).cos();
+        let oct: Vec<(f64, f64)> = (0..8)
+            .map(|i| {
+                let a = std::f64::consts::PI / 8.0 + std::f64::consts::PI / 4.0 * i as f64;
+                (25.0 + r * a.cos(), 25.0 + r * a.sin())
+            })
+            .collect();
+        m.prism_z(&oct, 0.0, self.height_for(self.values().len()));
+        m
+    }
+
     // ── 2. the profiles ───────────────────────────────────────────────────────────────────
 
     /// Changes the job's copies of the profiles for the test, as Orca's GUI does.
     pub fn prepare(&self, machine: &mut Profile, process: &mut Profile, filament: &mut Profile) {
-        apply_changes(filament, &self.carry);
+        apply_changes(machine, "machine", &self.carry);
+        apply_changes(process, "process", &self.carry);
+        apply_changes(filament, "filament", &self.carry);
         let nozzle = nozzle(machine);
         let s = |p: &mut Profile, k: &str, v: &str| set(p, k, v, false);
         let l = |p: &mut Profile, k: &str, v: &str| set(p, k, v, true);
@@ -605,6 +852,75 @@ impl Calibration {
                 );
                 l(filament, "slow_down_layer_time", "0");
             }
+            Test::PressureAdvanceLine => {
+                let w = gcode::fmt(pa_line_width(machine), 3);
+                for (k, v) in [
+                    ("wall_loops", "1"),
+                    ("top_shell_layers", "1"),
+                    ("bottom_shell_layers", "1"),
+                    ("sparse_infill_density", "0%"),
+                    ("brim_type", "no_brim"),
+                    ("skirt_loops", "0"),
+                    ("detect_thin_wall", "0"),
+                    ("initial_layer_line_width", w.as_str()),
+                ] {
+                    s(process, k, v);
+                }
+            }
+            Test::Tolerance => {}
+            Test::Cornering | Test::ShaperFrequency | Test::ShaperDamping | Test::Vfa => {
+                for (k, v) in [
+                    ("spiral_mode", "1"),
+                    ("spiral_mode_smooth", "0"),
+                    ("wall_loops", "1"),
+                    ("top_shell_layers", "0"),
+                    ("bottom_shell_layers", "1"),
+                    ("sparse_infill_density", "0%"),
+                    ("detect_thin_wall", "0"),
+                    ("brim_type", "outer_only"),
+                    ("brim_width", "3"),
+                    ("brim_object_gap", "0"),
+                ] {
+                    s(process, k, v);
+                }
+                l(process, "enable_overhang_speed", "0");
+                l(filament, "slow_down_layer_time", "0");
+                if self.test != Test::Vfa {
+                    // Full speed and acceleration, and no corner velocity of Orca's own (it would
+                    // send one with every acceleration change).
+                    let max_speed = number(machine, "machine_max_speed_x")
+                        .zip(number(machine, "machine_max_speed_y"))
+                        .map(|(x, y)| x.min(y))
+                        .filter(|v| *v > 0.0);
+                    if let Some(v) = max_speed {
+                        l(process, "outer_wall_speed", &gcode::fmt(v, 0));
+                    }
+                    if let Some(a) =
+                        number(machine, "machine_max_acceleration_extruding").filter(|a| *a > 0.0)
+                    {
+                        l(process, "default_acceleration", &gcode::fmt(a, 0));
+                        l(process, "outer_wall_acceleration", &gcode::fmt(a, 0));
+                    }
+                    l(process, "default_jerk", "0");
+                    l(filament, "slow_down_min_speed", "0");
+                    l(filament, "slow_down_for_layer_cooling", "0");
+                    s(machine, "input_shaping_emit", "0");
+                    if self.test == Test::ShaperFrequency {
+                        s(process, "layer_height", "0.2");
+                    }
+                    let max = number(filament, "filament_max_volumetric_speed").unwrap_or(0.0);
+                    l(
+                        filament,
+                        "filament_max_volumetric_speed",
+                        &gcode::fmt(max.max(200.0), 1),
+                    );
+                }
+                if self.test == Test::Cornering {
+                    let e = gcode::fmt(self.end, 2);
+                    l(machine, "machine_max_jerk_x", &e);
+                    l(machine, "machine_max_jerk_y", &e);
+                }
+            }
         }
     }
 
@@ -612,19 +928,53 @@ impl Calibration {
 
     /// How the sliced G-code becomes the test. `machine`, `process` and `filament` are the job's
     /// prepared profiles.
-    pub fn plan(&self, machine: &Profile, process: &Profile, filament: &Profile) -> Plan {
+    /// `None` when the G-code is used as Orca wrote it (tolerance).
+    pub fn plan(&self, machine: &Profile, process: &Profile, filament: &Profile) -> Option<Plan> {
         let values = self.values();
-        match self.test {
-            Test::Temperature => Plan::Command {
-                command: Command::Temperature,
-                band: TEMP_BLOCK,
-                values,
+        let command = |command, first| Plan::Command {
+            command,
+            band: self.test.band(),
+            values: values.clone(),
+            first,
+        };
+        Some(match self.test {
+            Test::Temperature => command(Command::Temperature, Vec::new()),
+            Test::PressureAdvance => command(Command::PressureAdvance, Vec::new()),
+            Test::Cornering => command(Command::CornerVelocity, Vec::new()),
+            Test::ShaperFrequency => command(Command::ShaperFrequency, Vec::new()),
+            Test::ShaperDamping => {
+                // The frequencies found by the frequency test (saved, or carried from it).
+                let f = |k| number(machine, k).filter(|v| *v > 0.0);
+                let first = match (f("input_shaping_freq_x"), f("input_shaping_freq_y")) {
+                    (Some(x), Some(y)) => vec![format!(
+                        "SET_INPUT_SHAPER SHAPER_FREQ_X={x:.2} SHAPER_FREQ_Y={y:.2}"
+                    )],
+                    _ => Vec::new(),
+                };
+                command(Command::ShaperDamping, first)
+            }
+            Test::Vfa => Plan::Speed {
+                band: self.test.band(),
+                values: values.clone(),
+                area: None,
             },
-            Test::PressureAdvance => Plan::Command {
-                command: Command::PressureAdvance,
-                band: 1.0,
-                values,
-            },
+            Test::Tolerance => return None,
+            Test::PressureAdvanceLine => {
+                let (mesh, bars) = self.pa_lines(machine, process);
+                let (lo, hi) = mesh.bounds();
+                // The bars' own bounds (the labels stick out to the left).
+                let lo_x = bars.iter().map(|b| b[0]).fold(f64::MAX, f64::min).min(lo[0]);
+                let fast = number(process, "outer_wall_speed")
+                    .unwrap_or(100.0)
+                    .clamp(30.0, 150.0);
+                Plan::PaLine {
+                    bars,
+                    values: values.clone(),
+                    slow: PA_FAST,
+                    speeds: (round(fast / 5.0, 1), fast),
+                    center: ((lo_x + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0),
+                }
+            }
             Test::Retraction => Plan::Retraction {
                 base: RETRACT_BASE,
                 band: 1.0,
@@ -636,8 +986,8 @@ impl Calibration {
                     .unwrap_or(1.75);
                 Plan::Speed {
                     band: 1.0,
-                    values,
-                    area: std::f64::consts::PI * d * d / 4.0,
+                    values: values.clone(),
+                    area: Some(std::f64::consts::PI * d * d / 4.0),
                 }
             }
             Test::FlowCoarse | Test::FlowFine => {
@@ -650,27 +1000,45 @@ impl Calibration {
                     center: ((lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0),
                 }
             }
-        }
+        })
     }
 
     // ── results ───────────────────────────────────────────────────────────────────────────
 
     /// What the user can pick from the print: `(value, label)`, bottom to top or in block order.
-    /// `filament` is the profile with earlier, unsaved results applied.
-    pub fn choices(&self, filament: &Profile) -> Vec<(String, String)> {
+    /// `now` is the profiles with earlier, unsaved results applied.
+    pub fn choices(&self, now: &Profiles) -> Vec<(String, String)> {
         let p = self.test.places();
         let u = self.test.unit();
-        if !self.test.has_range() {
-            let flow = flow_ratio(filament);
-            return self
-                .modifiers()
-                .iter()
-                .map(|m| {
-                    let v = signed(*m);
-                    let label = format!("{v} → flow ratio {}", gcode::fmt(flow_after(flow, *m), 4));
-                    (v, label)
-                })
-                .collect();
+        match self.test {
+            Test::FlowCoarse | Test::FlowFine => {
+                let flow = flow_ratio(&now.filament);
+                return self
+                    .modifiers()
+                    .iter()
+                    .map(|m| {
+                        let v = signed(*m);
+                        let label = format!("{v} → flow ratio {}", gcode::fmt(flow_after(flow, *m), 4));
+                        (v, label)
+                    })
+                    .collect();
+            }
+            Test::Tolerance => {
+                return TOLERANCES
+                    .iter()
+                    .enumerate()
+                    .map(|(i, t)| {
+                        let label = format!(
+                            "hole {} (marked {}) · +{} mm",
+                            i + 1,
+                            gcode::fmt(t * 100.0, 0),
+                            gcode::fmt(*t, 2)
+                        );
+                        (gcode::fmt(*t, 2), label)
+                    })
+                    .collect();
+            }
+            _ => {}
         }
         let band = self.test.band();
         let base = self.test.base();
@@ -679,11 +1047,13 @@ impl Calibration {
             .enumerate()
             .map(|(i, v)| {
                 let value = gcode::fmt(*v, p);
-                let where_ = if self.test == Test::Temperature {
-                    format!("block {}", i + 1)
-                } else {
-                    let lo = base + i as f64 * band;
-                    format!("{}–{} mm", gcode::fmt(lo, 1), gcode::fmt(lo + band, 1))
+                let where_ = match self.test {
+                    Test::Temperature => format!("block {}", i + 1),
+                    Test::PressureAdvanceLine => format!("line {}", i + 1),
+                    _ => {
+                        let lo = base + i as f64 * band;
+                        format!("{}–{} mm", gcode::fmt(lo, 1), gcode::fmt(lo + band, 1))
+                    }
                 };
                 let label = format!("{where_} · {value} {u}").trim_end().to_string();
                 (value, label)
@@ -691,43 +1061,72 @@ impl Calibration {
             .collect()
     }
 
-    /// The profile changes for the value picked (one of [`Calibration::choices`]).
-    pub fn changes(&self, picked: &str, filament: &Profile) -> Result<Vec<Change>, String> {
-        let picked = picked.trim();
-        if !self.choices(filament).iter().any(|(v, _)| v == picked) {
-            return Err("Pick one of the values the print has.".into());
+    /// The profile changes for the values picked (one of [`Calibration::choices`] per axis).
+    pub fn changes(&self, picked: &[&str], now: &Profiles) -> Result<Vec<Change>, String> {
+        let choices = self.choices(now);
+        if picked.len() != self.test.axes() {
+            return Err("Pick a value for each axis.".into());
         }
+        let mut v = Vec::new();
+        for p in picked {
+            let p = p.trim();
+            if !choices.iter().any(|(c, _)| c == p) {
+                return Err("Pick one of the values the print has.".into());
+            }
+            v.push(
+                p.trim_start_matches('+')
+                    .parse::<f64>()
+                    .map_err(|_| "That isn't a number.".to_string())?,
+            );
+        }
+        let kind = self.test.result_kind();
         let ch = |k: &str, v: String| Change {
+            kind: kind.to_string(),
             key: k.to_string(),
             value: v,
         };
-        let v: f64 = picked
-            .trim_start_matches('+')
-            .parse()
-            .map_err(|_| "That isn't a number.".to_string())?;
+        let (filament, places) = (&now.filament, self.test.places());
         Ok(match self.test {
             Test::Temperature => {
                 // The first layer keeps its offset from the other layers.
-                let old = number(filament, "nozzle_temperature").unwrap_or(v);
+                let old = number(filament, "nozzle_temperature").unwrap_or(v[0]);
                 let first = number(filament, "nozzle_temperature_initial_layer").unwrap_or(old);
                 vec![
-                    ch("nozzle_temperature", gcode::fmt(v, 0)),
+                    ch("nozzle_temperature", gcode::fmt(v[0], 0)),
                     ch(
                         "nozzle_temperature_initial_layer",
-                        gcode::fmt((first - old + v).clamp(0.0, 500.0), 0),
+                        gcode::fmt((first - old + v[0]).clamp(0.0, 500.0), 0),
                     ),
                 ]
             }
             Test::FlowCoarse | Test::FlowFine => vec![ch(
                 "filament_flow_ratio",
-                gcode::fmt(flow_after(flow_ratio(filament), v as i32), 4),
+                gcode::fmt(flow_after(flow_ratio(filament), v[0] as i32), 4),
             )],
-            Test::PressureAdvance => vec![
-                ch("pressure_advance", gcode::fmt(v, 4)),
+            Test::PressureAdvance | Test::PressureAdvanceLine => vec![
+                ch("pressure_advance", gcode::fmt(v[0], 4)),
                 ch("enable_pressure_advance", "1".into()),
             ],
-            Test::Retraction => vec![ch("filament_retraction_length", gcode::fmt(v, 2))],
-            Test::VolumetricSpeed => vec![ch("filament_max_volumetric_speed", gcode::fmt(v, 1))],
+            Test::Retraction => vec![ch("filament_retraction_length", gcode::fmt(v[0], 2))],
+            Test::VolumetricSpeed => vec![ch("filament_max_volumetric_speed", gcode::fmt(v[0], 1))],
+            Test::Tolerance => {
+                // Holes grow by the compensation on every side: half the clearance the peg needed.
+                let now_comp = number(&now.process, "xy_hole_compensation").unwrap_or(0.0);
+                vec![ch("xy_hole_compensation", gcode::fmt(now_comp + v[0] / 2.0, 3))]
+            }
+            Test::Cornering => vec![
+                ch("machine_max_jerk_x", gcode::fmt(v[0], places)),
+                ch("machine_max_jerk_y", gcode::fmt(v[0], places)),
+            ],
+            Test::ShaperFrequency => vec![
+                ch("input_shaping_freq_x", gcode::fmt(v[0], places)),
+                ch("input_shaping_freq_y", gcode::fmt(v[1], places)),
+            ],
+            Test::ShaperDamping => vec![
+                ch("input_shaping_damp_x", gcode::fmt(v[0], places)),
+                ch("input_shaping_damp_y", gcode::fmt(v[0], places)),
+            ],
+            Test::Vfa => vec![ch("outer_wall_speed", gcode::fmt(v[0], 0))],
         })
     }
 
@@ -785,6 +1184,55 @@ pub async fn rewrite_output(
             Err(e)
         }
     }
+}
+
+/// The tolerance test: a plate with 8 mm square holes of growing clearance (numbered in
+/// hundredths of a millimetre below each), and an 8 mm square peg beside it.
+fn tolerance_plate() -> Mesh {
+    const PITCH: f64 = 13.0;
+    const T: f64 = 4.0;
+    const D: f64 = 22.0;
+    let glyph = Glyph {
+        width: 2.0,
+        height: 3.5,
+        stroke: 0.7,
+        gap: 0.4,
+        sink: 0.05,
+    };
+    let mut m = Mesh::new();
+    let width = 2.0 * PITCH / 2.0 + (TOLERANCES.len() - 1) as f64 * PITCH;
+    let cy = 13.0;
+    let mut x = 0.0;
+    for (i, t) in TOLERANCES.iter().enumerate() {
+        let cx = PITCH / 2.0 + i as f64 * PITCH;
+        let half = (HOLE + t) / 2.0;
+        // The plate around this hole: the strip before it, then above and below it.
+        m.cuboid([x, 0.0, 0.0], [cx - half, D, T]);
+        m.cuboid([cx - half - 0.01, 0.0, 0.0], [cx + half + 0.01, cy - half, T]);
+        m.cuboid([cx - half - 0.01, cy + half, 0.0], [cx + half + 0.01, D, T]);
+        x = cx + half;
+        let label = gcode::fmt(t * 100.0, 0);
+        m.text_top(&label, cx - glyph.measure(&label) / 2.0, 1.2, T, glyph, 0.6);
+    }
+    m.cuboid([x, 0.0, 0.0], [width, D, T]);
+    // The peg, beside the plate.
+    m.cuboid(
+        [width + 6.0, cy - HOLE / 2.0, 0.0],
+        [width + 6.0 + HOLE, cy + HOLE / 2.0, 12.0],
+    );
+    m
+}
+
+/// The process's first layer height.
+fn first_layer(process: &Profile) -> f64 {
+    number(process, "initial_layer_print_height")
+        .filter(|h| *h > 0.0)
+        .unwrap_or(0.2)
+}
+
+/// The pressure advance lines' line width (each bar is two of them).
+fn pa_line_width(machine: &Profile) -> f64 {
+    round(nozzle(machine) * 1.125, 3)
 }
 
 /// The flow test's first layer and layer height: half the nozzle, as Orca's GUI does.
@@ -1066,6 +1514,7 @@ mod tests {
         let (mut m, mut f) = (machine(), filament());
         let mut c = Calibration::new(Test::VolumetricSpeed, 5.0, 20.0, 0.5, &m).unwrap();
         c.carry = vec![Change {
+            kind: "filament".into(),
             key: "filament_flow_ratio".into(),
             value: "1.01".into(),
         }];
@@ -1084,54 +1533,223 @@ mod tests {
         assert_eq!(f["nozzle_temperature_initial_layer"], json!(["230"]));
     }
 
+    fn with(f: &Profile) -> Profiles {
+        Profiles {
+            machine: machine(),
+            process: obj(json!({"xy_hole_compensation": "0.02", "outer_wall_speed": ["200"]})),
+            filament: f.clone(),
+        }
+    }
+
     #[test]
     fn results_become_filament_changes() {
         let m = machine();
         let f = filament();
         let temp = Calibration::new(Test::Temperature, 230.0, 190.0, 5.0, &m).unwrap();
-        let ch = temp.choices(&f);
+        let ch = temp.choices(&with(&f));
         assert_eq!(ch[0], ("230".into(), "block 1 · 230 °C".into()));
-        let c = temp.changes("210", &f).unwrap();
+        let c = temp.changes(&["210"], &with(&f)).unwrap();
         assert_eq!(c[0].to_string(), "nozzle_temperature = 210");
+        assert_eq!(c[0].kind, "filament");
         assert_eq!(c[1].to_string(), "nozzle_temperature_initial_layer = 215");
-        assert!(temp.changes("211", &f).is_err());
-        assert!(temp.changes("+5; G28", &f).is_err());
+        assert!(temp.changes(&["211"], &with(&f)).is_err());
+        assert!(temp.changes(&["+5; G28"], &with(&f)).is_err());
+        assert!(temp.changes(&["210", "210"], &with(&f)).is_err());
 
         let coarse = Calibration::new(Test::FlowCoarse, 0.0, 0.0, 0.0, &m).unwrap();
-        let ch = coarse.choices(&f);
+        let ch = coarse.choices(&with(&f));
         assert_eq!(ch[5], ("+5".into(), "+5 → flow ratio 1.029".into()));
-        assert_eq!(coarse.changes("+5", &f).unwrap()[0].value, "1.029");
-        assert_eq!(coarse.changes("-20", &f).unwrap()[0].value, "0.784");
+        assert_eq!(coarse.changes(&["+5"], &with(&f)).unwrap()[0].value, "1.029");
+        assert_eq!(coarse.changes(&["-20"], &with(&f)).unwrap()[0].value, "0.784");
 
         let mut f2 = f.clone();
-        apply_changes(&mut f2, &coarse.changes("+5", &f).unwrap());
+        apply_changes(&mut f2, "filament", &coarse.changes(&["+5"], &with(&f)).unwrap());
         let fine = Calibration::new(Test::FlowFine, 0.0, 0.0, 0.0, &m).unwrap();
-        assert_eq!(fine.changes("-3", &f2).unwrap()[0].value, "0.9981");
+        assert_eq!(fine.changes(&["-3"], &with(&f2)).unwrap()[0].value, "0.9981");
 
         let pa = Calibration::new(Test::PressureAdvance, 0.0, 0.1, 0.002, &m).unwrap();
-        assert_eq!(pa.choices(&f)[12].1, "12–13 mm · 0.024");
-        let c = pa.changes("0.024", &f).unwrap();
+        assert_eq!(pa.choices(&with(&f))[12].1, "12–13 mm · 0.024");
+        let c = pa.changes(&["0.024"], &with(&f)).unwrap();
         assert_eq!(c.len(), 2);
         let mut f3 = f.clone();
-        apply_changes(&mut f3, &c);
+        apply_changes(&mut f3, "filament", &c);
         assert_eq!(f3["pressure_advance"], json!(["0.024"]));
+        assert_eq!(
+            klipper_note(Test::PressureAdvance, &c).unwrap(),
+            "[extruder]\npressure_advance: 0.024"
+        );
 
         let r = Calibration::new(Test::Retraction, 0.0, 2.0, 0.1, &m).unwrap();
-        assert_eq!(r.choices(&f)[3].1, "3.4–4.4 mm · 0.3 mm");
+        assert_eq!(r.choices(&with(&f))[3].1, "3.4–4.4 mm · 0.3 mm");
         let mut f4 = f.clone();
-        apply_changes(&mut f4, &r.changes("0.3", &f).unwrap());
+        apply_changes(&mut f4, "filament", &r.changes(&["0.3"], &with(&f)).unwrap());
         assert_eq!(f4["filament_retraction_length"], json!(["0.3"]));
 
-        // Unknown keys never reach a profile.
+        // Unknown keys, and keys of another profile kind, never reach a profile.
         let mut f5 = f.clone();
+        let bad = |kind: &str, key: &str| Change {
+            kind: kind.into(),
+            key: key.into(),
+            value: "G28".into(),
+        };
         apply_changes(
             &mut f5,
-            &[Change {
-                key: "filament_start_gcode".into(),
-                value: "G28".into(),
-            }],
+            "filament",
+            &[
+                bad("filament", "filament_start_gcode"),
+                bad("machine", "nozzle_temperature"),
+            ],
         );
-        assert!(!f5.contains_key("filament_start_gcode"));
+        assert_eq!(f5, f);
+        // Results stored before kinds existed read as filament.
+        let old: Change = serde_json::from_str(r#"{"key":"filament_flow_ratio","value":"1.01"}"#).unwrap();
+        assert_eq!(old.kind, "filament");
+    }
+
+    #[test]
+    fn printer_and_process_results() {
+        let m = machine();
+        let f = filament();
+        let now = with(&f);
+        let tol = Calibration::new(Test::Tolerance, 0.0, 0.0, 0.0, &m).unwrap();
+        assert_eq!(
+            tol.choices(&now)[2],
+            ("0.1".into(), "hole 3 (marked 10) · +0.1 mm".into())
+        );
+        let c = tol.changes(&["0.1"], &now).unwrap();
+        assert_eq!(
+            (c[0].kind.as_str(), c[0].to_string()),
+            ("process", "xy_hole_compensation = 0.07".into())
+        );
+
+        let corner = Calibration::new(Test::Cornering, 1.0, 20.0, 1.0, &m).unwrap();
+        assert_eq!(corner.choices(&now)[4].1, "8–10 mm · 5 mm/s");
+        let c = corner.changes(&["5"], &now).unwrap();
+        assert_eq!(c[0].kind, "machine");
+        let mut mm = m.clone();
+        apply_changes(&mut mm, "machine", &c);
+        assert_eq!(mm["machine_max_jerk_y"], json!(["5"]));
+        assert_eq!(
+            klipper_note(Test::Cornering, &c).unwrap(),
+            "[printer]\nsquare_corner_velocity: 5"
+        );
+
+        let freq = Calibration::new(Test::ShaperFrequency, 20.0, 80.0, 1.0, &m).unwrap();
+        assert!(freq.changes(&["48"], &now).is_err(), "needs both axes");
+        let c = freq.changes(&["48", "52"], &now).unwrap();
+        let mut mm = m.clone();
+        apply_changes(&mut mm, "machine", &c);
+        assert_eq!(mm["input_shaping_freq_x"], json!("48"));
+        assert_eq!(mm["input_shaping_freq_y"], json!("52"));
+        assert_eq!(
+            klipper_note(Test::ShaperFrequency, &c).unwrap(),
+            "[input_shaper]\nshaper_freq_x: 48\nshaper_freq_y: 52"
+        );
+
+        let vfa = Calibration::new(Test::Vfa, 40.0, 200.0, 10.0, &m).unwrap();
+        let c = vfa.changes(&["120"], &now).unwrap();
+        let mut p = now.process.clone();
+        apply_changes(&mut p, "process", &c);
+        assert_eq!(p["outer_wall_speed"], json!(["120"]));
+
+        let line = Calibration::new(Test::PressureAdvanceLine, 0.0, 0.08, 0.005, &m).unwrap();
+        assert_eq!(line.choices(&now)[2].1, "line 3 · 0.01");
+        assert_eq!(
+            line.changes(&["0.01"], &now).unwrap()[0].to_string(),
+            "pressure_advance = 0.01"
+        );
+    }
+
+    #[test]
+    fn the_optional_tests_models_and_plans() {
+        let m = machine();
+        let p = obj(json!({"initial_layer_print_height": "0.25", "outer_wall_speed": ["300"]}));
+        let mut f = filament();
+        // Bed and height limits.
+        let e = Calibration::new(Test::PressureAdvanceLine, 0.0, 0.3, 0.01, &m).unwrap_err();
+        assert!(e.contains("most is 30"), "{e}");
+        let mut small = m.clone();
+        small.insert("printable_area".into(), json!(["0x0", "90x0", "90x90", "0x90"]));
+        let e = Calibration::new(Test::PressureAdvanceLine, 0.0, 0.08, 0.005, &small).unwrap_err();
+        assert!(e.contains("need 100 × 78 mm of bed"), "{e}");
+        let line = Calibration::new(Test::PressureAdvanceLine, 0.0, 0.08, 0.005, &m).unwrap();
+        let (mesh, bars) = line.pa_lines(&m, &p);
+        assert_eq!(bars.len(), 17);
+        let (lo, hi) = mesh.bounds();
+        assert!(
+            lo[0] < -10.0 && hi[0] == PA_LINE && (hi[2] - 0.25).abs() < 1e-9,
+            "{lo:?} {hi:?}"
+        );
+        let Some(Plan::PaLine { speeds, values, .. }) = line.plan(&m, &p, &f) else {
+            panic!()
+        };
+        assert_eq!(speeds, (30.0, 150.0));
+        assert_eq!(values.len(), 17);
+
+        let tol = Calibration::new(Test::Tolerance, 0.0, 0.0, 0.0, &m).unwrap();
+        assert_eq!(tol.plan(&m, &p, &f), None);
+        let (lo, hi) = tolerance_plate().bounds();
+        assert_eq!((lo[0], hi[2]), (0.0, 12.0));
+
+        let mut m2 = m.clone();
+        m2.insert("machine_max_speed_x".into(), json!(["500", "200"]));
+        m2.insert("machine_max_speed_y".into(), json!(["400", "200"]));
+        m2.insert("machine_max_acceleration_extruding".into(), json!(["7000"]));
+        let mut p2 = p.clone();
+        let corner = Calibration::new(Test::Cornering, 1.0, 20.0, 1.0, &m).unwrap();
+        corner.prepare(&mut m2, &mut p2, &mut f);
+        assert_eq!(p2["outer_wall_speed"], json!(["400"]));
+        assert_eq!(p2["default_acceleration"], json!(["7000"]));
+        assert_eq!(p2["default_jerk"], json!(["0"]));
+        assert_eq!(p2["spiral_mode"], json!("1"));
+        assert_eq!(m2["machine_max_jerk_x"], json!(["20"]));
+        assert_eq!(corner.ringing_tower().bounds().1[2], 40.0);
+        assert!(matches!(
+            corner.plan(&m2, &p2, &f),
+            Some(Plan::Command {
+                command: Command::CornerVelocity,
+                band: 2.0,
+                ..
+            })
+        ));
+
+        // Damping uses the frequencies found (carried or saved) as its preamble.
+        let mut damp = Calibration::new(Test::ShaperDamping, 0.02, 0.3, 0.01, &m).unwrap();
+        damp.carry = Calibration::new(Test::ShaperFrequency, 20.0, 80.0, 1.0, &m)
+            .unwrap()
+            .changes(&["48", "52"], &with(&f))
+            .unwrap();
+        let (mut m3, mut p3, mut f3) = (m.clone(), p.clone(), f.clone());
+        damp.prepare(&mut m3, &mut p3, &mut f3);
+        let Some(Plan::Command { first, values, .. }) = damp.plan(&m3, &p3, &f3) else {
+            panic!()
+        };
+        assert_eq!(
+            first,
+            ["SET_INPUT_SHAPER SHAPER_FREQ_X=48.00 SHAPER_FREQ_Y=52.00"]
+        );
+        assert_eq!(values.len(), 29);
+
+        let vfa = Calibration::new(Test::Vfa, 40.0, 200.0, 10.0, &m).unwrap();
+        let (lo, hi) = vfa.vfa_tower().bounds();
+        assert!(
+            (hi[0] - lo[0] - 50.0).abs() < 1e-9 && hi[2] == 85.0,
+            "{lo:?} {hi:?}"
+        );
+        assert!(matches!(
+            vfa.plan(&m, &p, &f),
+            Some(Plan::Speed {
+                area: None,
+                band: 5.0,
+                ..
+            })
+        ));
+        for t in Test::ALL {
+            let (s, e, st) = defaults(t, &m, &f);
+            let c = Calibration::new(t, s, e, st, &m).unwrap();
+            assert!(c.model(&m, &p).len() > 84, "{t:?}");
+            assert_eq!(t.optional(), Test::ALL.iter().position(|x| *x == t).unwrap() >= 6);
+        }
     }
 
     #[test]
@@ -1140,11 +1758,11 @@ mod tests {
         let p = obj(json!({"initial_layer_print_height": "0.2"}));
         let f = filament();
         let c = Calibration::new(Test::FlowCoarse, 0.0, 0.0, 0.0, &m).unwrap();
-        let Plan::Flow {
+        let Some(Plan::Flow {
             cells,
             factors,
             center,
-        } = c.plan(&m, &p, &f)
+        }) = c.plan(&m, &p, &f)
         else {
             panic!()
         };
@@ -1152,10 +1770,10 @@ mod tests {
         assert_eq!(factors[0], 0.8);
         assert_eq!(center, (34.0, 44.5));
         let v = Calibration::new(Test::VolumetricSpeed, 5.0, 20.0, 0.5, &m).unwrap();
-        let Plan::Speed { area, values, .. } = v.plan(&m, &p, &f) else {
+        let Some(Plan::Speed { area, values, .. }) = v.plan(&m, &p, &f) else {
             panic!()
         };
-        assert!((area - 2.405).abs() < 1e-3);
+        assert!((area.unwrap() - 2.405).abs() < 1e-3);
         assert_eq!(values.len(), 31);
     }
 }
