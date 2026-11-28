@@ -34,6 +34,7 @@ pub enum Tab {
     System,
     History,
     Slice,
+    Calibrate,
     Spools,
     Printers,
     Slicer,
@@ -43,13 +44,14 @@ pub enum Tab {
 }
 
 impl Tab {
-    pub const ALL: [Tab; 12] = [
+    pub const ALL: [Tab; 13] = [
         Tab::Dashboard,
         Tab::Files,
         Tab::Logs,
         Tab::System,
         Tab::History,
         Tab::Slice,
+        Tab::Calibrate,
         Tab::Spools,
         Tab::Printers,
         Tab::Slicer,
@@ -66,6 +68,7 @@ impl Tab {
             Tab::System => "/ui/system",
             Tab::History => "/ui/history",
             Tab::Slice => "/ui/slice",
+            Tab::Calibrate => "/ui/calibrate",
             Tab::Spools => "/ui/spools",
             Tab::Printers => "/ui/printers",
             Tab::Slicer => "/ui/slicer",
@@ -83,6 +86,7 @@ impl Tab {
             Tab::System => "System",
             Tab::History => "History",
             Tab::Slice => "Slice",
+            Tab::Calibrate => "Calibrate",
             Tab::Spools => "Spools",
             Tab::Printers => "Printers",
             Tab::Slicer => "Slicer",
@@ -100,6 +104,7 @@ impl Tab {
             Tab::System => "system",
             Tab::History => "history",
             Tab::Slice => "slice",
+            Tab::Calibrate => "calibrate",
             Tab::Spools => "spools",
             Tab::Printers => "printers",
             Tab::Slicer => "slicer",
@@ -117,6 +122,7 @@ impl Tab {
             Tab::System => "4",
             Tab::History => "5",
             Tab::Slice => "6",
+            Tab::Calibrate => "c",
             Tab::Spools => "7",
             Tab::Printers => "p",
             Tab::Slicer => "s",
@@ -136,7 +142,7 @@ impl Tab {
 
     /// Shown only when slicing is configured.
     pub fn needs_slicing(self) -> bool {
-        matches!(self, Tab::Slice | Tab::Slicer)
+        matches!(self, Tab::Slice | Tab::Calibrate | Tab::Slicer)
     }
 
     /// Shown only when Spoolman is configured.

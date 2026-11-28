@@ -1,5 +1,5 @@
-//! The calibration walkthrough, end to end: printpit, the real worker API (with its fake
-//! `orca-slicer`), the mock Moonraker, and the queue running for real.
+//! Calibration runs (the `[c]Calibrate` tab), end to end: printpit, the real worker API (with its
+//! fake `orca-slicer`), the mock Moonraker, and the queue running for real.
 
 mod common;
 
@@ -10,6 +10,7 @@ use common::moonraker::MockMoonraker;
 use common::slicer::Worker;
 use common::{Client, TestApp};
 use printpit::auth::Role;
+use printpit::db::calibration as cal_db;
 use printpit::db::slicer::{self as store, Job, JobStatus};
 use printpit::db::{audit, printers};
 use printpit::slicer::Kind;
@@ -102,20 +103,41 @@ async fn setup() -> S {
 }
 
 impl S {
-    fn ids(&self) -> [(&'static str, String); 3] {
-        [
-            ("printer", self.printer.to_string()),
-            ("process", self.process.to_string()),
-            ("filament", self.filament.to_string()),
-        ]
+    /// Starts a run with these tests on the setup's printer, process and filament.
+    async fn start(&mut self, tests: &[&str]) -> (i64, common::Resp) {
+        let (p, pr, f) = (
+            self.printer.to_string(),
+            self.process.to_string(),
+            self.filament.to_string(),
+        );
+        let mut fields = vec![
+            ("printer", p.as_str()),
+            ("process", pr.as_str()),
+            ("filament", f.as_str()),
+        ];
+        fields.extend(tests.iter().map(|t| ("test", *t)));
+        let csrf = self.csrf.clone();
+        let res = self.c.post_hx("/calibrate/runs", &csrf, &fields).await;
+        let run = cal_db::runs(&self.app.state.db, false, 1)
+            .await
+            .unwrap()
+            .first()
+            .map_or(0, |r| r.id);
+        (run, res)
     }
 
-    async fn post(&mut self, path: &str, extra: &[(&str, &str)]) -> common::Resp {
-        let ids = self.ids();
-        let mut fields: Vec<(&str, &str)> = ids.iter().map(|(k, v)| (*k, v.as_str())).collect();
-        fields.extend_from_slice(extra);
+    /// POSTs to `/calibrate/runs/{run}/{action}`.
+    async fn act(&mut self, run: i64, action: &str, fields: &[(&str, &str)]) -> common::Resp {
         let csrf = self.csrf.clone();
-        self.c.post_hx(path, &csrf, &fields).await
+        self.c
+            .post_hx(&format!("/calibrate/runs/{run}/{action}"), &csrf, fields)
+            .await
+    }
+
+    async fn page(&mut self, run: i64, test: &str) -> common::Resp {
+        self.c
+            .get_hx(&format!("/ui/calibrate/runs/{run}?test={test}"))
+            .await
     }
 
     async fn latest(&self) -> Job {
@@ -142,12 +164,20 @@ impl S {
         }
     }
 
-    async fn filament(&self) -> printpit::slicer::Profile {
-        store::get_profile(&self.app.state.db, self.filament)
+    async fn profile(&self, id: i64) -> printpit::slicer::Profile {
+        store::get_profile(&self.app.state.db, id)
             .await
             .unwrap()
             .unwrap()
             .settings
+    }
+
+    async fn machine_id(&self) -> i64 {
+        store::printer_slicer(&self.app.state.db, self.printer)
+            .await
+            .unwrap()
+            .unwrap()
+            .machine_profile_id
     }
 
     async fn actions(&self) -> Vec<String> {
@@ -172,236 +202,309 @@ impl S {
 }
 
 #[tokio::test]
-async fn the_page_makes_no_calls_and_lists_the_tests() {
+async fn the_tab_starts_runs_without_calls() {
     let mut s = setup().await;
     s.worker.clear();
     let before = s.mock.paths().len();
-    let res =
-        s.c.get(&format!("/ui/slice/calibrate?printer={}", s.printer))
-            .await;
+    let res = s.c.get(&format!("/ui/calibrate?printer={}", s.printer)).await;
     assert_eq!(res.status, StatusCode::OK);
-    for t in [
-        "temperature tower",
-        "flow rate · coarse",
-        "flow rate · fine",
-        "pressure advance tower",
-        "retraction test",
-        "max volumetric speed",
-    ] {
-        assert!(res.body.contains(t), "{t}");
-    }
-    assert!(res.body.contains("progress: 0/6"));
-    // The first test is open, with its default range for PLA.
-    assert!(res.body.contains("1/6 · temperature tower"));
+    assert!(res.body.contains("start a calibration"));
+    assert!(
+        res.body.contains("[c]") || res.body.contains("Calibrate"),
+        "the tab is in the strip"
+    );
+    // Core tests ticked, optional ones not.
+    assert!(
+        res.body.contains(r#"name="test" value="temperature" checked"#),
+        "{}",
+        res.body
+    );
+    assert!(res.body.contains(r#"name="test" value="vfa">"#), "{}", res.body);
+    assert!(res.body.contains("in progress"));
+    // The Slice tab links here.
+    let tab = s.c.get_hx("/ui/slice").await;
+    assert!(tab.body.contains("/ui/calibrate?printer="));
+
+    let (run, res) = s.start(&["temperature", "flow_coarse"]).await;
+    assert!(run > 0);
+    assert!(
+        res.body
+            .contains("Started calibrating Generic PLA @System on Voron: 2 tests."),
+        "{}",
+        res.body
+    );
+    assert_eq!(res.header("hx-push-url"), format!("/ui/calibrate/runs/{run}"));
+    assert!(res.body.contains("1/2 · temperature tower"));
+    assert!(res.body.contains("slice and print"));
     assert!(
         res.body
             .contains(r#"name="start" type="number" step="any" inputmode="decimal" value="230""#)
     );
+    let tab = s.c.get_hx("/ui/calibrate").await;
+    assert!(tab.body.contains(&format!("/ui/calibrate/runs/{run}")));
+    assert!(
+        tab.body.contains("0/2") && tab.body.contains("next: temperature tower"),
+        "{}",
+        tab.body
+    );
     assert!(s.worker.requests().is_empty(), "{:?}", s.worker.requests());
     assert_eq!(s.mock.paths().len(), before, "no printer calls");
-    // The Slice tab links here.
-    let tab = s.c.get_hx("/ui/slice").await;
-    assert!(tab.body.contains("/ui/slice/calibrate?printer="));
+    assert!(s.actions().await.contains(&"calibration_start".to_string()));
+
+    // A run needs tests, and known ones.
+    let (_, res) = s.start(&[]).await;
+    assert!(res.body.contains("Pick at least one test."), "{}", res.body);
+    let (_, res) = s.start(&["nope"]).await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
-async fn a_walkthrough_tunes_the_filament_as_it_goes() {
+async fn a_run_goes_print_by_print() {
     let mut s = setup().await;
+    let (run, _) = s
+        .start(&["temperature", "flow_coarse", "flow_fine", "pressure_advance"])
+        .await;
 
-    // 1. Temperature: sliced from printpit's own model, the G-code gets the tower's temperatures.
+    // Nothing to pick before there's a print.
     let res = s
-        .post(
-            "/slice/calibrate/slice",
+        .act(
+            run,
+            "result",
+            &[("test", "temperature"), ("value", "225"), ("then", "next")],
+        )
+        .await;
+    assert!(
+        res.body.contains("Slice and print this test first."),
+        "{}",
+        res.body
+    );
+
+    // 1. Temperature: slice and print, then the page asks what the print showed.
+    let res = s
+        .act(
+            run,
+            "slice",
             &[
                 ("test", "temperature"),
                 ("start", "230"),
                 ("end", "220"),
                 ("step", "5"),
+                ("start_print", "on"),
             ],
         )
         .await;
-    assert!(res.body.contains("Queued the temperature tower"), "{}", res.body);
+    assert!(
+        res.body.contains("Slicing the temperature tower for Voron"),
+        "{}",
+        res.body
+    );
+    // The mock printer is busy printing, so it won't start by itself.
+    assert!(
+        res.body
+            .contains("Voron is printing, so it won&#39;t start printing by itself."),
+        "{}",
+        res.body
+    );
     let job = s.latest().await;
     assert_eq!(job.model_name, "calib_temperature_230-220.stl");
+    let page = s.page(run, "temperature").await;
+    if !page.body.contains("what did the print show?") {
+        assert!(page.body.contains("is being sliced"), "{}", page.body);
+    }
     let job = s.wait(job.id, JobStatus::Done).await;
-    let gcode = s.uploaded(&job);
     assert!(
-        gcode.contains(";Z:0.2\nM104 S230 ; printpit calibration: band 1\n"),
-        "{gcode}"
+        s.uploaded(&job)
+            .contains(";Z:0.2\nM104 S230 ; printpit calibration: band 1\n")
     );
-    assert_eq!(
-        job.output_name.as_deref(),
-        Some("printpit/calib_temperature_230-220_Generic_PLA_System.gcode")
+    let page = s.page(run, "temperature").await;
+    assert!(page.body.contains("what did the print show?"), "{}", page.body);
+    assert!(page.body.contains("block 2 · 225 °C"));
+    assert!(page.body.contains("record, then print the flow rate · coarse"));
+    assert!(
+        page.body.contains(&format!(r#"id="job-{}""#, job.id)),
+        "the job panel"
     );
 
-    // The page offers the tower's blocks; an admin records 225 and saves it.
-    let page =
-        s.c.get_hx(&format!(
-            "/ui/slice/calibrate?printer={}&test=temperature",
-            s.printer
-        ))
-        .await;
-    assert!(page.body.contains("block 2 · 225 °C"), "{}", page.body);
-    assert!(
-        page.body.contains(&format!("id=\"job-{}\"", job.id)),
-        "the job panel is shown"
-    );
+    // Record and go on: saved (admin), and the next test is up.
     let res = s
-        .post(
-            "/slice/calibrate/result",
-            &[("test", "temperature"), ("value", "225"), ("save", "on")],
+        .act(
+            run,
+            "result",
+            &[
+                ("test", "temperature"),
+                ("value", "225"),
+                ("save", "on"),
+                ("then", "next"),
+            ],
         )
         .await;
-    assert!(res.body.contains("Recorded 225"), "{}", res.body);
+    assert!(
+        res.body.contains("Recorded 225 °C for the temperature tower."),
+        "{}",
+        res.body
+    );
     assert!(
         res.body
             .contains("Saved to Generic PLA @System: nozzle_temperature = 225"),
         "{}",
         res.body
     );
-    // And moves on to the next test.
-    assert!(res.body.contains("2/6 · flow rate · coarse"));
-    let f = s.filament().await;
+    assert!(res.body.contains("2/4 · flow rate · coarse"), "{}", res.body);
+    assert!(res.body.contains("progress</dt><dd>1/4"), "{}", res.body);
+    let f = s.profile(s.filament).await;
     assert_eq!(f["nozzle_temperature"], json!(["225"]));
-    assert_eq!(f["nozzle_temperature_initial_layer"], json!(["225"]));
-
     // A value the print doesn't have is refused.
     let res = s
-        .post(
-            "/slice/calibrate/result",
-            &[("test", "temperature"), ("value", "300")],
+        .act(
+            run,
+            "result",
+            &[("test", "temperature"), ("value", "300"), ("then", "next")],
         )
         .await;
     assert!(res.body.contains("Pick one of the values"), "{}", res.body);
 
-    // 2. Flow, recorded by an operator: not saved, but carried into the next tests.
-    s.post("/slice/calibrate/slice", &[("test", "flow_coarse")]).await;
-    let flow = s.wait(s.latest().await.id, JobStatus::Done).await;
-    assert_eq!(flow.model_name, "calib_flow_coarse.stl");
+    // 2. Flow coarse, recorded by an operator with "record, then print the next": not saved,
+    // and the fine pass is sliced straight away, building on it.
+    s.act(run, "slice", &[("test", "flow_coarse")]).await;
+    s.wait(s.latest().await.id, JobStatus::Done).await;
     s.app
         .create_user("otto", "operator password", Role::Operator)
         .await;
     let mut op = s.app.client();
     op.login("otto", "operator password").await;
     let csrf = op.session_csrf().await;
-    let ids = s.ids();
-    let mut fields: Vec<(&str, &str)> = ids.iter().map(|(k, v)| (*k, v.as_str())).collect();
-    fields.extend([("test", "flow_coarse"), ("value", "+5"), ("save", "on")]);
-    let res = op.post_hx("/slice/calibrate/result", &csrf, &fields).await;
-    assert!(res.body.contains("Recorded +5"), "{}", res.body);
+    let res = op
+        .post_hx(
+            &format!("/calibrate/runs/{run}/result"),
+            &csrf,
+            &[
+                ("test", "flow_coarse"),
+                ("value", "+5"),
+                ("save", "on"),
+                ("then", "print_next"),
+            ],
+        )
+        .await;
     assert!(
-        !res.body.contains("Saved to"),
-        "operators can't save to the profile"
+        res.body.contains("Recorded +5 % for the flow rate · coarse."),
+        "{}",
+        res.body
     );
-    assert!(res.body.contains("filament_flow_ratio = 1.05"), "{}", res.body);
+    assert!(!res.body.contains("Saved to"), "operators can't save");
+    assert!(
+        res.body.contains("Slicing the flow rate · fine for Voron"),
+        "{}",
+        res.body
+    );
+    assert!(res.body.contains("3/4 · flow rate · fine"), "{}", res.body);
+    assert!(res.body.contains("filament: filament_flow_ratio = 1.05"));
     assert!(res.body.contains("An admin saves them"));
-    assert!(!s.filament().await.contains_key("filament_flow_ratio"));
+    assert!(!s.profile(s.filament).await.contains_key("filament_flow_ratio"));
     assert_eq!(
-        op.post_hx("/slice/calibrate/save", &csrf, &fields).await.status,
+        op.post_hx(&format!("/calibrate/runs/{run}/save"), &csrf, &[])
+            .await
+            .status,
         StatusCode::FORBIDDEN
     );
-
-    // The fine pass builds on it.
-    let page =
-        s.c.get_hx(&format!(
-            "/ui/slice/calibrate?printer={}&test=flow_fine",
-            s.printer
-        ))
-        .await;
-    assert!(page.body.contains("3/6 · flow rate · fine"));
-    s.post("/slice/calibrate/slice", &[("test", "flow_fine")]).await;
     let fine = s.latest().await;
+    assert_eq!(fine.model_name, "calib_flow_fine.stl");
     let carried = SliceOptions::from_json(&fine.options_json)
         .calibration
         .unwrap()
         .carry;
-    assert_eq!(carried.len(), 1);
     assert_eq!(carried[0].to_string(), "filament_flow_ratio = 1.05");
     s.wait(fine.id, JobStatus::Done).await;
-    let page =
-        s.c.get_hx(&format!(
-            "/ui/slice/calibrate?printer={}&test=flow_fine",
-            s.printer
-        ))
-        .await;
+
+    // 3. Fine: the choices build on the coarse result; an admin saves everything.
+    let page = s.page(run, "flow_fine").await;
     assert!(page.body.contains("-2 → flow ratio 1.029"), "{}", page.body);
-    s.post(
-        "/slice/calibrate/result",
-        &[("test", "flow_fine"), ("value", "-2")],
+    s.act(
+        run,
+        "result",
+        &[("test", "flow_fine"), ("value", "-2"), ("then", "next")],
     )
     .await;
-
-    // An admin saves both: the profile ends with the fine value.
-    let res = s.post("/slice/calibrate/save", &[]).await;
+    let res = s.act(run, "save", &[]).await;
     assert!(
         res.body
             .contains("Saved to Generic PLA @System: filament_flow_ratio = 1.029"),
         "{}",
         res.body
     );
-    assert_eq!(s.filament().await["filament_flow_ratio"], json!(["1.029"]));
-    assert!(res.body.contains("progress: 3/6"));
-
-    // 3–5. The others slice too, and their G-code is changed.
-    s.post(
-        "/slice/calibrate/slice",
-        &[
-            ("test", "pressure_advance"),
-            ("start", "0"),
-            ("end", "0.01"),
-            ("step", "0.005"),
-        ],
-    )
-    .await;
-    let pa = s.wait(s.latest().await.id, JobStatus::Done).await;
-    assert!(
-        s.uploaded(&pa)
-            .contains("SET_PRESSURE_ADVANCE ADVANCE=0 ; printpit calibration")
+    assert_eq!(
+        s.profile(s.filament).await["filament_flow_ratio"],
+        json!(["1.029"])
     );
-    s.post(
-        "/slice/calibrate/slice",
-        &[
-            ("test", "retraction"),
-            ("start", "0.5"),
-            ("end", "1"),
-            ("step", "0.5"),
-        ],
-    )
-    .await;
-    let r = s.wait(s.latest().await.id, JobStatus::Done).await;
-    assert!(s.uploaded(&r).contains("G1 E-0.5 F1800\n"), "{}", s.uploaded(&r));
-    s.post(
-        "/slice/calibrate/slice",
-        &[
-            ("test", "volumetric_speed"),
-            ("start", "5"),
-            ("end", "10"),
-            ("step", "1"),
-        ],
-    )
-    .await;
-    let v = s.wait(s.latest().await.id, JobStatus::Done).await;
-    assert!(s.uploaded(&v).contains("G1 X20 Y10 E.5 F"), "{}", s.uploaded(&v));
+
+    // 4. Skipping the last test finishes the run, which then shows its results.
+    let res = s.act(run, "skip", &[("test", "pressure_advance")]).await;
+    assert!(
+        res.body.contains("Skipped the pressure advance tower."),
+        "{}",
+        res.body
+    );
+    assert!(res.body.contains("4/4 · finished"), "{}", res.body);
+    assert!(res.body.contains("results"));
+    assert!(
+        res.body
+            .contains("225 °C → nozzle_temperature = 225, nozzle_temperature_initial_layer = 225")
+    );
+    let tab = s.c.get_hx("/ui/calibrate").await;
+    assert!(tab.body.contains("finished"));
+    assert!(
+        cal_db::get_run(&s.app.state.db, run)
+            .await
+            .unwrap()
+            .unwrap()
+            .finished_at
+            .is_some()
+    );
+    // Taking the skip back reopens it.
+    let res = s
+        .act(run, "skip", &[("test", "pressure_advance"), ("undo", "1")])
+        .await;
+    assert!(res.body.contains("4/4 · pressure advance tower"), "{}", res.body);
+    assert!(
+        cal_db::get_run(&s.app.state.db, run)
+            .await
+            .unwrap()
+            .unwrap()
+            .finished_at
+            .is_none()
+    );
 
     let actions = s.actions().await;
     assert!(actions.iter().filter(|a| *a == "calibration_result").count() >= 3);
     assert!(actions.iter().filter(|a| *a == "slicer_profile_edit").count() >= 2);
 
-    // Skipping, and starting over (saved values stay in the profile).
-    let res = s.post("/slice/calibrate/skip", &[("test", "retraction")]).await;
-    assert!(res.body.contains("Skipped the retraction test"));
-    let res = s.post("/slice/calibrate/reset", &[]).await;
-    assert!(res.body.contains("progress: 0/6"), "{}", res.body);
-    assert_eq!(s.filament().await["filament_flow_ratio"], json!(["1.029"]));
-    assert!(s.actions().await.contains(&"calibration_reset".to_string()));
+    // Deleting the run keeps the profiles and the jobs.
+    let csrf = s.csrf.clone();
+    let res = s.c.delete_hx(&format!("/calibrate/runs/{run}"), &csrf).await;
+    assert!(
+        res.body.contains(&format!("Deleted calibration #{run}.")),
+        "{}",
+        res.body
+    );
+    assert!(cal_db::get_run(&s.app.state.db, run).await.unwrap().is_none());
+    assert_eq!(
+        s.profile(s.filament).await["filament_flow_ratio"],
+        json!(["1.029"])
+    );
+    assert!(store::get_job(&s.app.state.db, fine.id).await.unwrap().is_some());
+    assert_eq!(
+        s.c.get_hx(&format!("/ui/calibrate/runs/{run}")).await.status,
+        StatusCode::NOT_FOUND
+    );
 }
 
 #[tokio::test]
-async fn ranges_and_order_are_checked() {
+async fn ranges_and_tests_are_checked() {
     let mut s = setup().await;
+    let (run, _) = s.start(&["temperature", "pressure_advance"]).await;
     let res = s
-        .post(
-            "/slice/calibrate/slice",
+        .act(
+            run,
+            "slice",
             &[
                 ("test", "temperature"),
                 ("start", "190"),
@@ -412,8 +515,9 @@ async fn ranges_and_order_are_checked() {
         .await;
     assert!(res.body.contains("start must be above end"), "{}", res.body);
     let res = s
-        .post(
-            "/slice/calibrate/slice",
+        .act(
+            run,
+            "slice",
             &[
                 ("test", "pressure_advance"),
                 ("start", "x"),
@@ -429,64 +533,102 @@ async fn ranges_and_order_are_checked() {
             .unwrap()
             .is_empty()
     );
-    let res = s
-        .post(
-            "/slice/calibrate/result",
-            &[("test", "retraction"), ("value", "1")],
-        )
-        .await;
-    assert!(res.body.contains("Print this test first"), "{}", res.body);
-    let res = s.post("/slice/calibrate/slice", &[("test", "nope")]).await;
+    // Tests that aren't part of the run.
+    let res = s.act(run, "slice", &[("test", "flow_coarse")]).await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    let res = s.act(run, "slice", &[("test", "nope")]).await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        s.act(999, "slice", &[("test", "temperature")]).await.status,
+        StatusCode::NOT_FOUND
+    );
 }
 
 #[tokio::test]
 async fn viewers_follow_but_dont_act() {
-    let s = setup().await;
+    let mut s = setup().await;
+    let (run, _) = s.start(&["temperature"]).await;
     s.app.create_user("vic", "viewer password", Role::Viewer).await;
     let mut v = s.app.client();
     v.login("vic", "viewer password").await;
-    let res = v.get(&format!("/ui/slice/calibrate?printer={}", s.printer)).await;
+    let res = v.get("/ui/calibrate").await;
+    assert_eq!(res.status, StatusCode::OK);
+    assert!(res.body.contains("Viewers can follow calibrations"));
+    assert!(!res.body.contains(r#"hx-post="/calibrate/runs""#));
+    assert!(res.body.contains(&format!("/ui/calibrate/runs/{run}")));
+    let res = v.get(&format!("/ui/calibrate/runs/{run}")).await;
     assert_eq!(res.status, StatusCode::OK);
     assert!(res.body.contains("temperature tower"));
-    assert!(!res.body.contains("/slice/calibrate/slice"));
+    assert!(
+        !res.body
+            .contains(&format!(r#"hx-post="/calibrate/runs/{run}/slice""#)),
+        "no slice form"
+    );
     let csrf = v.session_csrf().await;
-    let ids = s.ids();
-    let mut fields: Vec<(&str, &str)> = ids.iter().map(|(k, v)| (*k, v.as_str())).collect();
-    fields.push(("test", "flow_coarse"));
-    let res = v.post_hx("/slice/calibrate/slice", &csrf, &fields).await;
+    let res = v
+        .post_hx(
+            &format!("/calibrate/runs/{run}/slice"),
+            &csrf,
+            &[("test", "temperature")],
+        )
+        .await;
     assert_eq!(res.status, StatusCode::FORBIDDEN);
+    assert_eq!(
+        v.delete_hx(&format!("/calibrate/runs/{run}"), &csrf).await.status,
+        StatusCode::FORBIDDEN
+    );
 }
 
 #[tokio::test]
 async fn optional_tests_tune_the_printer_and_the_process() {
     let mut s = setup().await;
-    let page =
-        s.c.get(&format!("/ui/slice/calibrate?printer={}", s.printer))
-            .await;
-    assert!(page.body.contains("More tests (optional"), "{}", page.body);
-    assert!(page.body.contains("input shaping · frequency"));
-    assert!(page.body.contains("progress: 0/6"));
-    let machine_id = store::printer_slicer(&s.app.state.db, s.printer)
-        .await
-        .unwrap()
-        .unwrap()
-        .machine_profile_id;
-    let db = s.app.state.db.clone();
-    let profile = async |id| store::get_profile(&db, id).await.unwrap().unwrap().settings;
-
-    // Input shaping frequency: one value per axis, saved to the machine profile, with the
-    // Klipper config to match.
-    let page =
-        s.c.get_hx(&format!(
-            "/ui/slice/calibrate?printer={}&test=input_shaping_frequency",
-            s.printer
-        ))
+    let (run, _) = s
+        .start(&[
+            "tolerance",
+            "cornering",
+            "input_shaping_frequency",
+            "input_shaping_damping",
+            "vfa",
+        ])
         .await;
-    assert!(page.body.contains("optional · input shaping · frequency"));
-    assert!(page.body.contains("Sets the machine profile"));
-    s.post(
-        "/slice/calibrate/slice",
+    let machine = s.machine_id().await;
+
+    // Tolerance: no rewrite; the result is the process's hole compensation.
+    s.act(run, "slice", &[("test", "tolerance")]).await;
+    let job = s.wait(s.latest().await.id, JobStatus::Done).await;
+    assert!(!s.uploaded(&job).contains("printpit calibration"));
+    let res = s
+        .act(
+            run,
+            "result",
+            &[("test", "tolerance"), ("value", "0.1"), ("then", "next")],
+        )
+        .await;
+    assert!(
+        res.body.contains("process: xy_hole_compensation = 0.05"),
+        "{}",
+        res.body
+    );
+    assert!(res.body.contains("2/5 · cornering"), "{}", res.body);
+
+    // Cornering changes the G-code per band.
+    s.act(
+        run,
+        "slice",
+        &[("test", "cornering"), ("start", "4"), ("end", "8"), ("step", "1")],
+    )
+    .await;
+    let job = s.wait(s.latest().await.id, JobStatus::Done).await;
+    assert!(
+        s.uploaded(&job)
+            .contains("SET_VELOCITY_LIMIT SQUARE_CORNER_VELOCITY=4 ; printpit calibration: band 1")
+    );
+    s.act(run, "skip", &[("test", "cornering")]).await;
+
+    // Input shaping frequency: one value per axis, to the machine profile, with Klipper's lines.
+    s.act(
+        run,
+        "slice",
         &[
             ("test", "input_shaping_frequency"),
             ("start", "40"),
@@ -496,21 +638,17 @@ async fn optional_tests_tune_the_printer_and_the_process() {
     )
     .await;
     let job = s.wait(s.latest().await.id, JobStatus::Done).await;
-    let gcode = s.uploaded(&job);
     assert!(
-        gcode.contains("SET_INPUT_SHAPER SHAPER_FREQ_X=40.00 SHAPER_FREQ_Y=40.00 ; printpit calibration"),
-        "{gcode}"
+        s.uploaded(&job)
+            .contains("SET_INPUT_SHAPER SHAPER_FREQ_X=40.00 SHAPER_FREQ_Y=40.00")
     );
-    let page =
-        s.c.get_hx(&format!(
-            "/ui/slice/calibrate?printer={}&test=input_shaping_frequency",
-            s.printer
-        ))
-        .await;
+    let page = s.page(run, "input_shaping_frequency").await;
     assert!(page.body.contains(r#"name="value_y""#), "two selects");
+    assert!(page.body.contains("Sets the machine profile"));
     let res = s
-        .post(
-            "/slice/calibrate/result",
+        .act(
+            run,
+            "result",
             &[
                 ("test", "input_shaping_frequency"),
                 ("value", "44"),
@@ -519,35 +657,26 @@ async fn optional_tests_tune_the_printer_and_the_process() {
             ],
         )
         .await;
-    assert!(res.body.contains("Recorded X 44 · Y 47"), "{}", res.body);
-    assert!(
-        res.body
-            .contains("input_shaping_freq_x = 44, input_shaping_freq_y = 47"),
-        "{}",
-        res.body
-    );
+    assert!(res.body.contains("Recorded X 44 · Y 47 Hz"), "{}", res.body);
+    // Without "then" it stays on the test, showing Klipper's lines.
     assert!(
         res.body.contains("shaper_freq_x: 44\nshaper_freq_y: 47"),
         "{}",
         res.body
     );
-    // An optional test stays put after its result.
-    assert!(res.body.contains("optional · input shaping · frequency"));
-    let m = profile(machine_id).await;
-    assert_eq!(m["input_shaping_freq_x"], json!("44"));
-    assert_eq!(m["input_shaping_freq_y"], json!("47"));
-    // One value missing is refused.
-    let res = s
-        .post(
-            "/slice/calibrate/result",
-            &[("test", "input_shaping_frequency"), ("value", "44")],
-        )
-        .await;
-    assert!(res.body.contains("Pick one of the values"), "{}", res.body);
+    let m = s.profile(machine).await;
+    assert_eq!(
+        (
+            m["input_shaping_freq_x"].clone(),
+            m["input_shaping_freq_y"].clone()
+        ),
+        (json!("44"), json!("47"))
+    );
 
-    // Damping starts from the saved frequencies.
-    s.post(
-        "/slice/calibrate/slice",
+    // Damping starts from those frequencies.
+    s.act(
+        run,
+        "slice",
         &[
             ("test", "input_shaping_damping"),
             ("start", "0.05"),
@@ -562,44 +691,10 @@ async fn optional_tests_tune_the_printer_and_the_process() {
             .contains("SET_INPUT_SHAPER SHAPER_FREQ_X=44.00 SHAPER_FREQ_Y=47.00 ; printpit calibration\n")
     );
 
-    // Tolerance: the G-code goes up as Orca wrote it; the result is the process's hole
-    // compensation, recorded by an operator and saved later.
-    s.post("/slice/calibrate/slice", &[("test", "tolerance")]).await;
-    let job = s.wait(s.latest().await.id, JobStatus::Done).await;
-    assert!(!s.uploaded(&job).contains("printpit calibration"));
-    let res = s
-        .post(
-            "/slice/calibrate/result",
-            &[("test", "tolerance"), ("value", "0.1")],
-        )
-        .await;
-    assert!(
-        res.body.contains("process: xy_hole_compensation = 0.05"),
-        "{}",
-        res.body
-    );
-    let res = s.post("/slice/calibrate/save", &[]).await;
-    assert!(
-        res.body
-            .contains("Saved to 0.20mm Standard @Acme: xy_hole_compensation = 0.05"),
-        "{}",
-        res.body
-    );
-    assert_eq!(profile(s.process).await["xy_hole_compensation"], json!("0.05"));
-
-    // Cornering and VFA change the G-code per band.
-    s.post(
-        "/slice/calibrate/slice",
-        &[("test", "cornering"), ("start", "4"), ("end", "8"), ("step", "1")],
-    )
-    .await;
-    let job = s.wait(s.latest().await.id, JobStatus::Done).await;
-    assert!(
-        s.uploaded(&job)
-            .contains("SET_VELOCITY_LIMIT SQUARE_CORNER_VELOCITY=4 ; printpit calibration: band 1")
-    );
-    s.post(
-        "/slice/calibrate/slice",
+    // VFA: outer wall speeds per band; the result is the process's outer wall speed.
+    s.act(
+        run,
+        "slice",
         &[("test", "vfa"), ("start", "40"), ("end", "60"), ("step", "10")],
     )
     .await;
@@ -609,29 +704,25 @@ async fn optional_tests_tune_the_printer_and_the_process() {
         "{}",
         s.uploaded(&job)
     );
-
-    // The core walkthrough's progress isn't changed by optional tests.
-    let page =
-        s.c.get_hx(&format!("/ui/slice/calibrate?printer={}", s.printer))
-            .await;
-    assert!(page.body.contains("progress: 0/6"));
-    assert!(page.body.contains("1/6 · temperature tower"));
+    s.act(
+        run,
+        "result",
+        &[("test", "vfa"), ("value", "50"), ("save", "on"), ("then", "next")],
+    )
+    .await;
+    assert_eq!(s.profile(s.process).await["outer_wall_speed"], json!(["50"]));
+    assert_eq!(
+        s.profile(s.process).await["xy_hole_compensation"],
+        json!("0.05"),
+        "saved with it"
+    );
 }
 
 #[tokio::test]
 async fn belt_printers_tip_the_pieces_back_and_skip_the_pa_lines() {
     let mut s = setup().await;
-    // Make the printer's machine profile a 45° belt printer.
-    let machine_id = store::printer_slicer(&s.app.state.db, s.printer)
-        .await
-        .unwrap()
-        .unwrap()
-        .machine_profile_id;
-    let mut machine = store::get_profile(&s.app.state.db, machine_id)
-        .await
-        .unwrap()
-        .unwrap()
-        .settings;
+    let machine_id = s.machine_id().await;
+    let mut machine = s.profile(machine_id).await;
     machine.insert("belt_printer".into(), json!("1"));
     machine.insert("belt_slice_rotation".into(), json!("x"));
     machine.insert("belt_slice_rotation_angle".into(), json!("45"));
@@ -639,45 +730,26 @@ async fn belt_printers_tip_the_pieces_back_and_skip_the_pa_lines() {
         .await
         .unwrap();
 
-    let page =
-        s.c.get(&format!("/ui/slice/calibrate?printer={}", s.printer))
-            .await;
-    assert!(page.body.contains("A belt printer"), "{}", page.body);
+    let tab = s.c.get(&format!("/ui/calibrate?printer={}", s.printer)).await;
+    assert!(tab.body.contains("A belt printer"), "{}", tab.body);
     assert!(
-        page.body.contains("pressure advance pattern"),
-        "listed with the others"
+        tab.body
+            .contains(r#"name="test" value="pressure_advance_pattern" disabled"#),
+        "{}",
+        tab.body
     );
-    for t in ["pressure_advance_pattern", "pressure_advance_line"] {
-        let page =
-            s.c.get_hx(&format!("/ui/slice/calibrate?printer={}&test={t}", s.printer))
-                .await;
-        assert!(page.body.contains("Use the pressure advance tower"), "{t}");
-        assert!(
-            !page.body.contains("/slice/calibrate/slice"),
-            "no slice form for {t}"
-        );
-        let res = s
-            .post(
-                "/slice/calibrate/slice",
-                &[("test", t), ("start", "0"), ("end", "0.04"), ("step", "0.005")],
-            )
-            .await;
-        assert!(
-            res.body.contains("Use the pressure advance tower"),
-            "{}",
-            res.body
-        );
-    }
+    let (_, res) = s.start(&["pressure_advance", "pressure_advance_line"]).await;
     assert!(
-        store::recent_jobs(&s.app.state.db, None, 5)
-            .await
-            .unwrap()
-            .is_empty()
+        res.body.contains("Use the pressure advance tower"),
+        "{}",
+        res.body
     );
+    assert!(cal_db::runs(&s.app.state.db, false, 5).await.unwrap().is_empty());
 
-    // The PA tower is tipped back onto the belt, and its G-code still gets its values.
-    s.post(
-        "/slice/calibrate/slice",
+    let (run, _) = s.start(&["pressure_advance"]).await;
+    s.act(
+        run,
+        "slice",
         &[
             ("test", "pressure_advance"),
             ("start", "0"),
@@ -698,11 +770,7 @@ async fn belt_printers_tip_the_pieces_back_and_skip_the_pa_lines() {
             .unwrap(),
     )
     .unwrap();
-    let process = store::get_profile(&s.app.state.db, s.process)
-        .await
-        .unwrap()
-        .unwrap()
-        .settings;
+    let process = s.profile(s.process).await;
     let c = SliceOptions::from_json(&job.options_json).calibration.unwrap();
     assert_eq!(model, c.model(&machine, &process), "the tipped-back tower");
     let mut flat = machine.clone();
@@ -712,4 +780,68 @@ async fn belt_printers_tip_the_pieces_back_and_skip_the_pa_lines() {
         s.uploaded(&job)
             .contains("SET_PRESSURE_ADVANCE ADVANCE=0 ; printpit calibration: band 1")
     );
+}
+
+/// Migration 0012 turns the first walkthrough's progress into runs.
+#[tokio::test]
+async fn old_progress_becomes_runs() {
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            "sqlite::memory:"
+                .parse::<SqliteConnectOptions>()
+                .unwrap()
+                .foreign_keys(true),
+        )
+        .await
+        .unwrap();
+    for sql in [
+        include_str!("../migrations/0001_auth.sql"),
+        include_str!("../migrations/0002_printers.sql"),
+        include_str!("../migrations/0003_webcam_transform.sql"),
+        include_str!("../migrations/0004_temp_presets.sql"),
+        include_str!("../migrations/0005_printer_notify.sql"),
+        include_str!("../migrations/0006_totp.sql"),
+        include_str!("../migrations/0007_slicer.sql"),
+        include_str!("../migrations/0008_printer_ca.sql"),
+        include_str!("../migrations/0009_printer_tls_skip_verify.sql"),
+        include_str!("../migrations/0010_spoolman.sql"),
+        include_str!("../migrations/0011_calibration.sql"),
+    ] {
+        sqlx::raw_sql(sql).execute(&pool).await.unwrap();
+    }
+    sqlx::raw_sql(
+        "INSERT INTO printers (id, name, base_url, enabled, created_at, updated_at, sort_order)
+             VALUES (1, 'Voron', 'http://x', 1, 0, 0, 0);
+         INSERT INTO slicer_profiles (id, kind, name, source, settings_json, created_at, updated_at) VALUES
+             (1, 'machine', 'M', 'user', '{}', 0, 0), (2, 'process', 'P', 'user', '{}', 0, 0),
+             (3, 'filament', 'F', 'user', '{}', 0, 0);
+         INSERT INTO printer_slicer (printer_id, machine_profile_id, default_process_id, updated_at)
+             VALUES (1, 1, 2, 0);
+         INSERT INTO calibration_steps (printer_id, filament_id, test, result, changes_json, updated_at) VALUES
+             (1, 3, 'temperature', '215', '[{\"key\":\"nozzle_temperature\",\"value\":\"215\"}]', 100),
+             (1, 3, 'vfa', NULL, NULL, 200);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::raw_sql(include_str!("../migrations/0012_calibration_runs.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let run = cal_db::get_run(&pool, 1).await.unwrap().unwrap();
+    assert_eq!((run.printer_id, run.process_id, run.filament_id), (1, Some(2), 3));
+    assert_eq!(run.tests.len(), 7, "the core six and the started optional one");
+    assert_eq!((run.created_at, run.updated_at), (100, 200));
+    let steps = cal_db::steps(&pool, 1).await.unwrap();
+    assert_eq!(steps.len(), 2);
+    assert_eq!(steps[0].result.as_deref(), Some("215"));
+    assert_eq!(steps[0].changes[0].kind, "filament");
+    let gone: Option<i64> =
+        sqlx::query_scalar("SELECT 1 FROM sqlite_master WHERE name = 'calibration_steps'")
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+    assert_eq!(gone, None);
 }

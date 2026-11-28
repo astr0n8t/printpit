@@ -461,4 +461,5 @@ ul.report li { margin: 0 0 0.5em; overflow-wrap: anywhere; }
 .calib-steps li.current > a { font-weight: bold; }
 .calib-steps li.current::marker { color: var(--accent); }
 .calib-unsaved ul { margin: 0.2em 0 0.5em; padding-left: 2ch; }
+.calib-tests { border: 1px solid var(--dim); margin: 0 0 0.8em; padding: 0.4em 1ch; display: flex; flex-direction: column; gap: 0.2em; }
 .info { color: var(--info); }

@@ -48,7 +48,8 @@ const PROTECTED_GET: &[&str] = &[
     "/ui/slice",
     "/slice/jobs/1",
     "/slice/jobs/1/preview/plate.png",
-    "/ui/slice/calibrate",
+    "/ui/calibrate",
+    "/ui/calibrate/runs/1",
     "/ui/spools",
     "/p/1/spools",
 ];
@@ -86,11 +87,11 @@ const PROTECTED_POST: &[&str] = &[
     "/slicer/import/user",
     "/slicer/profiles/1",
     "/slice/jobs",
-    "/slice/calibrate/slice",
-    "/slice/calibrate/result",
-    "/slice/calibrate/save",
-    "/slice/calibrate/skip",
-    "/slice/calibrate/reset",
+    "/calibrate/runs",
+    "/calibrate/runs/1/slice",
+    "/calibrate/runs/1/result",
+    "/calibrate/runs/1/skip",
+    "/calibrate/runs/1/save",
     "/slice/jobs/1/cancel",
     "/slice/jobs/1/reslice",
     "/slice/jobs/1/upload",
@@ -106,6 +107,7 @@ const PROTECTED_DELETE: &[&str] = &[
     "/presets/1",
     "/slicer/profiles/1",
     "/slice/jobs/1",
+    "/calibrate/runs/1",
 ];
 
 // ── First-run setup ──────────────────────────────────────────────────
