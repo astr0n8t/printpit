@@ -213,7 +213,7 @@ async fn tab_page(
 
 /// The name system profiles list a machine under in `compatible_printers`: a system machine's own,
 /// else its parent's. (The worker makes the chosen process accept the machine whatever this says.)
-fn system_name(machine: &Profile) -> String {
+pub(crate) fn system_name(machine: &Profile) -> String {
     let text = |k: &str| {
         machine
             .get(k)
@@ -229,7 +229,7 @@ fn system_name(machine: &Profile) -> String {
     }
 }
 
-fn fits(p: &StoredProfile, machine: &str) -> bool {
+pub(crate) fn fits(p: &StoredProfile, machine: &str) -> bool {
     let list = |k: &str| -> Vec<String> {
         match p.settings.get(k) {
             Some(serde_json::Value::Array(a)) => {
@@ -246,7 +246,7 @@ fn fits(p: &StoredProfile, machine: &str) -> bool {
     import::fit(&list("compatible_printers"), cond, machine) != Fit::No
 }
 
-fn badge(s: JobStatus) -> (&'static str, &'static str) {
+pub(crate) fn badge(s: JobStatus) -> (&'static str, &'static str) {
     match s {
         JobStatus::Queued => ("QUEUED", "badge-dim"),
         JobStatus::Slicing => ("SLICING", "badge-info"),
@@ -616,7 +616,7 @@ impl PanelTemplate {
     }
 }
 
-async fn panel(
+pub(crate) async fn panel(
     state: &AppState,
     user: &CurrentUser,
     job: &Job,
@@ -858,6 +858,7 @@ pub async fn reslice(
         Err(e) => return reply(&state, &user, id, None, Some(e)).await,
     };
     opts.output = old.output;
+    opts.calibration = old.calibration;
     if !store::retry(&state.db, id, &opts.to_json(), false).await? {
         return reply(
             &state,

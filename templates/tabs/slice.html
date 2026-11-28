@@ -13,6 +13,7 @@
   <form class="slice-form" data-upload hx-post="/slice/jobs" hx-encoding="multipart/form-data" hx-target="#main" hx-disabled-elt="find button.primary">
     <input type="hidden" name="printer" value="{{ f.printer_id }}">
     <p class="dim">Sliced as <strong>{{ f.machine }}</strong>. The G-code goes to <code>printpit/</code> on the printer.</p>
+    <p><a href="/ui/calibrate?printer={{ f.printer_id }}" hx-get="/ui/calibrate?printer={{ f.printer_id }}" hx-target="#main" hx-push-url="true">calibrate →</a> <span class="dim">OrcaSlicer's calibration prints, one after another, tuning the profiles as you go</span></p>
     <div class="field">
       <label for="slice-process">process</label>
       <select id="slice-process" name="process">

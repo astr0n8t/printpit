@@ -2,6 +2,7 @@
 //! `DATABASE_URL`), each covered by tests.
 
 pub mod audit;
+pub mod calibration;
 pub mod prefs;
 pub mod presets;
 pub mod printers;

@@ -1,0 +1,87 @@
+<section class="panel">
+  <h2 class="panel-title">start a calibration</h2>
+{%- if let Some(n) = notice %}
+  <p class="ok lines" role="status">✓ {{ n }}</p>
+{%- endif %}
+{%- if let Some(e) = error %}
+  <p class="err lines" role="alert">! {{ e }}</p>
+{%- endif %}
+{%- if let Some(f) = start %}
+  <p class="dim">Prints OrcaSlicer's calibration tests one after another on a printer, with a process and a filament. After each print you pick the best result from it, and the next tests use what you picked. Admins save the results to the profiles.</p>
+  <form class="calib-start" hx-post="/calibrate/runs" hx-target="#main" hx-disabled-elt="find button.primary">
+    <div class="slice-grid">
+      <label>printer
+        <select name="printer" hx-get="/ui/calibrate" hx-target="#main" hx-push-url="true">
+{%- for (id, name) in f.printers %}
+          <option value="{{ id }}"{% if *id == f.printer_id %} selected{% endif %}>{{ name }}</option>
+{%- endfor %}
+        </select>
+      </label>
+      <label>process
+        <select name="process">
+{%- for c in f.processes %}
+          <option value="{{ c.id }}"{% if f.is_process(c.id) %} selected{% endif %}>{{ c.name }}{% if !c.fits %} (other printer){% endif %}</option>
+{%- endfor %}
+        </select>
+      </label>
+      <label>filament
+        <select name="filament">
+{%- for c in f.filaments %}
+          <option value="{{ c.id }}"{% if f.is_filament(c.id) %} selected{% endif %}>{{ c.name }}{% if !c.fits %} (other printer){% endif %}</option>
+{%- endfor %}
+        </select>
+      </label>
+    </div>
+    <p class="dim">Sliced as <strong>{{ f.machine }}</strong>.{% if let Some(a) = f.belt %} A belt printer: each test piece is tipped back {{ a }}° onto a support wedge, as OrcaSlicer does.{% endif %}</p>
+    <fieldset class="calib-tests">
+      <legend>tests, in this order</legend>
+{%- for t in f.core %}
+      <label><input type="checkbox" name="test" value="{{ t.slug }}"{% if t.checked && t.unavailable.is_none() %} checked{% endif %}{% if t.unavailable.is_some() %} disabled{% endif %}>{{ t.title }}</label>
+{%- endfor %}
+    </fieldset>
+    <details class="slice-overrides">
+      <summary>more tests (optional)</summary>
+      <fieldset class="calib-tests">
+{%- for t in f.extras %}
+        <label><input type="checkbox" name="test" value="{{ t.slug }}"{% if t.unavailable.is_some() %} disabled{% endif %}>{{ t.title }}{% if let Some(why) = t.unavailable %} <span class="dim">({{ why }})</span>{% endif %}</label>
+{%- endfor %}
+      </fieldset>
+    </details>
+    <div class="actions"><button class="primary">start</button></div>
+  </form>
+{%- else if let Some(why) = no_form %}
+  <p>{{ why }}</p>
+{%- endif %}
+</section>
+<section class="panel" id="calib-runs">
+  <h2 class="panel-title">in progress</h2>
+{%- if open.is_empty() %}
+  <p class="dim">None.</p>
+{%- else %}
+  <table class="profiles">
+    <tbody>
+{%- for r in open %}
+      <tr>
+        <td class="wrap"><a href="/ui/calibrate/runs/{{ r.id }}" hx-get="/ui/calibrate/runs/{{ r.id }}" hx-target="#main" hx-push-url="true">#{{ r.id }} {{ r.filament }}</a><br><span class="dim">{{ r.printer }} · {{ r.process }} · {{ r.age }}</span></td>
+        <td class="wrap">{{ r.progress }}<br><span class="dim">{{ r.next }}</span></td>
+      </tr>
+{%- endfor %}
+    </tbody>
+  </table>
+{%- endif %}
+</section>
+{%- if !finished.is_empty() %}
+<section class="panel">
+  <h2 class="panel-title">finished</h2>
+  <table class="profiles">
+    <tbody>
+{%- for r in finished %}
+      <tr>
+        <td class="wrap"><a href="/ui/calibrate/runs/{{ r.id }}" hx-get="/ui/calibrate/runs/{{ r.id }}" hx-target="#main" hx-push-url="true">#{{ r.id }} {{ r.filament }}</a><br><span class="dim">{{ r.printer }} · {{ r.process }} · {{ r.age }}</span></td>
+        <td class="wrap">{{ r.progress }}<br><span class="dim">{{ r.next }}</span></td>
+      </tr>
+{%- endfor %}
+    </tbody>
+  </table>
+</section>
+{%- endif %}

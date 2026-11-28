@@ -1,7 +1,7 @@
 #!/bin/sh
 # A stand-in for `orca-slicer` in the worker's tests. The model file's first line picks what it does:
 #   FAKE <mode> [record_dir]
-# modes: ok, fail, exportfail, sleep, crash, noresult, nogcode. With a record_dir it copies its arguments,
+# modes: ok, fail, exportfail, sleep, crash, noresult, nogcode (any other model: ok). With a record_dir it copies its arguments,
 # environment and the profiles it was given there, so tests can check them after the temp dir is gone.
 
 for a in "$@"; do last=$a; done
@@ -11,8 +11,9 @@ if [ "$1" = "--help" ]; then
     exit 0
 fi
 
-read -r magic mode record < "$last"
-[ "$magic" = "FAKE" ] || { echo "not a fake model" >&2; exit 1; }
+read -r magic mode record < "$last" 2>/dev/null
+# Anything else (e.g. printpit's generated calibration STLs) slices like `ok`.
+[ "$magic" = "FAKE" ] || { mode=ok; record=""; }
 if [ -n "$record" ]; then
     printf '%s\n' "$@" > "$record/args.txt"
     env > "$record/env.txt"
@@ -44,6 +45,7 @@ case "$mode" in
             # A 10 mm square, two layers, so printpit has something to draw.
             for z in 0.2 0.4; do
                 echo ";LAYER_CHANGE"
+                echo ";Z:$z"
                 echo ";HEIGHT:0.2"
                 echo "G1 Z$z"
                 echo ";TYPE:Outer wall"
@@ -53,6 +55,9 @@ case "$mode" in
                 echo "G1 X20 Y20 E.5"
                 echo "G1 X10 Y20 E.5"
                 echo "G1 X10 Y10 E.5"
+                echo "G1 E-.8 F1800"
+                echo "G1 X12 Y12 F12000"
+                echo "G1 E.8 F1800"
             done
             echo "; filament used [mm] = 1304.61"
             echo "; filament used [g] = 3.89"

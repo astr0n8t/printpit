@@ -4,6 +4,7 @@ mod account;
 pub mod assets;
 mod audit;
 mod auth;
+mod calibrate;
 pub mod card;
 mod dashboard;
 pub(crate) mod files;
@@ -99,6 +100,14 @@ pub fn router(state: AppState) -> Router {
         .route("/printers/{id}/move/{dir}", post(printers::reorder))
         .route("/printers/{id}/test", post(printers::test))
         .route("/ui/slice", get(slice::tab))
+        .route("/ui/calibrate", get(calibrate::home))
+        .route("/calibrate/runs", post(calibrate::start))
+        .route("/ui/calibrate/runs/{id}", get(calibrate::show))
+        .route("/calibrate/runs/{id}", delete(calibrate::delete))
+        .route("/calibrate/runs/{id}/slice", post(calibrate::slice))
+        .route("/calibrate/runs/{id}/result", post(calibrate::result))
+        .route("/calibrate/runs/{id}/skip", post(calibrate::skip))
+        .route("/calibrate/runs/{id}/save", post(calibrate::save))
         .route(
             "/slice/jobs",
             post(slice::submit).layer(axum::extract::DefaultBodyLimit::max(slice_limit)),
