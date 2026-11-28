@@ -225,6 +225,8 @@ Then, on each printer's page under **[p] Printers**, pick its machine profile an
 
 **Slice (operators, [6] Slice tab).** Pick the printer, process and filament. Under *settings* you can override the layer height, infill, walls, supports (off, normal, tree), brim, copies, arrange and auto-orient, and for a 3MF use the project's own settings and pick its plate. Optionally name the file and tick *start printing when it's done*, then choose the model and press **slice**. The job panel follows the slice (only while auto-refresh is on, as everywhere else) and then offers **print**, **slice again** with other settings, **upload again** and **delete**. Viewers can follow jobs but not start them.
 
+**Calibrate (operators, [6] Slice → calibrate).** A walkthrough of OrcaSlicer's calibration prints for the selected printer, process and filament: temperature tower, flow rate (coarse, then fine), pressure advance tower, retraction test and max volumetric speed. printpit makes each test piece itself, slices it with your profiles and changes the G-code per layer as Orca's GUI would. After each print, pick the best block or height from the list; an admin saves it to the filament profile (straight away, or later), and the next tests already use it.
+
 Good to know:
 
 - One slice runs at a time per worker; the others wait their turn. A worker that's busy or down just keeps jobs waiting.

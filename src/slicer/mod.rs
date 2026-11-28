@@ -6,6 +6,7 @@
 //! - [`storage`]: `<data>/slicer/<job>/` for models and G-code (0700/0600).
 //! - [`error`]: [`SlicerError`], shown like `MoonrakerError` (badge + detail, address-free).
 
+pub mod calibrate;
 pub mod client;
 pub mod error;
 pub mod import;

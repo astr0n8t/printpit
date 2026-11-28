@@ -20,7 +20,7 @@ use tokio::sync::{Notify, oneshot};
 
 use super::client::{SliceRequest, SliceStats};
 use super::options::SliceOptions;
-use super::{SlicerError, Slicing, preview, storage};
+use super::{SlicerError, Slicing, calibrate, preview, storage};
 use crate::db::slicer::{self as store, Job, JobStats, JobStatus};
 use crate::db::{audit, now, printers};
 use crate::moonraker::MoonrakerError;
@@ -257,8 +257,8 @@ async fn process(state: &AppState, slicing: &Slicing, job: Job) -> Result<(), St
         }
         .ok_or_else(|| Stop::failed(format!("its {what} profile was deleted")))
     };
-    let machine = profile(job.machine_profile_id, "machine").await?;
-    let (process, filament) = if options.project_settings {
+    let mut machine = profile(job.machine_profile_id, "machine").await?;
+    let (mut process, mut filament) = if options.project_settings {
         (None, None)
     } else {
         let mut p = profile(job.process_id, "process").await?.settings;
@@ -267,6 +267,16 @@ async fn process(state: &AppState, slicing: &Slicing, job: Job) -> Result<(), St
             Some(p),
             Some(profile(job.filament_id, "filament").await?.settings),
         )
+    };
+    // A calibration changes the job's copies of the profiles (never the library's), and the
+    // G-code after the slice.
+    let calibration = match (&options.calibration, process.as_mut(), filament.as_mut()) {
+        (Some(c), Some(p), Some(f)) => {
+            c.prepare(&mut machine.settings, p, f);
+            Some(c.plan(&machine.settings, p, f))
+        }
+        (Some(_), ..) => return Err(Stop::failed("a calibration needs a process and a filament")),
+        _ => None,
     };
     let ext = storage::model_extension(&job.model_name).ok_or_else(|| Stop::failed("unknown model type"))?;
     let model = slicing
@@ -294,6 +304,21 @@ async fn process(state: &AppState, slicing: &Slicing, job: Job) -> Result<(), St
             });
         }
     };
+    if let Some(plan) = calibration {
+        let sum = calibrate::rewrite_output(&slicing.storage, job.id, plan)
+            .await
+            .map_err(|e| Stop::failed(format!("the calibration couldn't be set up: {e}")))?;
+        tracing::info!(
+            job = job.id,
+            layers = sum.layers,
+            commands = sum.commands,
+            moves = sum.moves,
+            "calibration G-code ready"
+        );
+        stats.bytes = tokio::fs::metadata(slicing.storage.output_path(job.id))
+            .await
+            .map_or(stats.bytes, |m| m.len());
+    }
     if let Some(bytes) = preview::decorate(&slicing.storage, job.id).await {
         stats.bytes = bytes;
     }

@@ -171,7 +171,11 @@ impl MockMoonraker {
             .route("/server/files/metadata", get(metadata))
             .route("/server/files/move", post(move_item))
             .route("/server/files/copy", post(copy_item))
-            .route("/server/files/upload", post(upload))
+            // Sliced G-code is often bigger than axum's 2 MB default.
+            .route(
+                "/server/files/upload",
+                post(upload).layer(axum::extract::DefaultBodyLimit::max(256 << 20)),
+            )
             .route(
                 "/server/files/gcodes/{*path}",
                 get(download).merge(delete(delete_file)),

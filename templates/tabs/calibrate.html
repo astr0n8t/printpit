@@ -1,0 +1,148 @@
+{%- if let Some(sel) = select %}
+<div class="tab-head">{{ sel|safe }}</div>
+{%- endif %}
+<section class="panel">
+  <h2 class="panel-title">calibrate{% if !printer_name.is_empty() %} {{ printer_name }}{% endif %}</h2>
+  <p><a href="/ui/slice?printer={{ printer_id }}" hx-get="/ui/slice?printer={{ printer_id }}" hx-target="#main" hx-push-url="true">← slice</a></p>
+{%- if let Some(n) = notice %}
+  <p class="ok lines" role="status">✓ {{ n }}</p>
+{%- endif %}
+{%- if let Some(e) = error %}
+  <p class="err lines" role="alert">! {{ e }}</p>
+{%- endif %}
+{%- if let Some(why) = no_form %}
+  <p>{{ why }}</p>
+{%- else %}
+  <form class="calib-profiles" hx-get="/ui/slice/calibrate" hx-target="#main" hx-push-url="true" hx-trigger="change">
+    <input type="hidden" name="printer" value="{{ printer_id }}">
+    <div class="slice-grid">
+      <label>process
+        <select name="process">
+{%- for c in processes %}
+          <option value="{{ c.id }}"{% if c.id == process_id %} selected{% endif %}>{{ c.name }}{% if !c.fits %} (other printer){% endif %}</option>
+{%- endfor %}
+        </select>
+      </label>
+      <label>filament
+        <select name="filament">
+{%- for c in filaments %}
+          <option value="{{ c.id }}"{% if c.id == filament_id %} selected{% endif %}>{{ c.name }}{% if !c.fits %} (other printer){% endif %}</option>
+{%- endfor %}
+        </select>
+      </label>
+    </div>
+  </form>
+  <p class="dim">Each test is sliced as <strong>{{ machine }}</strong> with this process and filament, and goes to <code>printpit/</code> on the printer. What you read off a print goes into <strong>{{ filament_name }}</strong>, and the next tests use it.</p>
+  <p>progress: {{ done }}/{{ total }}</p>
+  <ol class="calib-steps">
+{%- for r in rows %}
+    <li{% if r.current %} class="current"{% endif %}><a href="/ui/slice/calibrate?printer={{ printer_id }}&process={{ process_id }}&filament={{ filament_id }}&test={{ r.slug }}" hx-get="/ui/slice/calibrate?printer={{ printer_id }}&process={{ process_id }}&filament={{ filament_id }}&test={{ r.slug }}" hx-target="#main" hx-push-url="true">{{ r.title }}</a> <span class="{{ r.status.1 }}">{{ r.status.0 }}</span></li>
+{%- endfor %}
+  </ol>
+{%- if !unsaved.is_empty() %}
+  <div class="calib-unsaved">
+    <p class="warn">Not in the filament profile yet (the next tests use them anyway):</p>
+    <ul>
+{%- for u in unsaved %}
+      <li><code>{{ u }}</code></li>
+{%- endfor %}
+    </ul>
+{%- if admin %}
+    <form hx-post="/slice/calibrate/save" hx-target="#main" hx-confirm="Save these to {{ filament_name }}?">
+      <input type="hidden" name="printer" value="{{ printer_id }}">
+      <input type="hidden" name="process" value="{{ process_id }}">
+      <input type="hidden" name="filament" value="{{ filament_id }}">
+      <div class="actions"><button class="primary">save to the profile</button></div>
+    </form>
+{%- else %}
+    <p class="dim">An admin saves them to the profile.</p>
+{%- endif %}
+  </div>
+{%- endif %}
+  <div class="actions">
+{%- if operator && done > 0 %}
+    <form hx-post="/slice/calibrate/reset" hx-target="#main" hx-confirm="Start the walkthrough for {{ filament_name }} over? Results already saved stay in the profile.">
+      <input type="hidden" name="printer" value="{{ printer_id }}">
+      <input type="hidden" name="process" value="{{ process_id }}">
+      <input type="hidden" name="filament" value="{{ filament_id }}">
+      <button class="danger">start over</button>
+    </form>
+{%- endif %}
+  </div>
+{%- endif %}
+</section>
+{%- if let Some(c) = current %}
+<section class="panel" id="calib-step">
+  <h2 class="panel-title">{{ c.number }}/{{ total }} · {{ c.title }}</h2>
+  <p>{{ c.purpose }}</p>
+  <p class="dim">Sets the filament's <strong>{{ c.setting }}</strong>.</p>
+{%- if let Some((id, label, class)) = c.job %}
+  <p>printed as <a href="/slice/jobs/{{ id }}" hx-get="/slice/jobs/{{ id }}" hx-target="#job">job #{{ id }}</a> <span id="job-badge-{{ id }}" class="badge {{ class }}">{{ label }}</span></p>
+{%- endif %}
+{%- if operator %}
+  <form hx-post="/slice/calibrate/slice" hx-target="#main" hx-disabled-elt="find button.primary">
+    <input type="hidden" name="printer" value="{{ printer_id }}">
+    <input type="hidden" name="process" value="{{ process_id }}">
+    <input type="hidden" name="filament" value="{{ filament_id }}">
+    <input type="hidden" name="test" value="{{ c.test.slug() }}">
+{%- if c.has_range %}
+    <div class="slice-grid">
+      <label>start{% if !c.unit.is_empty() %} ({{ c.unit }}){% endif %} <input name="start" type="number" step="any" inputmode="decimal" value="{{ c.start }}" required></label>
+      <label>end{% if !c.unit.is_empty() %} ({{ c.unit }}){% endif %} <input name="end" type="number" step="any" inputmode="decimal" value="{{ c.end }}" required></label>
+      <label>step{% if !c.unit.is_empty() %} ({{ c.unit }}){% endif %} <input name="step" type="number" step="any" inputmode="decimal" value="{{ c.step }}" required></label>
+    </div>
+{%- endif %}
+    <div class="field">
+      <label><input type="checkbox" name="start_print">start printing when it's sliced (only if the printer is idle)</label>
+    </div>
+    <div class="actions"><button class="primary">{% if c.printed %}slice it again{% else %}slice it{% endif %}</button></div>
+  </form>
+{%- endif %}
+{%- if !c.choices.is_empty() %}
+  <h3>what did the print show?</h3>
+  <p>{{ c.reading }}</p>
+{%- if c.job_pending %}
+  <p class="dim">The job below is still being sliced.</p>
+{%- endif %}
+{%- if operator %}
+  <form hx-post="/slice/calibrate/result" hx-target="#main">
+    <input type="hidden" name="printer" value="{{ printer_id }}">
+    <input type="hidden" name="process" value="{{ process_id }}">
+    <input type="hidden" name="filament" value="{{ filament_id }}">
+    <input type="hidden" name="test" value="{{ c.test.slug() }}">
+    <div class="field">
+      <label for="calib-value">best</label>
+      <select id="calib-value" name="value">
+{%- for (v, l) in c.choices %}
+        <option value="{{ v }}"{% if c.picked.as_deref() == Some(v.as_str()) %} selected{% endif %}>{{ l }}</option>
+{%- endfor %}
+      </select>
+    </div>
+{%- if admin %}
+    <div class="field">
+      <label><input type="checkbox" name="save" checked>save to {{ filament_name }} now</label>
+    </div>
+{%- endif %}
+    <div class="actions"><button class="primary">record</button></div>
+  </form>
+{%- endif %}
+{%- else %}
+  <p class="dim">{{ c.reading }}</p>
+{%- endif %}
+{%- if operator %}
+  <form hx-post="/slice/calibrate/skip" hx-target="#main">
+    <input type="hidden" name="printer" value="{{ printer_id }}">
+    <input type="hidden" name="process" value="{{ process_id }}">
+    <input type="hidden" name="filament" value="{{ filament_id }}">
+    <input type="hidden" name="test" value="{{ c.test.slug() }}">
+{%- if c.skipped %}
+    <input type="hidden" name="undo" value="1">
+    <div class="actions"><button>don't skip</button></div>
+{%- else %}
+    <div class="actions"><button>skip this test</button></div>
+{%- endif %}
+  </form>
+{%- endif %}
+</section>
+{%- endif %}
+<div id="job">{% if let Some(j) = job %}{{ j|safe }}{% endif %}</div>

@@ -58,6 +58,8 @@ pub struct SliceOptions {
     pub copies: Option<u32>,
     /// The G-code's file name on the printer (from [`output_name`], decided at submit).
     pub output: Option<String>,
+    /// A calibration print (the model is printpit's own test piece).
+    pub calibration: Option<super::calibrate::Calibration>,
 }
 
 impl Default for SliceOptions {
@@ -75,6 +77,7 @@ impl Default for SliceOptions {
             plate: 1,
             copies: None,
             output: None,
+            calibration: None,
         }
     }
 }
@@ -210,6 +213,7 @@ impl OptionsForm {
             plate,
             copies,
             output: None,
+            calibration: None,
         })
     }
 }
@@ -323,6 +327,9 @@ impl SliceOptions {
     /// Short labels for the job panel: `0.16 mm layers`, `20 % infill`, …
     pub fn summary(&self) -> Vec<String> {
         let mut out = Vec::new();
+        if let Some(c) = &self.calibration {
+            out.push(c.summary());
+        }
         if self.project_settings {
             out.push("project settings".into());
         }

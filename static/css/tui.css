@@ -454,3 +454,11 @@ ul.report li { margin: 0 0 0.5em; overflow-wrap: anywhere; }
   .slice-preview { grid-template-columns: 1fr; }
   .slice-preview a + a { width: 50%; justify-self: center; }
 }
+
+/* calibration walkthrough */
+.calib-steps { margin: 0.5em 0; padding-left: 3ch; }
+.calib-steps li { margin: 0.15em 0; }
+.calib-steps li.current > a { font-weight: bold; }
+.calib-steps li.current::marker { color: var(--accent); }
+.calib-unsaved ul { margin: 0.2em 0 0.5em; padding-left: 2ch; }
+.info { color: var(--info); }
